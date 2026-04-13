@@ -72,3 +72,30 @@ Shared Caddy snippets are staged into `~/ophelia-runtime/caddy/sites.d/`.
 2. Add release history, rollback, and health-check verification.
 3. Add app adoption for existing manual VPS deployments.
 4. Layer in Authelia once the basic runtime path is stable.
+
+## Deploy Flows
+
+### Operator-first flow
+
+Use this for initial setup, testing, or one-off deploys from your machine:
+
+```bash
+./cli/ship deploy path/to/.ophelia.yml --host kyle@209.74.71.165 --ssh-port 22022 --apply
+```
+
+For static apps, sync built assets first or pass a static build directory once that
+workflow is added to the app repo.
+
+### App-repo CI flow
+
+Use this after an app repo is set up with GitHub Actions:
+
+1. CI builds the app artifact or image.
+2. CI syncs the artifact to the VPS or pushes the image to GHCR.
+3. CI SSHes into the VPS and runs `~/ophelia/cli/ship deploy ... --apply`.
+
+For static sites this means:
+
+1. build `dist/`
+2. rsync `dist/` into `~/ophelia-runtime/static/<app>/`
+3. run `~/ophelia/cli/ship deploy /path/to/.ophelia.yml --runtime-root ~/ophelia-runtime --apply`

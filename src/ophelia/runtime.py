@@ -62,6 +62,53 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     return app_root
 
 
+def apply_local_bundle(
+    manifest: Manifest,
+    manifest_path: Path,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    ophelia_root: Path | None = None,
+) -> Path:
+    app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+
+    caddy_source = app_root / "caddy" / f"{manifest.app}.caddy"
+    caddy_target = runtime_root / "caddy" / "sites.d" / f"{manifest.app}.caddy"
+    caddy_target.parent.mkdir(parents=True, exist_ok=True)
+    caddy_target.write_text(caddy_source.read_text())
+
+    if manifest.kind in {"service", "multi-service"}:
+        compose_path = app_root / "compose.yml"
+        if compose_path.exists():
+            _run(["docker", "compose", "-f", str(compose_path), "pull"], allow_failure=True)
+            _run(["docker", "compose", "-f", str(compose_path), "up", "-d"])
+
+    if ophelia_root is not None:
+        shared_compose = ophelia_root / "platform" / "shared" / "compose.yml"
+        if shared_compose.exists():
+            result = _run(
+                ["docker", "compose", "-f", str(shared_compose), "ps", "--status", "running", "caddy"],
+                capture_output=True,
+                allow_failure=True,
+            )
+            if result and "caddy" in result.stdout:
+                _run(
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        str(shared_compose),
+                        "exec",
+                        "-T",
+                        "caddy",
+                        "caddy",
+                        "reload",
+                        "--config",
+                        "/etc/caddy/Caddyfile",
+                    ]
+                )
+
+    return app_root
+
+
 def list_deployments(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> List[DeploymentRecord]:
     apps_root = runtime_root / "apps"
     if not apps_root.exists():
@@ -88,3 +135,19 @@ def list_deployments(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> List[Deployme
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _run(command: List[str], capture_output: bool = False, allow_failure: bool = False):
+    import subprocess
+
+    try:
+        return subprocess.run(
+            command,
+            check=True,
+            text=True,
+            capture_output=capture_output,
+        )
+    except subprocess.CalledProcessError:
+        if allow_failure:
+            return None
+        raise

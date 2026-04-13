@@ -1,10 +1,10 @@
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
-from ..config import DEFAULT_RUNTIME_ROOT
+from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
 from ..remote import RemoteError, stage_remote_bundle
-from ..runtime import deploy_bundle
+from ..runtime import apply_local_bundle, deploy_bundle
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -35,6 +35,12 @@ def register(subparsers: _SubParsersAction) -> None:
         "--apply",
         action="store_true",
         help="Start or update the app and reload shared Caddy when available",
+    )
+    parser.add_argument(
+        "--ophelia-root",
+        type=Path,
+        default=REPO_ROOT,
+        help="Local Ophelia repo root used for shared compose lookups",
     )
     parser.set_defaults(handler=run)
 
@@ -67,7 +73,17 @@ def run(args: Namespace) -> int:
             print(result)
         return 0
 
+    if args.apply:
+        app_root = apply_local_bundle(
+            manifest=manifest,
+            manifest_path=args.manifest,
+            runtime_root=args.runtime_root,
+            ophelia_root=args.ophelia_root,
+        )
+        print(f"Applied bundle for {manifest.app} into {app_root}")
+        return 0
+
     app_root = deploy_bundle(manifest, args.manifest, args.runtime_root)
     print(f"Deployed bundle for {manifest.app} into {app_root}")
-    print("Use --host to stage or apply this bundle on the VPS.")
+    print("Use --apply to activate locally, or --host to stage/apply on the VPS.")
     return 0

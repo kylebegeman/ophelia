@@ -75,3 +75,24 @@ Preferred flow:
 The current codebase only implements manifest parsing and local runtime bundle
 generation plus remote bundle staging. Service startup and Caddy activation are
 available through `ship deploy --host ... --apply`.
+
+## Two Deployment Modes
+
+### 1. Manual `ship` from an operator machine
+
+This is the bootstrap path:
+
+- use local Ophelia
+- stage or apply a manifest over SSH
+- use it for first deploys, migrations, and recovery
+
+### 2. Automated deploys from app repositories
+
+This is the steady-state path:
+
+- the app repo owns its build pipeline
+- CI publishes an artifact or image
+- CI invokes `ship` on the VPS to apply the runtime config
+
+That split keeps Ophelia as the platform control plane while each app repo owns
+its own release lifecycle.
