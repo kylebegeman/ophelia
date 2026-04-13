@@ -1,0 +1,7 @@
+version: 1
+app: aspectavy-staging
+kind: tunnel
+tunnel_target: host.docker.internal:3401
+
+routes:
+  - domain: staging-app.bagels.top
