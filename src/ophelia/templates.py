@@ -62,12 +62,6 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
     env_map = OrderedDict(sorted(manifest.env.items()))
     env_map.update(OrderedDict(sorted(service.env.items())))
 
-    if manifest.addons.postgres:
-        env_map.setdefault("DATABASE_URL", "${DATABASE_URL}")
-
-    if manifest.addons.redis:
-        env_map.setdefault("REDIS_URL", "${REDIS_URL}")
-
     for key, value in env_map.items():
         service_lines.append(f"      {key}: {_quote(value)}")
 
