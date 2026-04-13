@@ -107,47 +107,32 @@ def _build_remote_stage_script(
         "set -euo pipefail",
         f"APP_ROOT={app_root}",
         f"CADDY_TARGET={caddy_target}",
-        'mkdir -p "$APP_ROOT/caddy"',
-        'mkdir -p "$(dirname "$CADDY_TARGET")"',
-        'if [ ! -f "$APP_ROOT/env" ] && [ -f "$APP_ROOT/env.example" ]; then cp "$APP_ROOT/env.example" "$APP_ROOT/env"; fi',
-        f'cat > "$APP_ROOT/release.json" <<\'EOF_RELEASE\'\n{json.dumps(release, indent=2, sort_keys=True)}\nEOF_RELEASE',
-        f'cp "$APP_ROOT/caddy/{manifest.app}.caddy" "$CADDY_TARGET"',
+        f"REMOTE_RUNTIME_ROOT={_shell_ref(remote_runtime_root)}",
+        f"REMOTE_OPHELIA_ROOT={_shell_ref(remote_ophelia_root)}",
     ]
 
     if apply:
-        lines.extend(_build_apply_lines(manifest, remote_ophelia_root))
+        lines.extend(_build_apply_lines())
     else:
-        lines.append('echo "Staged runtime bundle and Caddy snippet."')
+        lines.extend(
+            [
+                'mkdir -p "$APP_ROOT/caddy"',
+                'mkdir -p "$(dirname "$CADDY_TARGET")"',
+                'if [ ! -f "$APP_ROOT/env" ] && [ -f "$APP_ROOT/env.example" ]; then cp "$APP_ROOT/env.example" "$APP_ROOT/env"; fi',
+                f'cat > "$APP_ROOT/release.json" <<\'EOF_RELEASE\'\n{json.dumps(release, indent=2, sort_keys=True)}\nEOF_RELEASE',
+                f'cp "$APP_ROOT/caddy/{manifest.app}.caddy" "$CADDY_TARGET"',
+                'echo "Staged runtime bundle and Caddy snippet."',
+            ]
+        )
 
     return "\n".join(lines)
 
 
-def _build_apply_lines(manifest: Manifest, remote_ophelia_root: str) -> List[str]:
-    shared_compose = f"{_shell_ref(remote_ophelia_root)}/platform/shared/compose.yml"
-    lines: List[str] = []
-
-    if manifest.kind in {"service", "multi-service"}:
-        lines.extend(
-            [
-                'if [ -f "$APP_ROOT/compose.yml" ]; then',
-                '  docker compose -f "$APP_ROOT/compose.yml" pull || true',
-                '  docker compose -f "$APP_ROOT/compose.yml" up -d',
-                "fi",
-            ]
-        )
-
-    lines.extend(
-        [
-            f"SHARED_COMPOSE={shared_compose}",
-            'if [ -f "$SHARED_COMPOSE" ] && docker compose -f "$SHARED_COMPOSE" ps --status running caddy 2>/dev/null | grep -q caddy; then',
-            '  docker compose -f "$SHARED_COMPOSE" exec -T caddy caddy reload --config /etc/caddy/Caddyfile',
-            '  echo "Applied runtime bundle and reloaded shared Caddy."',
-            "else",
-            '  echo "Applied runtime bundle. Shared Caddy is not running yet; snippet staged only."',
-            "fi",
-        ]
-    )
-    return lines
+def _build_apply_lines() -> List[str]:
+    return [
+        'cd "$REMOTE_OPHELIA_ROOT"',
+        './cli/ship deploy "$APP_ROOT/manifest.lock.json" --runtime-root "$REMOTE_RUNTIME_ROOT" --ophelia-root "$REMOTE_OPHELIA_ROOT" --apply',
+    ]
 
 
 def _ssh_command(host: str, ssh_port: int, script: str) -> List[str]:
