@@ -96,3 +96,13 @@ This is the steady-state path:
 
 That split keeps Ophelia as the platform control plane while each app repo owns
 its own release lifecycle.
+
+## Incremental Cutover
+
+The current VPS still uses `~/edge` for public ingress. Ophelia should migrate
+in this order:
+
+1. start shared foundation services
+2. migrate app runtime state and deployment flow
+3. validate Ophelia-managed apps behind alternate ports or bridge routes
+4. move public ingress to Ophelia Caddy last

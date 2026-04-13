@@ -59,6 +59,18 @@ Shared Caddy snippets are staged into `~/ophelia-runtime/caddy/sites.d/`.
 - Let each app repo declare its own runtime contract through
   `.ophelia.yml`.
 
+## Phased Migration
+
+You do not need to cut public ingress over immediately.
+
+Recommended order:
+
+1. bootstrap Ophelia runtime and networks
+2. bring up shared foundation services first: Postgres and Redis
+3. stage and test app runtime bundles
+4. optionally run Ophelia Caddy on alternate ports for validation
+5. switch public ingress only after the platform path is proven
+
 ## Branch Strategy
 
 - `dev` is the default working branch.
@@ -99,3 +111,13 @@ For static sites this means:
 1. build `dist/`
 2. rsync `dist/` into `~/ophelia-runtime/static/<app>/`
 3. run `~/ophelia/cli/ship deploy /path/to/.ophelia.yml --runtime-root ~/ophelia-runtime --apply`
+
+## Shared Services
+
+The shared compose is intentionally split into:
+
+- foundation: Postgres and Redis
+- edge: Caddy
+
+That lets you migrate the platform in-place without fighting the current
+public `~/edge` Caddy container on ports `80/443`.

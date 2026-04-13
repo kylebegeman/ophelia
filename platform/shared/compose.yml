@@ -1,10 +1,12 @@
 services:
   caddy:
     image: caddy:2-alpine
+    profiles:
+      - edge
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "${OPHELIA_HTTP_PORT:-80}:80"
+      - "${OPHELIA_HTTPS_PORT:-443}:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${OPHELIA_RUNTIME_ROOT}/caddy/sites.d:/etc/caddy/sites.d:ro
@@ -23,6 +25,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - ophelia-internal
 
@@ -32,6 +39,11 @@ services:
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - ophelia-internal
 
