@@ -14,6 +14,16 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `resources`: runtime limits
 - `env`: app-wide environment variables
 
+## Service Fields
+
+- `port`: container port exposed inside Docker
+- `host_port`: optional `127.0.0.1` bridge port for incremental migration behind
+  the legacy `~/edge` Caddy
+- `image`: optional per-service image override
+- `command`: optional command override
+- `env`: service-specific environment values
+- `healthcheck`: HTTP or command health check definition
+
 ## Example: single-service app
 
 ```yaml
@@ -25,6 +35,7 @@ image: ghcr.io/mrbagels/dragon-writer:latest
 services:
   web:
     port: 3000
+    host_port: 3601
     healthcheck:
       path: /health
 
@@ -54,11 +65,13 @@ services:
   api:
     image: ghcr.io/mrbagels/pokedex-api:latest
     port: 3001
+    host_port: 3701
     healthcheck:
       path: /health
   web:
     image: ghcr.io/mrbagels/pokedex-web:latest
     port: 3000
+    host_port: 3702
     healthcheck:
       path: /
 
@@ -70,6 +83,11 @@ routes:
   - domain: pokedex.begam.in
     service: web
 ```
+
+When `addons.postgres: true`, `ship deploy --apply` provisions a dedicated
+database and role in the shared Postgres container and writes `DATABASE_URL`
+into the app runtime env file. `addons.redis: true` writes `REDIS_URL` against
+the shared Redis instance and assigns the next free logical Redis database.
 
 ## Example: static site
 

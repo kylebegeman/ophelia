@@ -104,5 +104,7 @@ in this order:
 
 1. start shared foundation services
 2. migrate app runtime state and deployment flow
-3. validate Ophelia-managed apps behind alternate ports or bridge routes
-4. move public ingress to Ophelia Caddy last
+3. use `host_port` bridge bindings for apps that still need to sit behind the
+   legacy `~/edge` Caddy
+4. validate Ophelia-managed apps behind alternate ports or bridge routes
+5. move public ingress to Ophelia Caddy last

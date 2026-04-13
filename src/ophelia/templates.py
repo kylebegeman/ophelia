@@ -78,6 +78,14 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
         ]
     )
 
+    if service.host_port is not None:
+        service_lines.extend(
+            [
+                "    ports:",
+                f"      - {_quote(f'127.0.0.1:{service.host_port}:{service.port}')}",
+            ]
+        )
+
     if service.command:
         service_lines.append("    command:")
         for item in service.command:

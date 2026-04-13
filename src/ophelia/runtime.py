@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+from .addons import ensure_addons
 from .config import DEFAULT_RUNTIME_ROOT
 from .manifest import Manifest
 from .templates import render_caddy, render_compose, render_env_example
@@ -70,6 +71,14 @@ def apply_local_bundle(
 ) -> Path:
     app_root = deploy_bundle(manifest, manifest_path, runtime_root)
 
+    shared_compose = None
+    shared_env = None
+    if ophelia_root is not None:
+        shared_compose = ophelia_root / "platform" / "shared" / "compose.yml"
+        shared_env = ophelia_root / "platform" / "shared" / ".env"
+        if manifest.addons.postgres or manifest.addons.redis:
+            ensure_addons(manifest, app_root, ophelia_root)
+
     caddy_source = app_root / "caddy" / f"{manifest.app}.caddy"
     caddy_target = runtime_root / "caddy" / "sites.d" / f"{manifest.app}.caddy"
     caddy_target.parent.mkdir(parents=True, exist_ok=True)
@@ -81,29 +90,21 @@ def apply_local_bundle(
             _run(["docker", "compose", "-f", str(compose_path), "pull"], allow_failure=True)
             _run(["docker", "compose", "-f", str(compose_path), "up", "-d"])
 
-    if ophelia_root is not None:
-        shared_compose = ophelia_root / "platform" / "shared" / "compose.yml"
+    if shared_compose is not None and shared_compose.exists():
+        compose_args = ["docker", "compose"]
+        if shared_env is not None and shared_env.exists():
+            compose_args.extend(["--env-file", str(shared_env)])
+        compose_args.extend(["-f", str(shared_compose)])
+
         if shared_compose.exists():
             result = _run(
-                ["docker", "compose", "-f", str(shared_compose), "ps", "--status", "running", "caddy"],
+                [*compose_args, "ps", "--status", "running", "caddy"],
                 capture_output=True,
                 allow_failure=True,
             )
             if result and "caddy" in result.stdout:
                 _run(
-                    [
-                        "docker",
-                        "compose",
-                        "-f",
-                        str(shared_compose),
-                        "exec",
-                        "-T",
-                        "caddy",
-                        "caddy",
-                        "reload",
-                        "--config",
-                        "/etc/caddy/Caddyfile",
-                    ]
+                    [*compose_args, "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"]
                 )
 
     return app_root

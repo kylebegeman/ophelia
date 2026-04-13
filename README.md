@@ -68,8 +68,10 @@ Recommended order:
 1. bootstrap Ophelia runtime and networks
 2. bring up shared foundation services first: Postgres and Redis
 3. stage and test app runtime bundles
-4. optionally run Ophelia Caddy on alternate ports for validation
-5. switch public ingress only after the platform path is proven
+4. bridge migrated apps back into the legacy `~/edge` Caddy with localhost
+   `host_port` mappings when needed
+5. optionally run Ophelia Caddy on alternate ports for validation
+6. switch public ingress only after the platform path is proven
 
 ## Branch Strategy
 
@@ -121,3 +123,8 @@ The shared compose is intentionally split into:
 
 That lets you migrate the platform in-place without fighting the current
 public `~/edge` Caddy container on ports `80/443`.
+
+For apps that still need to sit behind the legacy public edge during
+migration, set `services.<name>.host_port` in the manifest. Ophelia will bind
+that service to `127.0.0.1:<host_port>` while still attaching it to the shared
+Docker networks, so `~/edge` can proxy to it before full ingress cutover.

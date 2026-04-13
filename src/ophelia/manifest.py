@@ -22,6 +22,7 @@ class HealthCheck:
 class ServiceConfig:
     name: str
     port: int
+    host_port: Optional[int] = None
     image: Optional[str] = None
     command: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
@@ -133,6 +134,7 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
             raise ManifestError(f"Service `{name}` must be a mapping.")
 
         port = _require_int(service_raw, "port", prefix=f"services.{name}")
+        host_port = _optional_int(service_raw.get("host_port"), f"services.{name}.host_port")
         image = _optional_str(service_raw.get("image"), f"services.{name}.image")
         command = _string_list(service_raw.get("command", []), f"services.{name}.command")
         env = _mapping_as_str_dict(service_raw.get("env", {}), f"services.{name}.env")
@@ -141,6 +143,7 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
         services[name] = ServiceConfig(
             name=name,
             port=port,
+            host_port=host_port,
             image=image,
             command=command,
             env=env,
@@ -233,6 +236,7 @@ def _validate_manifest(manifest: Manifest) -> None:
                 raise ManifestError(
                     f"Service `{service_name}` must define `image` or inherit a top-level `image`."
                 )
+        _validate_host_ports(manifest)
         _validate_service_routes(manifest)
 
     if manifest.kind == "static" and not manifest.static_root:
@@ -261,6 +265,19 @@ def _validate_service_routes(manifest: Manifest) -> None:
         raise ManifestError(f"Each domain may only have one catch-all route. Duplicate defaults: {joined}")
 
 
+def _validate_host_ports(manifest: Manifest) -> None:
+    host_ports: Dict[int, str] = {}
+    for service_name, service in manifest.services.items():
+        if service.host_port is None:
+            continue
+        owner = host_ports.get(service.host_port)
+        if owner is not None:
+            raise ManifestError(
+                f"Services `{owner}` and `{service_name}` both request host_port {service.host_port}."
+            )
+        host_ports[service.host_port] = service_name
+
+
 def _require_str(raw: Dict[str, Any], field_name: str, prefix: str = "") -> str:
     value = raw.get(field_name)
     label = f"{prefix}.{field_name}" if prefix else field_name
@@ -274,6 +291,14 @@ def _optional_str(value: Any, field_name: str) -> Optional[str]:
         return None
     if not isinstance(value, str) or not value.strip():
         raise ManifestError(f"`{field_name}` must be a non-empty string.")
+    return value
+
+
+def _optional_int(value: Any, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    if not isinstance(value, int) or value <= 0:
+        raise ManifestError(f"`{field_name}` must be a positive integer.")
     return value
 
 
