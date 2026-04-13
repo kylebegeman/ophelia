@@ -9,8 +9,8 @@ services:
       - "${OPHELIA_HTTPS_PORT:-443}:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${OPHELIA_RUNTIME_ROOT}/caddy/sites.d:/etc/caddy/sites.d:ro
-      - ${OPHELIA_RUNTIME_ROOT}:${OPHELIA_RUNTIME_ROOT}:ro
+      - ${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}/caddy/sites.d:/etc/caddy/sites.d:ro
+      - ${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}:${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:
