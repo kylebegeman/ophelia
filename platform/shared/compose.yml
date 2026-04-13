@@ -7,7 +7,7 @@ services:
       - "443:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy/sites.d:/etc/caddy/sites.d:ro
+      - ${OPHELIA_RUNTIME_ROOT}/caddy/sites.d:/etc/caddy/sites.d:ro
       - ${OPHELIA_RUNTIME_ROOT}:${OPHELIA_RUNTIME_ROOT}:ro
       - caddy_data:/data
       - caddy_config:/config

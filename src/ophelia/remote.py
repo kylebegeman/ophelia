@@ -93,7 +93,7 @@ def _build_remote_stage_script(
     apply: bool,
 ) -> str:
     app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
-    caddy_target = f"{_shell_ref(remote_ophelia_root)}/platform/shared/caddy/sites.d/{manifest.app}.caddy"
+    caddy_target = f"{_shell_ref(remote_runtime_root)}/caddy/sites.d/{manifest.app}.caddy"
     release = {
         "app": manifest.app,
         "kind": manifest.kind,

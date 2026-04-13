@@ -45,6 +45,8 @@
       release.json
       caddy/
         dragon-writer.caddy
+  caddy/
+    sites.d/
   static/
   backups/
   cache/
