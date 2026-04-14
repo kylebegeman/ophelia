@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import OrderedDict
 from typing import Dict, List, Optional
 
@@ -143,8 +144,8 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
         return "\n".join(lines)
 
     if manifest.kind == "tunnel":
-        for route in _sort_routes(routes):
-            _render_proxy_route(lines, manifest, route)
+        for index, route in enumerate(_sort_routes(routes)):
+            _render_proxy_route(lines, manifest, route, domain, index)
         lines.append("}")
         return "\n".join(lines)
 
@@ -157,19 +158,29 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
         )
         return "\n".join(lines)
 
-    for route in _sort_routes(routes):
-        _render_proxy_route(lines, manifest, route)
+    for index, route in enumerate(_sort_routes(routes)):
+        _render_proxy_route(lines, manifest, route, domain, index)
 
     lines.append("}")
     return "\n".join(lines)
 
 
-def _render_proxy_route(lines: List[str], manifest: Manifest, route: RouteConfig) -> None:
+def _render_proxy_route(
+    lines: List[str],
+    manifest: Manifest,
+    route: RouteConfig,
+    domain: str,
+    index: int,
+) -> None:
     upstream = _resolve_upstream(manifest, route)
     matcher = _render_matcher(route)
 
-    if matcher:
-        lines.append(f"    handle {matcher} {{")
+    if matcher and len(matcher) == 1:
+        lines.append(f"    handle {matcher[0]} {{")
+    elif matcher:
+        matcher_name = _matcher_name(manifest, domain, index)
+        lines.append(f"    @{matcher_name} path {' '.join(matcher)}")
+        lines.append(f"    handle @{matcher_name} {{")
     else:
         lines.append("    handle {")
 
@@ -211,14 +222,14 @@ def _resolve_upstream(manifest: Manifest, route: RouteConfig) -> str:
     raise ValueError(f"Route for {route.domain} does not resolve to an upstream.")
 
 
-def _render_matcher(route: RouteConfig) -> Optional[str]:
+def _render_matcher(route: RouteConfig) -> Optional[List[str]]:
     if route.path is not None:
-        return route.path
+        return [route.path]
     if route.path_prefix is not None:
         prefix = route.path_prefix.rstrip("/")
         if not prefix:
-            return "/*"
-        return f"{prefix} {prefix}/*"
+            return ["/*"]
+        return [prefix, f"{prefix}/*"]
     return None
 
 
@@ -227,6 +238,11 @@ def _rewrite_target(prefix: str) -> str:
     if not normalized:
         return "{uri}"
     return f"{normalized}{{uri}}"
+
+
+def _matcher_name(manifest: Manifest, domain: str, index: int) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", f"{manifest.app}_{domain}_{index}".lower()).strip("_")
+    return f"ophelia_{slug}"
 
 
 def _collect_service_env_keys(manifest: Manifest) -> List[str]:

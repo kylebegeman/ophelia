@@ -60,7 +60,8 @@ routes:
 
         rendered = render_caddy(manifest)
 
-        self.assertIn("handle /api /api/* {", rendered)
+        self.assertIn("path /api /api/*", rendered)
+        self.assertIn("handle @ophelia_", rendered)
         self.assertIn("uri strip_prefix /api", rendered)
         self.assertIn("reverse_proxy host.docker.internal:3711", rendered)
         self.assertIn("reverse_proxy host.docker.internal:3712", rendered)
