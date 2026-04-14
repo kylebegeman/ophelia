@@ -217,8 +217,8 @@ def _render_matcher(route: RouteConfig) -> Optional[str]:
     if route.path_prefix is not None:
         prefix = route.path_prefix.rstrip("/")
         if not prefix:
-            prefix = "/"
-        return f"{prefix}*"
+            return "/*"
+        return f"{prefix} {prefix}/*"
     return None
 
 

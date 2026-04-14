@@ -1,0 +1,8 @@
+version: 1
+app: begam-in
+kind: static
+static_root: /home/kyle/websites/begam.in
+
+routes:
+  - domain: begam.in
+  - domain: www.begam.in

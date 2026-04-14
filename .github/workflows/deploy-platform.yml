@@ -43,3 +43,12 @@ jobs:
         run: |
           ssh -p "${VPS_PORT}" -o StrictHostKeyChecking=no "${VPS_USER}@${VPS_HOST}" \
             "cd ~/ophelia && ./platform/scripts/bootstrap-host.sh"
+
+      - name: Apply platform-owned manifests
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -p "${VPS_PORT}" -o StrictHostKeyChecking=no "${VPS_USER}@${VPS_HOST}" \
+            "cd ~/ophelia && ./platform/scripts/apply-manifests.sh"

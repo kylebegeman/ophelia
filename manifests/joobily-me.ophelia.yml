@@ -1,0 +1,8 @@
+version: 1
+app: joobily-me
+kind: static
+static_root: /home/kyle/websites/joobily.me
+
+routes:
+  - domain: joobily.me
+  - domain: www.joobily.me
