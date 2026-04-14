@@ -1,4 +1,4 @@
-.PHONY: venv validate-examples render-examples
+.PHONY: venv validate-examples render-examples test
 
 venv:
 	python3 -m venv .venv
@@ -16,6 +16,9 @@ render-examples:
 	./cli/ship render examples/pokedex.ophelia.yml --output-dir build/pokedex
 	./cli/ship render examples/portfolio.ophelia.yml --output-dir build/portfolio
 	./cli/ship render examples/aspectavy-staging.ophelia.yml --output-dir build/aspectavy-staging
+
+test:
+	PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 
 compile:
 	.venv/bin/python -m compileall src

@@ -9,7 +9,7 @@ from .manifest import Manifest, RouteConfig, ServiceConfig
 
 
 def render_compose(manifest: Manifest) -> Optional[str]:
-    if manifest.kind in {"static", "tunnel"}:
+    if manifest.kind in {"static", "tunnel", "redirect"}:
         return None
 
     template = _read_template("compose/app.compose.tpl")
@@ -143,32 +143,43 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
         return "\n".join(lines)
 
     if manifest.kind == "tunnel":
+        for route in _sort_routes(routes):
+            _render_proxy_route(lines, manifest, route)
+        lines.append("}")
+        return "\n".join(lines)
+
+    if manifest.kind == "redirect":
         lines.extend(
             [
-                f"    reverse_proxy {manifest.tunnel_target}",
+                f"    redir {manifest.redirect_to} {manifest.redirect_status}",
                 "}",
             ]
         )
         return "\n".join(lines)
 
-    for route in routes:
-        service = manifest.services[route.service or ""]
-        upstream = f"{manifest.service_alias(service.name)}:{service.port}"
-
-        if route.path_prefix:
-            matcher = route.path_prefix.rstrip("/") + "*"
-            lines.append(f"    handle {matcher} {{")
-            if route.strip_prefix:
-                lines.append(f"        uri strip_prefix {route.strip_prefix}")
-            lines.append(f"        reverse_proxy {upstream}")
-            lines.append("    }")
-        else:
-            lines.append("    handle {")
-            lines.append(f"        reverse_proxy {upstream}")
-            lines.append("    }")
+    for route in _sort_routes(routes):
+        _render_proxy_route(lines, manifest, route)
 
     lines.append("}")
     return "\n".join(lines)
+
+
+def _render_proxy_route(lines: List[str], manifest: Manifest, route: RouteConfig) -> None:
+    upstream = _resolve_upstream(manifest, route)
+    matcher = _render_matcher(route)
+
+    if matcher:
+        lines.append(f"    handle {matcher} {{")
+    else:
+        lines.append("    handle {")
+
+    if route.strip_prefix:
+        lines.append(f"        uri strip_prefix {route.strip_prefix}")
+    if route.rewrite_prefix:
+        lines.append(f"        rewrite * {_rewrite_target(route.rewrite_prefix)}")
+
+    lines.append(f"        reverse_proxy {upstream}")
+    lines.append("    }")
 
 
 def _group_routes_by_domain(manifest: Manifest) -> "OrderedDict[str, List[RouteConfig]]":
@@ -176,6 +187,46 @@ def _group_routes_by_domain(manifest: Manifest) -> "OrderedDict[str, List[RouteC
     for route in manifest.routes:
         grouped.setdefault(route.domain, []).append(route)
     return grouped
+
+
+def _sort_routes(routes: List[RouteConfig]) -> List[RouteConfig]:
+    def sort_key(route: RouteConfig) -> tuple[int, int]:
+        if route.path is not None:
+            return (0, -len(route.path))
+        if route.path_prefix is not None:
+            return (1, -len(route.path_prefix))
+        return (2, 0)
+
+    return sorted(routes, key=sort_key)
+
+
+def _resolve_upstream(manifest: Manifest, route: RouteConfig) -> str:
+    if route.upstream:
+        return route.upstream
+    if route.service:
+        service = manifest.services[route.service]
+        return f"{manifest.service_alias(service.name)}:{service.port}"
+    if manifest.tunnel_target:
+        return manifest.tunnel_target
+    raise ValueError(f"Route for {route.domain} does not resolve to an upstream.")
+
+
+def _render_matcher(route: RouteConfig) -> Optional[str]:
+    if route.path is not None:
+        return route.path
+    if route.path_prefix is not None:
+        prefix = route.path_prefix.rstrip("/")
+        if not prefix:
+            prefix = "/"
+        return f"{prefix}*"
+    return None
+
+
+def _rewrite_target(prefix: str) -> str:
+    normalized = prefix.rstrip("/")
+    if not normalized:
+        return "{uri}"
+    return f"{normalized}{{uri}}"
 
 
 def _collect_service_env_keys(manifest: Manifest) -> List[str]:

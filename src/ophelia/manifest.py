@@ -33,8 +33,11 @@ class ServiceConfig:
 class RouteConfig:
     domain: str
     service: Optional[str] = None
+    upstream: Optional[str] = None
+    path: Optional[str] = None
     path_prefix: Optional[str] = None
     strip_prefix: Optional[str] = None
+    rewrite_prefix: Optional[str] = None
 
 
 @dataclass
@@ -61,6 +64,8 @@ class Manifest:
     env: Dict[str, str] = field(default_factory=dict)
     static_root: Optional[str] = None
     tunnel_target: Optional[str] = None
+    redirect_to: Optional[str] = None
+    redirect_status: int = 308
 
     def service_alias(self, service_name: str) -> str:
         return f"{self.app}-{service_name}"
@@ -103,6 +108,8 @@ def load_manifest(path: Path) -> Manifest:
         env=env,
         static_root=_optional_str(raw.get("static_root"), "static_root"),
         tunnel_target=_optional_str(raw.get("tunnel_target"), "tunnel_target"),
+        redirect_to=_optional_str(raw.get("redirect_to"), "redirect_to"),
+        redirect_status=_optional_int(raw.get("redirect_status"), "redirect_status") or 308,
     )
 
     _validate_manifest(manifest)
@@ -165,11 +172,16 @@ def _parse_routes(raw: Any) -> List[RouteConfig]:
             RouteConfig(
                 domain=_require_str(route_raw, "domain", prefix=f"routes[{index}]"),
                 service=_optional_str(route_raw.get("service"), f"routes[{index}].service"),
-                path_prefix=_optional_str(
+                upstream=_optional_str(route_raw.get("upstream"), f"routes[{index}].upstream"),
+                path=_optional_path(route_raw.get("path"), f"routes[{index}].path"),
+                path_prefix=_optional_path(
                     route_raw.get("path_prefix"), f"routes[{index}].path_prefix"
                 ),
-                strip_prefix=_optional_str(
+                strip_prefix=_optional_path(
                     route_raw.get("strip_prefix"), f"routes[{index}].strip_prefix"
+                ),
+                rewrite_prefix=_optional_path(
+                    route_raw.get("rewrite_prefix"), f"routes[{index}].rewrite_prefix"
                 ),
             )
         )
@@ -222,7 +234,7 @@ def _parse_healthcheck(raw: Any, service_name: str) -> HealthCheck:
 
 
 def _validate_manifest(manifest: Manifest) -> None:
-    allowed_kinds = {"service", "multi-service", "static", "tunnel"}
+    allowed_kinds = {"service", "multi-service", "static", "tunnel", "redirect"}
     if manifest.kind not in allowed_kinds:
         raise ManifestError(
             f"`kind` must be one of {sorted(allowed_kinds)}, got `{manifest.kind}`."
@@ -237,32 +249,98 @@ def _validate_manifest(manifest: Manifest) -> None:
                     f"Service `{service_name}` must define `image` or inherit a top-level `image`."
                 )
         _validate_host_ports(manifest)
-        _validate_service_routes(manifest)
+
+    if manifest.kind == "static":
+        if manifest.services:
+            raise ManifestError("Static apps may not declare `services`.")
+        if manifest.image:
+            raise ManifestError("Static apps may not declare a top-level `image`.")
+    if manifest.kind == "redirect":
+        if manifest.services:
+            raise ManifestError("Redirect apps may not declare `services`.")
+        if manifest.image:
+            raise ManifestError("Redirect apps may not declare a top-level `image`.")
+        if not manifest.redirect_to:
+            raise ManifestError("Redirect apps require `redirect_to`.")
+        if manifest.redirect_status not in {301, 302, 307, 308}:
+            raise ManifestError("`redirect_status` must be one of 301, 302, 307, or 308.")
 
     if manifest.kind == "static" and not manifest.static_root:
         raise ManifestError("Static apps require `static_root`.")
 
-    if manifest.kind == "tunnel" and not manifest.tunnel_target:
-        raise ManifestError("Tunnel apps require `tunnel_target`.")
+    if manifest.kind == "tunnel" and not manifest.tunnel_target and not any(
+        route.upstream for route in manifest.routes
+    ):
+        raise ManifestError("Tunnel apps require `tunnel_target` or per-route `upstream` values.")
+
+    if manifest.kind in {"service", "multi-service", "tunnel"}:
+        _validate_proxy_routes(manifest)
+    else:
+        _validate_non_proxy_routes(manifest)
 
 
-def _validate_service_routes(manifest: Manifest) -> None:
+def _validate_proxy_routes(manifest: Manifest) -> None:
     default_routes_by_domain: Dict[str, int] = {}
+    seen_route_matches: Dict[tuple[str, str, str], None] = {}
 
     for route in manifest.routes:
-        if not route.service:
-            raise ManifestError("Service-based routes must include `service`.")
-        if route.service not in manifest.services:
+        if route.service and route.upstream:
+            raise ManifestError(
+                f"Route for `{route.domain}` may not set both `service` and `upstream`."
+            )
+        if route.path and route.path_prefix:
+            raise ManifestError(
+                f"Route for `{route.domain}` may not set both `path` and `path_prefix`."
+            )
+        if route.path and route.strip_prefix:
+            raise ManifestError(
+                f"Route for `{route.domain}` may not use `strip_prefix` with exact `path`."
+            )
+
+        if route.service and route.service not in manifest.services:
             raise ManifestError(
                 f"Route for `{route.domain}` references unknown service `{route.service}`."
             )
-        if route.path_prefix is None:
+        if manifest.kind in {"service", "multi-service"} and not route.service and not route.upstream:
+            raise ManifestError(
+                f"Route for `{route.domain}` must include `service` or `upstream`."
+            )
+        if manifest.kind == "tunnel" and not route.service and not route.upstream and not manifest.tunnel_target:
+            raise ManifestError(
+                f"Route for `{route.domain}` must include `upstream`, `service`, or inherit `tunnel_target`."
+            )
+
+        if route.path is not None:
+            route_key = (route.domain, "path", route.path)
+        elif route.path_prefix is not None:
+            route_key = (route.domain, "path_prefix", route.path_prefix)
+        else:
+            route_key = (route.domain, "default", "*")
             default_routes_by_domain[route.domain] = default_routes_by_domain.get(route.domain, 0) + 1
+
+        if route_key in seen_route_matches:
+            kind = "exact path" if route_key[1] == "path" else "path prefix" if route_key[1] == "path_prefix" else "catch-all"
+            raise ManifestError(
+                f"Duplicate {kind} route for `{route.domain}` with matcher `{route_key[2]}`."
+            )
+        seen_route_matches[route_key] = None
 
     duplicates = [domain for domain, count in default_routes_by_domain.items() if count > 1]
     if duplicates:
         joined = ", ".join(sorted(duplicates))
         raise ManifestError(f"Each domain may only have one catch-all route. Duplicate defaults: {joined}")
+
+
+def _validate_non_proxy_routes(manifest: Manifest) -> None:
+    for route in manifest.routes:
+        if route.service or route.upstream:
+            raise ManifestError(
+                f"{manifest.kind.title()} apps may not declare `service` or `upstream` routes."
+            )
+        if route.path or route.path_prefix or route.strip_prefix or route.rewrite_prefix:
+            raise ManifestError(
+                f"{manifest.kind.title()} apps may not declare path-matching or rewrite route options."
+            )
 
 
 def _validate_host_ports(manifest: Manifest) -> None:
@@ -292,6 +370,15 @@ def _optional_str(value: Any, field_name: str) -> Optional[str]:
     if not isinstance(value, str) or not value.strip():
         raise ManifestError(f"`{field_name}` must be a non-empty string.")
     return value
+
+
+def _optional_path(value: Any, field_name: str) -> Optional[str]:
+    result = _optional_str(value, field_name)
+    if result is None:
+        return None
+    if not result.startswith("/"):
+        raise ManifestError(f"`{field_name}` must start with `/`.")
+    return result
 
 
 def _optional_int(value: Any, field_name: str) -> Optional[int]:
