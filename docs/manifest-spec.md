@@ -6,13 +6,17 @@ Each app repo should eventually include an `.ophelia.yml` file.
 
 - `version`: integer manifest version
 - `app`: stable app slug
-- `kind`: `service`, `multi-service`, `static`, or `tunnel`
+- `kind`: `service`, `multi-service`, `static`, `tunnel`, or `redirect`
 - `image`: default container image reference for service-based apps
 - `services`: named service definitions
 - `routes`: public routing definitions
 - `addons`: shared service requirements
 - `resources`: runtime limits
 - `env`: app-wide environment variables
+- `static_root`: filesystem root for static apps
+- `tunnel_target`: default upstream for tunnel apps
+- `redirect_to`: destination for redirect apps
+- `redirect_status`: redirect status for redirect apps
 
 ## Service Fields
 
@@ -23,6 +27,26 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `command`: optional command override
 - `env`: service-specific environment values
 - `healthcheck`: HTTP or command health check definition
+
+## Route Fields
+
+- `domain`: host name for the site block
+- `service`: named service target inside the manifest
+- `upstream`: direct upstream target such as `host.docker.internal:3501`
+- `path`: exact path matcher
+- `path_prefix`: prefix matcher for a route subtree
+- `strip_prefix`: prefix to remove before proxying
+- `rewrite_prefix`: prefix to prepend before proxying
+
+Use `rewrite_prefix` for host aliases that should map to an upstream subpath.
+
+Example:
+
+- `docs.bagels.top/` -> upstream `/docs`
+- `admin.bagels.top/` -> upstream `/admin`
+
+Pair that with exact-path passthrough routes for endpoints that should stay
+unaltered on the alias host.
 
 ## Example: single-service app
 
@@ -111,4 +135,47 @@ tunnel_target: host.docker.internal:3401
 
 routes:
   - domain: staging-app.bagels.top
+  - domain: staging-docs.bagels.top
+    path: /api/openapi.json
+  - domain: staging-docs.bagels.top
+    path: /api/admin-cli.json
+  - domain: staging-docs.bagels.top
+    path: /api/ai/defaults.json
+  - domain: staging-docs.bagels.top
+    path_prefix: /docs
+  - domain: staging-docs.bagels.top
+    rewrite_prefix: /docs
+  - domain: staging-admin.bagels.top
+    path_prefix: /admin
+  - domain: staging-admin.bagels.top
+    rewrite_prefix: /admin
+```
+
+## Example: multi-upstream tunnel bridge
+
+```yaml
+version: 1
+app: pokedex-dev
+kind: tunnel
+
+routes:
+  - domain: dev.pokedex.begam.in
+    path_prefix: /api
+    strip_prefix: /api
+    upstream: host.docker.internal:3711
+  - domain: dev.pokedex.begam.in
+    upstream: host.docker.internal:3712
+```
+
+## Example: redirect host
+
+```yaml
+version: 1
+app: bagels-top-www
+kind: redirect
+redirect_to: https://bagels.top{uri}
+redirect_status: 308
+
+routes:
+  - domain: www.bagels.top
 ```

@@ -19,6 +19,14 @@ This first pass establishes:
 The VPS should hold runtime state only: generated config, secrets, volumes,
 logs, and pulled images.
 
+## Core Docs
+
+- [Platform Handbook](docs/platform-handbook.md)
+- [Architecture](docs/architecture.md)
+- [AspectAvy Host Layout](docs/aspectavy-host-layout.md)
+- [Manifest Spec](docs/manifest-spec.md)
+- [Migration Plan](docs/migration-plan.md)
+
 ## Repository Layout
 
 ```text
@@ -26,6 +34,7 @@ ophelia/
   cli/                    # Local entrypoints
   docs/                   # Architecture and migration notes
   examples/               # Example app manifests
+  manifests/              # Platform-owned operational manifests
   platform/               # Shared infrastructure and host scripts
   src/ophelia/            # Python control plane
   templates/              # Render templates for compose and Caddy
@@ -70,8 +79,9 @@ Recommended order:
 3. stage and test app runtime bundles
 4. bridge migrated apps back into the legacy `~/edge` Caddy with localhost
    `host_port` mappings when needed
-5. optionally run Ophelia Caddy on alternate ports for validation
-6. switch public ingress only after the platform path is proven
+5. move remaining public hosts into platform-owned manifests
+6. validate generated Caddy config through `platform/scripts/validate-caddy.sh`
+7. cut over public ingress through `platform/scripts/cutover-public-edge.sh`
 
 ## Branch Strategy
 
@@ -82,9 +92,9 @@ Recommended order:
 
 ## Next Milestones
 
-1. Add remote execution and rollout logic to `ship deploy`.
+1. Finish the AspectAvy ingress cutover once the remaining DNS records exist.
 2. Add release history, rollback, and health-check verification.
-3. Add app adoption for existing manual VPS deployments.
+3. Add app adoption for remaining manual VPS deployments.
 4. Layer in Authelia once the basic runtime path is stable.
 
 ## Deploy Flows
@@ -128,3 +138,8 @@ For apps that still need to sit behind the legacy public edge during
 migration, set `services.<name>.host_port` in the manifest. Ophelia will bind
 that service to `127.0.0.1:<host_port>` while still attaching it to the shared
 Docker networks, so `~/edge` can proxy to it before full ingress cutover.
+
+For host-based ingress that still points at legacy localhost-bound apps,
+use tunnel manifests plus route rewrites. The shared Caddy service now exposes
+`host.docker.internal` through Docker's host-gateway mapping so Ophelia-managed
+ingress can proxy to existing host services without hand-maintained Caddy rules.
