@@ -13,10 +13,10 @@ This is the source-of-truth narrative for the VPS platform work so far:
 - `ophelia` is now the platform repo.
 - App code stays in app repos.
 - The VPS is supposed to hold runtime state, not become the source of truth.
-- Public ingress still runs through the legacy `~/edge` Caddy right now.
+- Public ingress now runs through Ophelia-managed Caddy on `80/443`.
 - `kylebegeman.com`, `dragonwriter.begam.in`, and `pokedex.begam.in` are already deploying through Ophelia-managed runtime.
 - Shared Postgres and Redis are running and being used by migrated apps.
-- The next major platform milestone is full public edge cutover into Ophelia Caddy.
+- The next major platform milestone is moving AspectAvy off tunnel ingress and into repo-owned service/image deploys.
 - The full `bagels.top` rehearsal structure for AspectAvy is now expressible in manifests and renderable through generated Caddy config.
 
 ## Why This Exists
@@ -152,7 +152,7 @@ Current live shared containers:
 - `shared-postgres-1`
 - `shared-redis-1`
 
-Public Caddy cutover is not done yet, so the Ophelia Caddy definition exists but the legacy edge remains the active ingress.
+Public Caddy cutover is done. The legacy `~/edge` stack remains on disk only as a rollback artifact until cleanup.
 
 Why shared Postgres/Redis:
 
@@ -280,7 +280,7 @@ Why image-first:
 
 ## Why Public Ingress Was Not Cut Over First
 
-Public ingress is still handled by the legacy `~/edge` Caddy on ports `80/443`.
+Public ingress now runs through Ophelia-managed Caddy on ports `80/443`.
 
 That was deliberate.
 
@@ -307,7 +307,7 @@ Example:
 - Pokedex API binds on `127.0.0.1:3701`
 - Pokedex web binds on `127.0.0.1:3702`
 
-That lets the legacy `~/edge` Caddy keep proxying to localhost while the app itself is fully managed by Ophelia.
+That let the legacy `~/edge` Caddy keep proxying to localhost while the app itself was fully managed by Ophelia.
 
 Why this matters:
 
@@ -321,15 +321,17 @@ As of this document, the VPS is effectively in a hybrid state.
 
 ### Public edge
 
-Still live:
+Live:
 
-- legacy `~/edge`
-- container: `edge-edge-1`
+- shared Ophelia Caddy
+- container: `shared-caddy-1`
 
-This remains the public ingress source of truth today.
+Legacy rollback artifact:
 
-Ophelia now has an executable cutover path through
-`platform/scripts/cutover-public-edge.sh`, but it has not been run yet.
+- `~/edge`
+- prior public ingress container: `edge-edge-1`
+
+Ophelia is now the public ingress source of truth.
 
 ### Shared Ophelia foundation
 
@@ -404,9 +406,10 @@ now defined in platform-owned manifests:
 - `manifests/aspectavy-staging.ophelia.yml`
 - `manifests/aspectavy-dev.ophelia.yml`
 
-Production and staging still terminate at the legacy localhost-bound AspectAvy
-stacks today. Ophelia handles them through tunnel manifests so ingress can be
-finished before the backend repo is migrated.
+Production and staging still terminate at the legacy AspectAvy API containers
+today. Ophelia handles them through tunnel manifests that target stable
+`ophelia-edge` aliases so ingress can be finished before the backend repo is
+migrated.
 
 #### Pokedex dev
 

@@ -2,14 +2,13 @@
 
 ## Current VPS Reality
 
-- `~/edge` is the real Caddy source of truth
+- public ingress now runs through Ophelia-managed Caddy on `80/443`
 - app deployments are spread across independent repos
 - several apps still own their own Postgres containers
 - `~/begam.in` includes stale deployment and backup logic
 - AspectAvy staging and production still run as localhost-bound legacy stacks
-- As of April 14, 2026, `docs.bagels.top`, `admin.bagels.top`, `dev.bagels.top`,
-  `staging-docs.bagels.top`, and `staging-admin.bagels.top` do not yet resolve
-  to the VPS
+- legacy `~/edge` is retained only as a rollback artifact until cleanup
+- the full AspectAvy rehearsal DNS set now resolves to the VPS
 
 ## Migration Order
 
@@ -68,6 +67,8 @@ AspectAvy backend repo should still follow up with:
   stacks
 - host-aware canonical URLs if the backend should differentiate `app`, `api`,
   `docs`, and `admin` behavior more explicitly
+- cleanup of the temporary `ophelia-edge` alias bridge used for the legacy
+  AspectAvy API containers during tunnel mode
 - any app-layer cleanup needed if absolute `/docs` or `/admin` links still leak
   across the new host split
 

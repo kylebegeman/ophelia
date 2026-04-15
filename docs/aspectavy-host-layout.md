@@ -10,10 +10,10 @@ Live production layout target on `bagels.top`:
 
 | Host | Role | Current Ophelia shape |
 | --- | --- | --- |
-| `app.bagels.top` | customer-facing app and public/universal-link pages | tunnel to the production backend |
-| `api.bagels.top` | raw backend/API host | tunnel to the production backend |
-| `docs.bagels.top` | docs and reference host | tunnel with exact endpoint passthrough plus `/docs` rewrite |
-| `admin.bagels.top` | operator/admin host | tunnel with `/admin` passthrough plus `/admin` rewrite |
+| `app.bagels.top` | customer-facing app and public/universal-link pages | tunnel to the production API alias on `ophelia-edge` |
+| `api.bagels.top` | raw backend/API host | tunnel to the production API alias on `ophelia-edge` |
+| `docs.bagels.top` | docs and reference host | tunnel to the production API alias with exact endpoint passthrough plus `/docs` rewrite |
+| `admin.bagels.top` | operator/admin host | tunnel to the production API alias with `/admin` passthrough plus `/admin` rewrite |
 | `dev.bagels.top` | static prototypes and previews | static site served from Ophelia runtime |
 
 Production manifest:
@@ -21,6 +21,10 @@ Production manifest:
 ```text
 manifests/aspectavy-production.ophelia.yml
 ```
+
+Current production tunnel target:
+
+- `aspectavy-production-api:3001` on the `ophelia-edge` network
 
 ## Staging
 
@@ -38,6 +42,10 @@ Staging manifest:
 ```text
 manifests/aspectavy-staging.ophelia.yml
 ```
+
+Current staging tunnel target:
+
+- `aspectavy-staging-api:3001` on the `ophelia-edge` network
 
 ## Future Mirror
 
@@ -135,22 +143,19 @@ If public DNS is ready and the generated Caddy config validates, use:
 
 ## DNS Status
 
-As of April 14, 2026:
+As of April 14, 2026, the full rehearsal set resolves to the VPS:
 
-- already pointed at the VPS:
-  - `app.bagels.top`
-  - `api.bagels.top`
-  - `staging-app.bagels.top`
-  - `staging-api.bagels.top`
-- not yet pointed at the VPS:
-  - `docs.bagels.top`
-  - `admin.bagels.top`
-  - `dev.bagels.top`
-  - `staging-docs.bagels.top`
-  - `staging-admin.bagels.top`
+- `app.bagels.top`
+- `api.bagels.top`
+- `docs.bagels.top`
+- `admin.bagels.top`
+- `dev.bagels.top`
+- `staging-app.bagels.top`
+- `staging-api.bagels.top`
+- `staging-docs.bagels.top`
+- `staging-admin.bagels.top`
 
-That means Ophelia can render and stage the full rehearsal layout now, but the
-public cutover should wait until those DNS records exist.
+That means Ophelia can be the live public edge for the full rehearsal layout.
 
 ## Remaining Backend-Repo Follow-up
 

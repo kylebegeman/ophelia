@@ -73,8 +73,10 @@ Shared services live in `platform/shared/compose.yml`. Generated app bundles
 join both networks with stable aliases like `dragon-writer-web`.
 
 The shared Caddy service also maps `host.docker.internal` to Docker's
-host-gateway address so tunnel-style manifests can proxy to localhost-bound host
-services on Linux.
+host-gateway address so tunnel-style manifests can proxy to host-published
+services on Linux. For legacy app containers that only bind `127.0.0.1` inside
+their own Compose project, attach the target container to `ophelia-edge` and
+use a stable network alias instead of `host.docker.internal`.
 
 ## Deployment Model
 

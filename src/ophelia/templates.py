@@ -175,6 +175,20 @@ def _render_proxy_route(
     upstream = _resolve_upstream(manifest, route)
     matcher = _render_matcher(route)
 
+    if route.rewrite_prefix and not matcher:
+        normalized_prefix = route.rewrite_prefix.rstrip("/")
+        if normalized_prefix:
+            lines.append("    handle / {")
+            lines.append(f"        rewrite * {normalized_prefix}")
+            lines.append(f"        reverse_proxy {upstream}")
+            lines.append("    }")
+
+        lines.append("    handle {")
+        lines.append(f"        rewrite * {_rewrite_target(route.rewrite_prefix)}")
+        lines.append(f"        reverse_proxy {upstream}")
+        lines.append("    }")
+        return
+
     if matcher and len(matcher) == 1:
         lines.append(f"    handle {matcher[0]} {{")
     elif matcher:

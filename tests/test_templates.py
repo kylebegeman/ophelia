@@ -35,12 +35,16 @@ routes:
         self.assertIn("handle /api/openapi.json {", rendered)
         self.assertIn("handle /api/admin-cli.json {", rendered)
         self.assertIn("handle /api/ai/defaults.json {", rendered)
+        self.assertIn("handle / {\n        rewrite * /docs\n        reverse_proxy", rendered)
         self.assertIn("rewrite * /docs{uri}", rendered)
+        self.assertIn("handle / {\n        rewrite * /admin\n        reverse_proxy", rendered)
         self.assertIn("rewrite * /admin{uri}", rendered)
 
-        docs_root_index = rendered.index("rewrite * /docs{uri}")
+        docs_root_index = rendered.index("rewrite * /docs\n")
+        docs_catchall_index = rendered.index("rewrite * /docs{uri}")
         docs_passthrough_index = rendered.index("handle /api/openapi.json {")
         self.assertLess(docs_passthrough_index, docs_root_index)
+        self.assertLess(docs_root_index, docs_catchall_index)
 
     def test_route_specific_upstreams_render(self) -> None:
         manifest = self._load(
