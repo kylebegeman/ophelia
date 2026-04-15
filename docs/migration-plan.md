@@ -6,7 +6,7 @@
 - app deployments are spread across independent repos
 - several apps still own their own Postgres containers
 - `~/begam.in` includes stale deployment and backup logic
-- AspectAvy staging and production still run as localhost-bound legacy stacks
+- AspectAvy staging and production now run through repo-owned Ophelia service manifests and the shared runtime
 - legacy `~/edge` is retained only as a rollback artifact until cleanup
 - the full AspectAvy rehearsal DNS set now resolves to the VPS
 
@@ -18,8 +18,8 @@
 4. Move public edge hosts into platform-owned manifests in `manifests/`.
 5. Reconcile platform manifests through `platform/scripts/apply-manifests.sh`.
 6. Validate generated Caddy config through `platform/scripts/validate-caddy.sh`.
-7. Add the missing DNS records for the new AspectAvy rehearsal hosts.
-8. Cut public ingress over with `platform/scripts/cutover-public-edge.sh`.
+7. Cut public ingress over with `platform/scripts/cutover-public-edge.sh`.
+8. Move app repos onto repo-owned Ophelia manifests and shared services.
 9. Remove stale cron jobs and old ingress config after cutover.
 
 ## First Apps To Migrate
@@ -56,21 +56,20 @@ Future mirror on `aspectavy.com`:
 - `admin.aspectavy.com`
 - `dev.aspectavy.com`
 
-## Backend Follow-up After Ophelia
+## Current Follow-up After AspectAvy Migration
 
-Ophelia can carry the host layout through tunnel manifests immediately, but the
-AspectAvy backend repo should still follow up with:
+The major AspectAvy migration steps are now done:
 
-- a repo-owned `.ophelia.yml` once the backend deploy lifecycle moves out of
-  tunnel mode
-- CI/GHCR deploy wiring so Ophelia can stop proxying to the legacy localhost
-  stacks
-- host-aware canonical URLs if the backend should differentiate `app`, `api`,
-  `docs`, and `admin` behavior more explicitly
-- cleanup of the temporary `ophelia-edge` alias bridge used for the legacy
-  AspectAvy API containers during tunnel mode
-- any app-layer cleanup needed if absolute `/docs` or `/admin` links still leak
-  across the new host split
+- repo-owned service manifests exist in the AspectAvy repo
+- public ingress serves the full `app/api/docs/admin/dev` bagels rehearsal layout
+- staging and production run against shared Postgres instead of bundled DB containers
+
+The remaining follow-up is narrower:
+
+- keep the app-repo GHCR publish/deploy workflows healthy
+- retire the stopped legacy AspectAvy DB containers when rollback comfort is high
+- move the mirrored `aspectavy.com` hostnames onto this VPS when the final
+  domain cutover is ready
 
 ## Deferred Until Phase 2
 

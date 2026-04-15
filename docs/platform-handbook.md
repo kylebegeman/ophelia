@@ -16,8 +16,8 @@ This is the source-of-truth narrative for the VPS platform work so far:
 - Public ingress now runs through Ophelia-managed Caddy on `80/443`.
 - `kylebegeman.com`, `dragonwriter.begam.in`, and `pokedex.begam.in` are already deploying through Ophelia-managed runtime.
 - Shared Postgres and Redis are running and being used by migrated apps.
-- The next major platform milestone is moving AspectAvy off tunnel ingress and into repo-owned service/image deploys.
-- The full `bagels.top` rehearsal structure for AspectAvy is now expressible in manifests and renderable through generated Caddy config.
+- AspectAvy staging and production now deploy through repo-owned service manifests and the shared Ophelia runtime.
+- The full `bagels.top` rehearsal structure for AspectAvy is now live through Ophelia-managed ingress.
 
 ## Why This Exists
 
@@ -399,17 +399,12 @@ Status:
 
 #### AspectAvy
 
-Still running outside full Ophelia runtime ownership, but its ingress layout is
-now defined in platform-owned manifests:
+Now split correctly across app-repo and platform ownership:
 
-- `manifests/aspectavy-production.ophelia.yml`
-- `manifests/aspectavy-staging.ophelia.yml`
-- `manifests/aspectavy-dev.ophelia.yml`
-
-Production and staging still terminate at the legacy AspectAvy API containers
-today. Ophelia handles them through tunnel manifests that target stable
-`ophelia-edge` aliases so ingress can be finished before the backend repo is
-migrated.
+- repo-owned service manifests and CI deploy flow for staging and production in
+  `/Users/kyle/Developer/projects/multiplatform/aspectavy/aspectavy-platform`
+- platform-owned static manifest for `manifests/aspectavy-dev.ophelia.yml`
+- shared ingress/runtime/addons still owned here in `ophelia`
 
 #### Pokedex dev
 
@@ -538,16 +533,11 @@ That does not match the current shared container naming and needs cleanup.
 
 It still contains scripts/logs/backup assumptions that are no longer the platform source of truth.
 
-### 4. AspectAvy backend runtime is not yet fully migrated
-
-Ingress is now modeled in Ophelia, but both staging and production still point
-at the legacy localhost-bound AspectAvy stacks through tunnel manifests.
-
-### 5. Pokedex dev is still broken/legacy
+### 4. Pokedex dev is still broken/legacy
 
 `pokedex-dev-api-1` is restarting and the dev environment has not been migrated yet.
 
-### 6. Rollback ergonomics are still early
+### 5. Rollback ergonomics are still early
 
 We do not yet have the full intended release UX such as:
 
@@ -555,7 +545,7 @@ We do not yet have the full intended release UX such as:
 - one-command rollback by digest
 - traffic-aware rollback flow
 
-### 7. Observability is still light
+### 6. Observability is still light
 
 We do not yet have:
 
@@ -564,11 +554,11 @@ We do not yet have:
 - richer health dashboards
 - platform-wide alerting
 
-### 8. Auth is deferred
+### 7. Auth is deferred
 
 Authelia was intentionally not introduced yet because the platform runtime and deploy path needed to stabilize first.
 
-### 9. Backups need a unified Ophelia-owned story
+### 8. Backups need a unified Ophelia-owned story
 
 There are bootstrap/backup scripts in the platform repo, but the live machine still carries legacy backup assumptions that need to be reconciled and cleaned up.
 
@@ -600,22 +590,21 @@ This is the order that still makes the most sense.
 
 1. Clean up stale cron and old `begam.in` operational drift.
 2. Decide whether to migrate or delete the broken Pokedex dev environment.
-3. Move AspectAvy from tunnel manifests into repo-owned service/image deploys
-   when the backend repo is ready.
-4. Add stronger status/doctor/release inspection commands to `ship`.
-5. Add the missing DNS records for the new AspectAvy rehearsal hosts.
+3. Add stronger status/doctor/release inspection commands to `ship`.
+4. Clean up the stopped legacy AspectAvy containers and old rollback artifacts
+   once the new runtime has soaked long enough.
+5. Decide whether to migrate or delete the broken Pokedex dev environment.
 
 ### Mid-term
 
-6. Move public ingress from legacy `~/edge` into Ophelia-managed Caddy.
-7. Remove now-obsolete edge config and old manual deployment leftovers.
+6. Remove now-obsolete edge config and old manual deployment leftovers.
 
 ### Later
 
-8. Add rollback UX.
-9. Add proper backup/restore workflows owned by Ophelia.
-10. Add Authelia if admin/auth protection is still wanted.
-11. Add monitoring/observability if the VPS footprint allows it.
+7. Add rollback UX.
+8. Add proper backup/restore workflows owned by Ophelia.
+9. Add Authelia if admin/auth protection is still wanted.
+10. Add monitoring/observability if the VPS footprint allows it.
 
 ## Operational Cheatsheet
 

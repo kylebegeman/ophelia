@@ -1,51 +1,38 @@
 # AspectAvy Host Layout
 
-This document describes the host structure Ophelia now supports for AspectAvy.
-The goal is to make `bagels.top` the real rehearsal environment for the final
-`aspectavy.com` host split.
+This document describes the host structure Ophelia now serves for AspectAvy.
+`bagels.top` is the live rehearsal environment for the final `aspectavy.com`
+host split.
 
-## Production Rehearsal
+## Live Rehearsal Layout
 
-Live production layout target on `bagels.top`:
+Production on `bagels.top`:
 
-| Host | Role | Current Ophelia shape |
+| Host | Role | Current ownership |
 | --- | --- | --- |
-| `app.bagels.top` | customer-facing app and public/universal-link pages | tunnel to the production API alias on `ophelia-edge` |
-| `api.bagels.top` | raw backend/API host | tunnel to the production API alias on `ophelia-edge` |
-| `docs.bagels.top` | docs and reference host | tunnel to the production API alias with exact endpoint passthrough plus `/docs` rewrite |
-| `admin.bagels.top` | operator/admin host | tunnel to the production API alias with `/admin` passthrough plus `/admin` rewrite |
-| `dev.bagels.top` | static prototypes and previews | static site served from Ophelia runtime |
+| `app.bagels.top` | customer-facing app and public/universal-link pages | repo-owned AspectAvy service manifest |
+| `api.bagels.top` | raw backend/API host | repo-owned AspectAvy service manifest |
+| `docs.bagels.top` | docs and reference host | repo-owned AspectAvy service manifest plus generic rewrite rules |
+| `admin.bagels.top` | operator/admin host | repo-owned AspectAvy service manifest plus generic rewrite rules |
+| `dev.bagels.top` | static prototypes and previews | platform-owned static manifest |
 
-Production manifest:
+Staging on `bagels.top`:
 
-```text
-manifests/aspectavy-production.ophelia.yml
-```
+| Host | Role | Current ownership |
+| --- | --- | --- |
+| `staging-app.bagels.top` | staging app host | repo-owned AspectAvy service manifest |
+| `staging-api.bagels.top` | staging API host | repo-owned AspectAvy service manifest |
+| `staging-docs.bagels.top` | staging docs host | repo-owned AspectAvy service manifest plus generic rewrite rules |
+| `staging-admin.bagels.top` | staging admin host | repo-owned AspectAvy service manifest plus generic rewrite rules |
 
-Current production tunnel target:
-
-- `aspectavy-production-api:3001` on the `ophelia-edge` network
-
-## Staging
-
-Preferred staging naming scheme:
-
-| Host | Role |
-| --- | --- |
-| `staging-app.bagels.top` | staging app host |
-| `staging-api.bagels.top` | staging API host |
-| `staging-docs.bagels.top` | staging docs host |
-| `staging-admin.bagels.top` | staging admin host |
-
-Staging manifest:
+The production and staging source manifests now live in the AspectAvy repo:
 
 ```text
-manifests/aspectavy-staging.ophelia.yml
+/Users/kyle/Developer/projects/multiplatform/aspectavy/aspectavy-platform/ops/deploy/ophelia/
 ```
 
-Current staging tunnel target:
-
-- `aspectavy-staging-api:3001` on the `ophelia-edge` network
+Ophelia still owns the shared runtime, shared Caddy, shared Postgres/Redis, and
+the `dev.bagels.top` static preview host.
 
 ## Future Mirror
 
@@ -65,11 +52,11 @@ Mirror example:
 examples/aspectavy-production-mirror.ophelia.yml
 ```
 
-As of April 14, 2026:
+As of April 15, 2026:
 
-- `app.aspectavy.com` resolves elsewhere through Vercel
+- `app.aspectavy.com` still resolves elsewhere through Vercel
 - `api.aspectavy.com`, `docs.aspectavy.com`, `admin.aspectavy.com`, and
-  `dev.aspectavy.com` do not yet resolve to the VPS
+  `dev.aspectavy.com` are not yet pointed at this VPS
 
 ## Docs And Admin Alias Behavior
 
@@ -119,31 +106,22 @@ applying manifests.
 
 ## Deployment Through Ophelia
 
-Platform-owned AspectAvy ingress is now deployed through:
+Platform-owned AspectAvy assets are now limited to:
 
-```text
-platform/scripts/apply-manifests.sh
-```
+- the `aspectavy-dev` static manifest
+- shared Caddy/runtime ownership
+- shared addon services
 
-That script:
+Production and staging are no longer applied through `platform/scripts/apply-manifests.sh`.
+They now deploy from the AspectAvy repo through `~/ophelia/cli/ship deploy`
+against the app-repo-owned source manifests already synced into:
 
-1. bootstraps the runtime root and Docker networks
-2. syncs platform-owned static assets
-3. applies every manifest in `manifests/`
-
-Use this validation flow on the VPS:
-
-1. `cd ~/ophelia`
-2. `./platform/scripts/apply-manifests.sh`
-3. `./platform/scripts/validate-caddy.sh`
-
-If public DNS is ready and the generated Caddy config validates, use:
-
-4. `./platform/scripts/cutover-public-edge.sh`
+- `~/ophelia-runtime/apps/aspectavy-staging/source-manifest.yml`
+- `~/ophelia-runtime/apps/aspectavy-production/source-manifest.yml`
 
 ## DNS Status
 
-As of April 14, 2026, the full rehearsal set resolves to the VPS:
+As of April 15, 2026, the full rehearsal set resolves to the VPS:
 
 - `app.bagels.top`
 - `api.bagels.top`
@@ -155,16 +133,15 @@ As of April 14, 2026, the full rehearsal set resolves to the VPS:
 - `staging-docs.bagels.top`
 - `staging-admin.bagels.top`
 
-That means Ophelia can be the live public edge for the full rehearsal layout.
+Public ingress is live through Ophelia-managed Caddy on `80/443`.
 
-## Remaining Backend-Repo Follow-up
+## Remaining Follow-up
 
-Ophelia can finish the host structure without touching the AspectAvy backend
-repo, but the backend repo still needs follow-up later:
+The major Ophelia-side migration for AspectAvy is done. Remaining work is now:
 
-- move from tunnel manifests to repo-owned service/image manifests
-- publish images through CI so Ophelia can manage runtime directly
-- add explicit host-aware behavior if `app`, `api`, `docs`, and `admin` should
-  diverge at the application layer
-- verify that docs/admin HTML, assets, and redirects behave correctly under the
-  new host split without leaking absolute legacy paths
+- keep the AspectAvy app-repo workflows publishing the GHCR image tags used by
+  the source manifests
+- retire the stopped legacy AspectAvy DB containers once rollback comfort is no
+  longer needed
+- move the mirrored `aspectavy.com` hostnames onto the VPS when the final domain
+  cutover is ready

@@ -92,9 +92,9 @@ Recommended order:
 
 ## Next Milestones
 
-1. Finish the AspectAvy ingress cutover once the remaining DNS records exist.
+1. Clean up the remaining legacy/manual VPS deployments and stale cron drift.
 2. Add release history, rollback, and health-check verification.
-3. Add app adoption for remaining manual VPS deployments.
+3. Keep moving app repos onto repo-owned Ophelia manifests and GHCR-backed CI deploys.
 4. Layer in Authelia once the basic runtime path is stable.
 
 ## Deploy Flows
