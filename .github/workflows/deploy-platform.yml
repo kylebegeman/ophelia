@@ -25,7 +25,7 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          rsync -az --delete \
+          rsync -az \
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.venv' \

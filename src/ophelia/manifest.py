@@ -19,6 +19,28 @@ class HealthCheck:
 
 
 @dataclass
+class MountConfig:
+    source: str
+    target: str
+    read_only: bool = True
+
+
+@dataclass
+class VerificationCheck:
+    url: str
+    expect_status: int = 200
+    contains: Optional[str] = None
+    name: Optional[str] = None
+
+
+@dataclass
+class PrismConfig:
+    admin_domain: Optional[str] = None
+    console_asset_path: Optional[str] = None
+    surface: str = "console"
+
+
+@dataclass
 class ServiceConfig:
     name: str
     port: int
@@ -26,6 +48,8 @@ class ServiceConfig:
     image: Optional[str] = None
     command: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
+    env_files: List[str] = field(default_factory=list)
+    mounts: List[MountConfig] = field(default_factory=list)
     healthcheck: HealthCheck = field(default_factory=HealthCheck)
 
 
@@ -56,16 +80,20 @@ class Manifest:
     version: int
     app: str
     kind: str
+    profile: Optional[str]
     image: Optional[str]
     services: Dict[str, ServiceConfig]
     routes: List[RouteConfig]
     addons: Addons = field(default_factory=Addons)
     resources: Resources = field(default_factory=Resources)
     env: Dict[str, str] = field(default_factory=dict)
+    env_files: List[str] = field(default_factory=list)
     static_root: Optional[str] = None
     tunnel_target: Optional[str] = None
     redirect_to: Optional[str] = None
     redirect_status: int = 308
+    verify: List[VerificationCheck] = field(default_factory=list)
+    prism: Optional[PrismConfig] = None
 
     def service_alias(self, service_name: str) -> str:
         return f"{self.app}-{service_name}"
@@ -88,31 +116,41 @@ def load_manifest(path: Path) -> Manifest:
     version = _require_int(raw, "version")
     app = _require_str(raw, "app")
     kind = _require_str(raw, "kind")
+    profile = _optional_profile(raw.get("profile"))
     image = _optional_str(raw.get("image"), "image")
 
     env = _mapping_as_str_dict(raw.get("env", {}), "env")
+    env_files = _string_list(raw.get("env_files", []), "env_files")
     addons = _parse_addons(raw.get("addons", {}))
     resources = _parse_resources(raw.get("resources", {}))
     routes = _parse_routes(raw.get("routes", []))
     services = _parse_services(raw.get("services", {}))
+    verify = _parse_verifications(raw.get("verify", []))
+    prism = _parse_prism(raw.get("prism"))
 
     manifest = Manifest(
         version=version,
         app=app,
         kind=kind,
+        profile=profile,
         image=image,
         services=services,
         routes=routes,
         addons=addons,
         resources=resources,
         env=env,
+        env_files=env_files,
         static_root=_optional_str(raw.get("static_root"), "static_root"),
         tunnel_target=_optional_str(raw.get("tunnel_target"), "tunnel_target"),
         redirect_to=_optional_str(raw.get("redirect_to"), "redirect_to"),
         redirect_status=_optional_int(raw.get("redirect_status"), "redirect_status") or 308,
+        verify=verify,
+        prism=prism,
     )
 
     _validate_manifest(manifest)
+    if path.suffix != ".json":
+        _validate_source_paths(manifest, path.parent)
     return manifest
 
 
@@ -145,6 +183,8 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
         image = _optional_str(service_raw.get("image"), f"services.{name}.image")
         command = _string_list(service_raw.get("command", []), f"services.{name}.command")
         env = _mapping_as_str_dict(service_raw.get("env", {}), f"services.{name}.env")
+        env_files = _string_list(service_raw.get("env_files", []), f"services.{name}.env_files")
+        mounts = _parse_mounts(service_raw.get("mounts", []), name)
         health = _parse_healthcheck(service_raw.get("healthcheck", {}), name)
 
         services[name] = ServiceConfig(
@@ -154,6 +194,8 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
             image=image,
             command=command,
             env=env,
+            env_files=env_files,
+            mounts=mounts,
             healthcheck=health,
         )
     return services
@@ -212,6 +254,79 @@ def _parse_resources(raw: Any) -> Resources:
     return Resources(memory=memory)
 
 
+def _parse_mounts(raw: Any, service_name: str) -> List[MountConfig]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError(f"`services.{service_name}.mounts` must be a list.")
+
+    mounts: List[MountConfig] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ManifestError(f"`services.{service_name}.mounts[{index}]` must be a mapping.")
+
+        source = _require_str(item, "source", prefix=f"services.{service_name}.mounts[{index}]")
+        target = _optional_str(item.get("target"), f"services.{service_name}.mounts[{index}].target")
+        if target is None or not target.startswith("/"):
+            raise ManifestError(
+                f"`services.{service_name}.mounts[{index}].target` must start with `/`."
+            )
+        read_only = item.get("read_only", True)
+        if not isinstance(read_only, bool):
+            raise ManifestError(
+                f"`services.{service_name}.mounts[{index}].read_only` must be a boolean."
+            )
+        mounts.append(MountConfig(source=source, target=target, read_only=read_only))
+    return mounts
+
+
+def _parse_verifications(raw: Any) -> List[VerificationCheck]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError("`verify` must be a list.")
+
+    checks: List[VerificationCheck] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ManifestError(f"`verify[{index}]` must be a mapping.")
+
+        url = _optional_str(item.get("url"), f"verify[{index}].url")
+        if url is None or not url.startswith(("http://", "https://")):
+            raise ManifestError(f"`verify[{index}].url` must start with `http://` or `https://`.")
+        expect_status = item.get("expect_status", 200)
+        if not isinstance(expect_status, int) or expect_status < 100 or expect_status > 599:
+            raise ManifestError(f"`verify[{index}].expect_status` must be a valid HTTP status code.")
+        contains = _optional_str(item.get("contains"), f"verify[{index}].contains")
+        name = _optional_str(item.get("name"), f"verify[{index}].name")
+        checks.append(
+            VerificationCheck(
+                url=url,
+                expect_status=expect_status,
+                contains=contains,
+                name=name,
+            )
+        )
+    return checks
+
+
+def _parse_prism(raw: Any) -> Optional[PrismConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`prism` must be a mapping.")
+
+    surface = _optional_str(raw.get("surface"), "prism.surface") or "console"
+    if surface not in {"console", "quark"}:
+        raise ManifestError("`prism.surface` must be `console` or `quark`.")
+
+    return PrismConfig(
+        admin_domain=_optional_str(raw.get("admin_domain"), "prism.admin_domain"),
+        console_asset_path=_optional_str(raw.get("console_asset_path"), "prism.console_asset_path"),
+        surface=surface,
+    )
+
+
 def _parse_healthcheck(raw: Any, service_name: str) -> HealthCheck:
     if raw is None:
         return HealthCheck()
@@ -239,6 +354,9 @@ def _validate_manifest(manifest: Manifest) -> None:
         raise ManifestError(
             f"`kind` must be one of {sorted(allowed_kinds)}, got `{manifest.kind}`."
         )
+
+    if manifest.profile not in {None, "prism"}:
+        raise ManifestError("`profile` must be omitted or set to `prism`.")
 
     if manifest.kind in {"service", "multi-service"}:
         if not manifest.services:
@@ -272,6 +390,14 @@ def _validate_manifest(manifest: Manifest) -> None:
         route.upstream for route in manifest.routes
     ):
         raise ManifestError("Tunnel apps require `tunnel_target` or per-route `upstream` values.")
+
+    if manifest.profile == "prism":
+        if manifest.kind not in {"service", "multi-service"}:
+            raise ManifestError("`profile: prism` requires a service-based manifest.")
+        if manifest.prism is None:
+            raise ManifestError("`profile: prism` requires a `prism` mapping.")
+        if manifest.prism.admin_domain and not any(route.service or route.upstream for route in manifest.routes):
+            raise ManifestError("Prism manifests need at least one proxy route target.")
 
     if manifest.kind in {"service", "multi-service", "tunnel"}:
         _validate_proxy_routes(manifest)
@@ -356,6 +482,25 @@ def _validate_host_ports(manifest: Manifest) -> None:
         host_ports[service.host_port] = service_name
 
 
+def _validate_source_paths(manifest: Manifest, manifest_dir: Path) -> None:
+    for index, source in enumerate(manifest.env_files):
+        _resolve_source_path(manifest_dir, source, f"env_files[{index}]")
+
+    for service_name, service in manifest.services.items():
+        for index, source in enumerate(service.env_files):
+            _resolve_source_path(manifest_dir, source, f"services.{service_name}.env_files[{index}]")
+        for index, mount in enumerate(service.mounts):
+            _resolve_source_path(manifest_dir, mount.source, f"services.{service_name}.mounts[{index}].source")
+
+
+def _resolve_source_path(manifest_dir: Path, source: str, field_name: str) -> Path:
+    raw = Path(source).expanduser()
+    resolved = raw if raw.is_absolute() else (manifest_dir / raw)
+    if not resolved.exists():
+        raise ManifestError(f"`{field_name}` points to missing source `{source}`.")
+    return resolved
+
+
 def _require_str(raw: Dict[str, Any], field_name: str, prefix: str = "") -> str:
     value = raw.get(field_name)
     label = f"{prefix}.{field_name}" if prefix else field_name
@@ -387,6 +532,10 @@ def _optional_int(value: Any, field_name: str) -> Optional[int]:
     if not isinstance(value, int) or value <= 0:
         raise ManifestError(f"`{field_name}` must be a positive integer.")
     return value
+
+
+def _optional_profile(value: Any) -> Optional[str]:
+    return _optional_str(value, "profile")
 
 
 def _require_int(raw: Dict[str, Any], field_name: str, prefix: str = "") -> int:

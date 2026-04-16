@@ -7,16 +7,20 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `version`: integer manifest version
 - `app`: stable app slug
 - `kind`: `service`, `multi-service`, `static`, `tunnel`, or `redirect`
+- `profile`: optional deployment preset, currently `prism`
 - `image`: default container image reference for service-based apps
 - `services`: named service definitions
 - `routes`: public routing definitions
 - `addons`: shared service requirements
 - `resources`: runtime limits
 - `env`: app-wide environment variables
+- `env_files`: manifest-relative env fragments copied into the runtime bundle
 - `static_root`: filesystem root for static apps
 - `tunnel_target`: default upstream for tunnel apps
 - `redirect_to`: destination for redirect apps
 - `redirect_status`: redirect status for redirect apps
+- `verify`: optional post-deploy HTTP verification checks
+- `prism`: Prism-specific config when `profile: prism`
 
 ## Service Fields
 
@@ -26,6 +30,8 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `image`: optional per-service image override
 - `command`: optional command override
 - `env`: service-specific environment values
+- `env_files`: extra env fragments copied into the runtime bundle for this service
+- `mounts`: manifest-relative files or directories copied into the runtime bundle and mounted into the container
 - `healthcheck`: HTTP or command health check definition
 
 ## Route Fields
@@ -112,6 +118,92 @@ When `addons.postgres: true`, `ship deploy --apply` provisions a dedicated
 database and role in the shared Postgres container and writes `DATABASE_URL`
 into the app runtime env file. `addons.redis: true` writes `REDIS_URL` against
 the shared Redis instance and assigns the next free logical Redis database.
+
+## Prism Profile
+
+Use `profile: prism` when the manifest is primarily hosting a Prism runtime or a Prism-backed operator surface.
+
+Additional fields:
+
+- `prism.admin_domain`: optional dedicated admin host that should proxy to the primary Prism service
+- `prism.console_asset_path`: optional in-container path for a mounted Console bundle
+- `prism.surface`: `console` or `quark`
+
+When `prism.admin_domain` is set, Ophelia will synthesize a route for that host if you did not already declare one explicitly.
+
+## Verification Checks
+
+`verify` entries are HTTP checks that `ship verify` or `ship deploy --apply --verify` can run after deployment.
+
+Fields:
+
+- `name`: optional human label
+- `url`: required `http://` or `https://` URL
+- `expect_status`: expected status code, default `200`
+- `contains`: optional substring that must appear in the response body
+
+Prism manifests infer verification checks when `verify` is omitted:
+
+- `surface: console`
+  - `https://<primary-domain-or-admin-domain>/health`
+  - `https://<primary-domain-or-admin-domain>/console`
+- `surface: quark`
+  - `https://<primary-domain-or-admin-domain>/health`
+  - `https://<primary-domain-or-admin-domain>/`
+  - `https://<primary-domain-or-admin-domain>/console`
+
+## Mounts
+
+Each service `mounts` item accepts:
+
+- `source`: manifest-relative file or directory to copy into the runtime bundle
+- `target`: absolute in-container path
+- `read_only`: boolean, default `true`
+
+This is the primary way to ship Prism-hosted Console bundles or other static operator assets alongside an app image without baking them into the container first.
+
+## Example: Prism-backed Quark surface
+
+```yaml
+version: 1
+app: quark-ops
+profile: prism
+kind: service
+image: ghcr.io/mrbagels/prism:quark-latest
+
+env_files:
+  - env/quark-ops.shared.env
+
+services:
+  web:
+    port: 8080
+    env:
+      PRISM_CONSOLE_SURFACE: quark
+      PRISM_CONSOLE_ASSET_PATH: /opt/prism/console
+    healthcheck:
+      path: /health
+
+routes:
+  - domain: ops.begam.in
+    service: web
+
+addons:
+  postgres: true
+  redis: true
+
+prism:
+  admin_domain: ops.begam.in
+  console_asset_path: /opt/prism/console
+  surface: quark
+
+verify:
+  - name: health
+    url: https://ops.begam.in/health
+  - name: landing
+    url: https://ops.begam.in/
+  - name: console-fallback
+    url: https://ops.begam.in/console
+```
 
 ## Example: static site
 

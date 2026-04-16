@@ -5,6 +5,7 @@ from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
 from ..remote import RemoteError, stage_remote_bundle
 from ..runtime import apply_local_bundle, deploy_bundle
+from ..verify import run_verifications
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -37,6 +38,11 @@ def register(subparsers: _SubParsersAction) -> None:
         help="Start or update the app and reload shared Caddy when available",
     )
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Run post-deploy verification checks after --apply succeeds",
+    )
+    parser.add_argument(
         "--ophelia-root",
         type=Path,
         default=REPO_ROOT,
@@ -50,6 +56,10 @@ def run(args: Namespace) -> int:
         manifest = load_manifest(args.manifest)
     except ManifestError as exc:
         print(f"Manifest invalid: {exc}")
+        return 1
+
+    if args.verify and not args.apply:
+        print("`--verify` requires `--apply`.")
         return 1
 
     if args.host:
@@ -71,6 +81,14 @@ def run(args: Namespace) -> int:
         print(f"{mode.capitalize()} bundle for {manifest.app} on {args.host}")
         if result:
             print(result)
+        if args.verify:
+            verification = run_verifications(manifest)
+            for item in verification["results"]:
+                prefix = "✓" if item["ok"] else "✗"
+                detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"
+                print(f"{prefix} {item['name']}: {detail} -> {item['url']}")
+            if not verification["ok"]:
+                return 1
         return 0
 
     if args.apply:
@@ -81,6 +99,13 @@ def run(args: Namespace) -> int:
             ophelia_root=args.ophelia_root,
         )
         print(f"Applied bundle for {manifest.app} into {app_root}")
+        if args.verify:
+            verification = run_verifications(manifest)
+            for item in verification["results"]:
+                prefix = "✓" if item["ok"] else "✗"
+                detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"
+                print(f"{prefix} {item['name']}: {detail} -> {item['url']}")
+            return 0 if verification["ok"] else 1
         return 0
 
     app_root = deploy_bundle(manifest, args.manifest, args.runtime_root)

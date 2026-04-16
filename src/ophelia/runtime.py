@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,13 @@ from typing import Dict, List
 from .addons import ensure_addons
 from .config import DEFAULT_RUNTIME_ROOT
 from .manifest import Manifest
-from .templates import render_caddy, render_compose, render_env_example
+from .templates import (
+    bundle_env_file_path,
+    bundle_mount_path,
+    render_caddy,
+    render_compose,
+    render_env_example,
+)
 
 
 @dataclass
@@ -43,9 +50,36 @@ def write_bundle(bundle: Dict[Path, str], output_dir: Path) -> None:
         target.write_text(content)
 
 
+def materialize_bundle(manifest: Manifest, manifest_path: Path, output_dir: Path) -> None:
+    write_bundle(render_bundle(manifest), output_dir)
+    sync_bundle_support_files(manifest, manifest_path, output_dir)
+
+
+def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_dir: Path) -> None:
+    manifest_dir = manifest_path.parent
+
+    for index, source in enumerate(manifest.env_files):
+        _copy_support_path(
+            _resolve_support_path(manifest_dir, source),
+            output_dir / bundle_env_file_path(source, index=index),
+        )
+
+    for service in manifest.services.values():
+        for index, source in enumerate(service.env_files):
+            _copy_support_path(
+                _resolve_support_path(manifest_dir, source),
+                output_dir / bundle_env_file_path(source, service_name=service.name, index=index),
+            )
+        for index, mount in enumerate(service.mounts):
+            _copy_support_path(
+                _resolve_support_path(manifest_dir, mount.source),
+                output_dir / bundle_mount_path(service.name, mount.source, index),
+            )
+
+
 def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Path:
     app_root = runtime_root / "apps" / manifest.app
-    write_bundle(render_bundle(manifest), app_root)
+    materialize_bundle(manifest, manifest_path, app_root)
 
     env_path = app_root / "env"
     env_example_path = app_root / "env.example"
@@ -152,3 +186,16 @@ def _run(command: List[str], capture_output: bool = False, allow_failure: bool =
         if allow_failure:
             return None
         raise
+
+
+def _resolve_support_path(manifest_dir: Path, source: str) -> Path:
+    raw = Path(source).expanduser()
+    return raw if raw.is_absolute() else (manifest_dir / raw)
+
+
+def _copy_support_path(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        shutil.copytree(source, destination, dirs_exist_ok=True)
+        return
+    shutil.copy2(source, destination)

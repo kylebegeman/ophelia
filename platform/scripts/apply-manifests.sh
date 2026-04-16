@@ -20,8 +20,18 @@ fi
 
 for manifest in "${manifests[@]}"; do
   echo "Applying $(basename "$manifest")"
-  "$REPO_ROOT/cli/ship" deploy "$manifest" \
-    --runtime-root "$RUNTIME_ROOT" \
-    --ophelia-root "$REPO_ROOT" \
-    --apply
+  case "$(basename "$manifest")" in
+    quark-ops.ophelia.yml)
+      "$REPO_ROOT/platform/scripts/deploy-quark-ops.sh" --environment production
+      ;;
+    quark-ops-staging.ophelia.yml)
+      "$REPO_ROOT/platform/scripts/deploy-quark-ops.sh" --environment staging
+      ;;
+    *)
+      "$REPO_ROOT/cli/ship" deploy "$manifest" \
+        --runtime-root "$RUNTIME_ROOT" \
+        --ophelia-root "$REPO_ROOT" \
+        --apply
+      ;;
+  esac
 done

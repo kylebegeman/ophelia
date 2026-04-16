@@ -177,7 +177,7 @@ This is what makes the app-repo CI path possible.
 
 For platform and app repos:
 
-- `dev` = working branch
+- `next` = working integration branch
 - `master` = production branch
 
 Why:
@@ -657,7 +657,7 @@ cd ~/ophelia
 
 ### Current branch conventions
 
-- do work on `dev`
+- do work on `next`
 - merge/push to `master` for production deploy behavior
 
 ## Summary

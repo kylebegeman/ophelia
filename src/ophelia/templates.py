@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import OrderedDict
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from .config import TEMPLATES_DIR
@@ -44,6 +45,21 @@ def render_env_example(manifest: Manifest) -> str:
         if key not in manifest.env:
             lines.append(f"{key}=replace-me")
 
+    if manifest.profile == "prism" and manifest.prism is not None:
+        lines.extend(
+            [
+                "",
+                "# Prism profile defaults",
+                f"PRISM_CONSOLE_SURFACE={manifest.prism.surface}",
+                "PRISM_CONSOLE_SETUP_TOKEN=replace-me",
+                "PRISM_MFA_ENCRYPTION_KEY=replace-me",
+            ]
+        )
+        if manifest.prism.console_asset_path:
+            lines.append(f"PRISM_CONSOLE_ASSET_PATH={manifest.prism.console_asset_path}")
+        if manifest.prism.admin_domain:
+            lines.append(f"# Dedicated Prism admin host routed by Ophelia: {manifest.prism.admin_domain}")
+
     return "\n".join(lines) + "\n"
 
 
@@ -54,11 +70,23 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
         "    restart: unless-stopped",
         "    env_file:",
         "      - ./env",
-        "    environment:",
-        f"      OPHELIA_APP: {_quote(manifest.app)}",
-        f"      OPHELIA_SERVICE: {_quote(service.name)}",
-        f"      PORT: {_quote(str(service.port))}",
     ]
+
+    for index, source in enumerate(manifest.env_files):
+        service_lines.append(f"      - {_quote(f'./{bundle_env_file_path(source, index=index)}')}")
+    for index, source in enumerate(service.env_files):
+        service_lines.append(
+            f"      - {_quote(f'./{bundle_env_file_path(source, service_name=service.name, index=index)}')}"
+        )
+
+    service_lines.extend(
+        [
+            "    environment:",
+            f"      OPHELIA_APP: {_quote(manifest.app)}",
+            f"      OPHELIA_SERVICE: {_quote(service.name)}",
+            f"      PORT: {_quote(str(service.port))}",
+        ]
+    )
 
     env_map = OrderedDict(sorted(manifest.env.items()))
     env_map.update(OrderedDict(sorted(service.env.items())))
@@ -80,6 +108,13 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
                 f"      - {_quote(f'127.0.0.1:{service.host_port}:{service.port}')}",
             ]
         )
+
+    if service.mounts:
+        service_lines.append("    volumes:")
+        for index, mount in enumerate(service.mounts):
+            bundle_source = bundle_mount_path(service.name, mount.source, index)
+            suffix = ":ro" if mount.read_only else ""
+            service_lines.append(f"      - {_quote(f'./{bundle_source}:{mount.target}{suffix}')}")
 
     if service.command:
         service_lines.append("    command:")
@@ -209,9 +244,18 @@ def _render_proxy_route(
 
 def _group_routes_by_domain(manifest: Manifest) -> "OrderedDict[str, List[RouteConfig]]":
     grouped: "OrderedDict[str, List[RouteConfig]]" = OrderedDict()
-    for route in manifest.routes:
+    for route in effective_routes(manifest):
         grouped.setdefault(route.domain, []).append(route)
     return grouped
+
+
+def effective_routes(manifest: Manifest) -> List[RouteConfig]:
+    routes = list(manifest.routes)
+    if manifest.profile == "prism" and manifest.prism and manifest.prism.admin_domain:
+        domains = {route.domain for route in routes}
+        if manifest.prism.admin_domain not in domains:
+            routes.append(RouteConfig(domain=manifest.prism.admin_domain, service=_default_service_name(manifest)))
+    return routes
 
 
 def _sort_routes(routes: List[RouteConfig]) -> List[RouteConfig]:
@@ -259,6 +303,17 @@ def _matcher_name(manifest: Manifest, domain: str, index: int) -> str:
     return f"ophelia_{slug}"
 
 
+def bundle_env_file_path(source: str, service_name: Optional[str] = None, index: int = 0) -> str:
+    name = Path(source).name
+    prefix = f"{service_name}-" if service_name else ""
+    return f"env.d/{prefix}{index + 1:02d}-{name}"
+
+
+def bundle_mount_path(service_name: str, source: str, index: int) -> str:
+    name = Path(source).name
+    return f"artifacts/{service_name}-{index + 1:02d}-{name}"
+
+
 def _collect_service_env_keys(manifest: Manifest) -> List[str]:
     keys = set()
     for service in manifest.services.values():
@@ -272,3 +327,11 @@ def _read_template(relative_path: str) -> str:
 
 def _quote(value: str) -> str:
     return json.dumps(value)
+
+
+def _default_service_name(manifest: Manifest) -> str:
+    if "web" in manifest.services:
+        return "web"
+    if manifest.services:
+        return next(iter(manifest.services.keys()))
+    raise ValueError(f"Manifest {manifest.app} does not expose a service for Prism routing.")

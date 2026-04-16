@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from .manifest import Manifest
-from .runtime import render_bundle, write_bundle
+from .runtime import materialize_bundle
 
 
 class RemoteError(RuntimeError):
@@ -45,7 +45,7 @@ def stage_remote_bundle(
     remote_runtime_root = _rsync_path(remote_runtime_root)
     with tempfile.TemporaryDirectory(prefix=f"ophelia-{manifest.app}-") as temp_dir:
         bundle_root = Path(temp_dir) / manifest.app
-        write_bundle(render_bundle(manifest), bundle_root)
+        materialize_bundle(manifest, manifest_path, bundle_root)
         _sync_bundle(bundle_root, host, ssh_port, remote_runtime_root, manifest.app)
 
     script = _build_remote_stage_script(

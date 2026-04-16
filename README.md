@@ -13,8 +13,8 @@ This first pass establishes:
 - render and validation flows for runtime bundles
 - shared Caddy/Postgres/Redis platform definitions
 - a local runtime layout that mirrors the eventual VPS shape
-- branch conventions where `dev` is the working branch and `master` is the
-  production-sync branch
+- branch conventions where `next` is the working integration branch and `master`
+  is the production-sync branch
 
 The VPS should hold runtime state only: generated config, secrets, volumes,
 logs, and pulled images.
@@ -51,6 +51,7 @@ python3 -m venv .venv
 ./cli/ship validate examples/dragonwriter.ophelia.yml
 ./cli/ship render examples/dragonwriter.ophelia.yml --output-dir ./build/dragonwriter
 ./cli/ship deploy examples/dragonwriter.ophelia.yml
+./cli/ship verify examples/dragonwriter.ophelia.yml
 ./cli/ship bootstrap-host kyle@209.74.71.165 --ssh-port 22022
 ./cli/ship list
 ```
@@ -85,7 +86,7 @@ Recommended order:
 
 ## Branch Strategy
 
-- `dev` is the default working branch.
+- `next` is the default working branch.
 - `master` is the production branch for platform sync to the VPS.
 - pushes to `master` run the platform deployment workflow in `.github/workflows`
   once the repository is connected to GitHub secrets.
@@ -118,6 +119,8 @@ Use this after an app repo is set up with GitHub Actions:
 2. CI syncs the artifact to the VPS or pushes the image to GHCR.
 3. CI SSHes into the VPS and runs `~/ophelia/cli/ship deploy ... --apply`.
 
+If the app has public health checks or operator surfaces that should be part of the release contract, run `~/ophelia/cli/ship deploy ... --apply --verify` instead.
+
 For static sites this means:
 
 1. build `dist/`
@@ -143,3 +146,41 @@ For host-based ingress that still points at legacy localhost-bound apps,
 use tunnel manifests plus route rewrites. The shared Caddy service now exposes
 `host.docker.internal` through Docker's host-gateway mapping so Ophelia-managed
 ingress can proxy to existing host services without hand-maintained Caddy rules.
+
+## Prism-first Deployments
+
+Ophelia can already host Prism as a normal service, but it now also has a Prism-first manifest profile so Prism-backed products do not need to keep re-expressing the same runtime contract.
+
+Use `profile: prism` when a manifest is primarily hosting:
+
+- a Prism runtime
+- a Prism-backed product surface such as Quark
+- a Prism service that needs a dedicated admin host and a baked Console bundle
+
+The Prism profile adds:
+
+- a `prism:` block for dedicated admin-host and surface metadata
+- manifest-relative `env_files` copied into the runtime bundle
+- service `mounts` when a product genuinely needs extra runtime files or directories
+- optional inferred verification checks for `/health` and `/console`
+- automatic routing for `prism.admin_domain` when that host should proxy to the primary Prism service
+
+Use [examples/quark-ops.ophelia.yml](examples/quark-ops.ophelia.yml) as the current reference shape for a baked-image Quark surface on `ops.begam.in`, and [manifests/quark-ops-staging.ophelia.yml](manifests/quark-ops-staging.ophelia.yml) for the staging host on `ops-staging.begam.in`.
+
+For the dedicated Quark hosts:
+
+1. build and push the Prism image from the `prism` repo
+2. sync the Ophelia control plane onto the VPS without deleting remote-only state
+3. deploy the staging or production manifest with `platform/scripts/deploy-quark-ops.sh`
+
+Example:
+
+```bash
+cd /Users/kyle/Developer/projects/web/prism/platform
+./scripts/release/build-image.sh ghcr.io/mrbagels/prism:quark-next
+
+cd /Users/kyle/Developer/projects/web/ophelia
+./platform/scripts/deploy-quark-ops.sh --environment staging --verify
+```
+
+`ops.begam.in` is intended to be a root-hosted Prism admin domain for the Quark surface. `/console` remains available as a compatibility fallback on that same host.

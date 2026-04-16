@@ -1,0 +1,38 @@
+version: 1
+app: quark-ops-staging
+profile: prism
+kind: service
+image: ghcr.io/mrbagels/prism:quark-next
+
+env_files:
+  - env/quark-ops.staging.env
+
+services:
+  web:
+    port: 8080
+    env:
+      PRISM_CONSOLE_SURFACE: quark
+      PRISM_CONSOLE_ASSET_PATH: /opt/prism/console
+    healthcheck:
+      path: /health
+
+routes:
+  - domain: ops-staging.begam.in
+    service: web
+
+addons:
+  postgres: true
+  redis: true
+
+prism:
+  admin_domain: ops-staging.begam.in
+  console_asset_path: /opt/prism/console
+  surface: quark
+
+verify:
+  - name: health
+    url: https://ops-staging.begam.in/health
+  - name: landing
+    url: https://ops-staging.begam.in/
+  - name: console-fallback
+    url: https://ops-staging.begam.in/console

@@ -19,8 +19,11 @@ def run(args: Namespace) -> int:
 
     print(f"Manifest valid: {manifest.app}")
     print(f"  kind: {manifest.kind}")
+    print(f"  profile: {manifest.profile or 'none'}")
     print(f"  routes: {len(manifest.routes)}")
     print(f"  services: {', '.join(manifest.services.keys()) or 'none'}")
     print(f"  postgres: {'yes' if manifest.addons.postgres else 'no'}")
     print(f"  redis: {'yes' if manifest.addons.redis else 'no'}")
+    if manifest.verify:
+        print(f"  verify: {len(manifest.verify)} explicit checks")
     return 0
