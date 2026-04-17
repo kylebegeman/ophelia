@@ -159,8 +159,11 @@ Each service `mounts` item accepts:
 - `source`: manifest-relative file or directory to copy into the runtime bundle
 - `target`: absolute in-container path
 - `read_only`: boolean, default `true`
+- `bind`: when `true`, mount the source path directly from the VPS instead of copying it into the runtime bundle first
 
 This is the primary way to ship Prism-hosted Console bundles or other static operator assets alongside an app image without baking them into the container first.
+
+Use `bind: true` for persistent host paths such as uploads or local backup directories that should survive deploys and accept writes at runtime.
 
 ## Example: Prism-backed Quark surface
 

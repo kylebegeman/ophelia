@@ -112,9 +112,13 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
     if service.mounts:
         service_lines.append("    volumes:")
         for index, mount in enumerate(service.mounts):
-            bundle_source = bundle_mount_path(service.name, mount.source, index)
+            bundle_source = (
+                mount.source
+                if mount.bind
+                else f"./{bundle_mount_path(service.name, mount.source, index)}"
+            )
             suffix = ":ro" if mount.read_only else ""
-            service_lines.append(f"      - {_quote(f'./{bundle_source}:{mount.target}{suffix}')}")
+            service_lines.append(f"      - {_quote(f'{bundle_source}:{mount.target}{suffix}')}")
 
     if service.command:
         service_lines.append("    command:")

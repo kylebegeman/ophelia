@@ -71,6 +71,8 @@ def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_di
                 output_dir / bundle_env_file_path(source, service_name=service.name, index=index),
             )
         for index, mount in enumerate(service.mounts):
+            if mount.bind:
+                continue
             _copy_support_path(
                 _resolve_support_path(manifest_dir, mount.source),
                 output_dir / bundle_mount_path(service.name, mount.source, index),

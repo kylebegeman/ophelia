@@ -170,6 +170,42 @@ prism:
         self.assertIn("./env.d/web-01-shared.env", compose)
         self.assertIn("./artifacts/web-01-console:/opt/quark/console:ro", compose)
 
+    def test_render_compose_supports_bind_mounts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "persistent" / "uploads").mkdir(parents=True)
+            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: dragon-writer
+kind: multi-service
+image: ghcr.io/example/dragon-writer:latest
+services:
+  web:
+    port: 3000
+    mounts:
+      - source: persistent/uploads
+        target: /app/public/uploads
+        read_only: false
+        bind: true
+routes:
+  - domain: dragonwriter.begam.in
+    service: web
+""".strip()
+                + "\n"
+            )
+
+            manifest = load_manifest(manifest_path)
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertIn(
+            "persistent/uploads:/app/public/uploads",
+            compose,
+        )
+
     def test_quark_surface_infers_root_host_verification_checks(self) -> None:
         manifest = """
 version: 1

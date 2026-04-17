@@ -23,6 +23,7 @@ class MountConfig:
     source: str
     target: str
     read_only: bool = True
+    bind: bool = False
 
 
 @dataclass
@@ -276,7 +277,12 @@ def _parse_mounts(raw: Any, service_name: str) -> List[MountConfig]:
             raise ManifestError(
                 f"`services.{service_name}.mounts[{index}].read_only` must be a boolean."
             )
-        mounts.append(MountConfig(source=source, target=target, read_only=read_only))
+        bind = item.get("bind", False)
+        if not isinstance(bind, bool):
+            raise ManifestError(
+                f"`services.{service_name}.mounts[{index}].bind` must be a boolean."
+            )
+        mounts.append(MountConfig(source=source, target=target, read_only=read_only, bind=bind))
     return mounts
 
 
