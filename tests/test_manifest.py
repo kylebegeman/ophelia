@@ -3,9 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import sys
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import ManifestError, load_manifest
-from ophelia.templates import render_caddy, render_compose
+from ophelia.runtime import render_bundle
+from ophelia.templates import caddy_env_keys, render_caddy, render_caddy_global, render_compose
 from ophelia.verify import verification_checks
 
 
@@ -53,6 +58,63 @@ routes:
         self.assertEqual("host.docker.internal:3711", loaded.routes[0].upstream)
         self.assertEqual("/api", loaded.routes[0].path_prefix)
         self.assertIsNone(loaded.tunnel_target)
+
+    def test_edge_catch_all_requires_on_demand_tls(self) -> None:
+        manifest = """
+version: 1
+app: broken-edge
+kind: multi-service
+services:
+  redirector:
+    image: ghcr.io/example/redirector:latest
+    port: 8081
+routes:
+  - domain: app.example.com
+    service: redirector
+edge:
+  catch_all:
+    service: redirector
+"""
+        with self.assertRaises(ManifestError):
+            self._load(manifest)
+
+    def test_edge_catch_all_renders_global_and_site_blocks(self) -> None:
+        manifest = """
+version: 1
+app: boop
+kind: multi-service
+services:
+  web:
+    image: ghcr.io/example/boop-web:latest
+    port: 3000
+  redirector:
+    image: ghcr.io/example/boop-backend:latest
+    port: 8081
+routes:
+  - domain: app.boop.at
+    service: web
+edge:
+  on_demand_tls:
+    ask: http://boop-control-plane:8080/boop/internal/caddy/allow?token={$BOOP_INTERNAL_RUNTIME_TOKEN}
+  catch_all:
+    service: redirector
+"""
+        loaded = self._load(manifest)
+
+        caddy = render_caddy(loaded)
+        caddy_global = render_caddy_global(loaded)
+        bundle = render_bundle(loaded)
+
+        self.assertIn("http:// {", caddy)
+        self.assertIn("redir https://{host}{uri} 308", caddy)
+        self.assertIn("https:// {", caddy)
+        self.assertIn("on_demand", caddy)
+        self.assertIn("reverse_proxy boop-redirector:8081", caddy)
+        self.assertEqual(["BOOP_INTERNAL_RUNTIME_TOKEN"], caddy_env_keys(loaded))
+        self.assertIsNotNone(caddy_global)
+        self.assertIn("on_demand_tls", caddy_global or "")
+        self.assertIn("BOOP_INTERNAL_RUNTIME_TOKEN=replace-me", bundle[Path("env.example")])
+        self.assertIn(Path("caddy/global.d/boop.caddy"), bundle)
 
     def test_prism_profile_supports_env_files_mounts_and_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

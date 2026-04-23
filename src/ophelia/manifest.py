@@ -66,6 +66,25 @@ class RouteConfig:
 
 
 @dataclass
+class OnDemandTLSConfig:
+    ask: str
+
+
+@dataclass
+class CatchAllEdgeConfig:
+    service: Optional[str] = None
+    upstream: Optional[str] = None
+    http_redirect: bool = True
+    http_redirect_status: int = 308
+
+
+@dataclass
+class EdgeConfig:
+    on_demand_tls: Optional[OnDemandTLSConfig] = None
+    catch_all: Optional[CatchAllEdgeConfig] = None
+
+
+@dataclass
 class Addons:
     postgres: bool = False
     redis: bool = False
@@ -89,6 +108,7 @@ class Manifest:
     resources: Resources = field(default_factory=Resources)
     env: Dict[str, str] = field(default_factory=dict)
     env_files: List[str] = field(default_factory=list)
+    edge: EdgeConfig = field(default_factory=EdgeConfig)
     static_root: Optional[str] = None
     tunnel_target: Optional[str] = None
     redirect_to: Optional[str] = None
@@ -126,6 +146,7 @@ def load_manifest(path: Path) -> Manifest:
     resources = _parse_resources(raw.get("resources", {}))
     routes = _parse_routes(raw.get("routes", []))
     services = _parse_services(raw.get("services", {}))
+    edge = _parse_edge(raw.get("edge", {}))
     verify = _parse_verifications(raw.get("verify", []))
     prism = _parse_prism(raw.get("prism"))
 
@@ -141,6 +162,7 @@ def load_manifest(path: Path) -> Manifest:
         resources=resources,
         env=env,
         env_files=env_files,
+        edge=edge,
         static_root=_optional_str(raw.get("static_root"), "static_root"),
         tunnel_target=_optional_str(raw.get("tunnel_target"), "tunnel_target"),
         redirect_to=_optional_str(raw.get("redirect_to"), "redirect_to"),
@@ -240,6 +262,44 @@ def _parse_addons(raw: Any) -> Addons:
     return Addons(
         postgres=_as_bool(raw.get("postgres", False), "addons.postgres"),
         redis=_as_bool(raw.get("redis", False), "addons.redis"),
+    )
+
+
+def _parse_edge(raw: Any) -> EdgeConfig:
+    if raw is None:
+        return EdgeConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`edge` must be a mapping.")
+
+    on_demand_tls = _parse_on_demand_tls(raw.get("on_demand_tls"))
+    catch_all = _parse_catch_all_edge(raw.get("catch_all"))
+    return EdgeConfig(on_demand_tls=on_demand_tls, catch_all=catch_all)
+
+
+def _parse_on_demand_tls(raw: Any) -> Optional[OnDemandTLSConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`edge.on_demand_tls` must be a mapping.")
+
+    ask = _require_str(raw, "ask", prefix="edge.on_demand_tls")
+    if not ask.startswith(("http://", "https://")):
+        raise ManifestError("`edge.on_demand_tls.ask` must start with `http://` or `https://`.")
+    return OnDemandTLSConfig(ask=ask)
+
+
+def _parse_catch_all_edge(raw: Any) -> Optional[CatchAllEdgeConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`edge.catch_all` must be a mapping.")
+
+    status = _optional_int(raw.get("http_redirect_status"), "edge.catch_all.http_redirect_status") or 308
+    return CatchAllEdgeConfig(
+        service=_optional_str(raw.get("service"), "edge.catch_all.service"),
+        upstream=_optional_str(raw.get("upstream"), "edge.catch_all.upstream"),
+        http_redirect=_as_bool(raw.get("http_redirect", True), "edge.catch_all.http_redirect"),
+        http_redirect_status=status,
     )
 
 
@@ -409,6 +469,27 @@ def _validate_manifest(manifest: Manifest) -> None:
         _validate_proxy_routes(manifest)
     else:
         _validate_non_proxy_routes(manifest)
+
+    _validate_edge(manifest)
+
+
+def _validate_edge(manifest: Manifest) -> None:
+    catch_all = manifest.edge.catch_all
+    if catch_all is None:
+        return
+
+    if manifest.kind not in {"service", "multi-service", "tunnel"}:
+        raise ManifestError("`edge.catch_all` requires a proxy-capable manifest kind.")
+    if manifest.edge.on_demand_tls is None:
+        raise ManifestError("`edge.catch_all` requires `edge.on_demand_tls.ask`.")
+    if catch_all.service and catch_all.upstream:
+        raise ManifestError("`edge.catch_all` may not set both `service` and `upstream`.")
+    if not catch_all.service and not catch_all.upstream:
+        raise ManifestError("`edge.catch_all` requires `service` or `upstream`.")
+    if catch_all.service and catch_all.service not in manifest.services:
+        raise ManifestError(f"`edge.catch_all.service` references unknown service `{catch_all.service}`.")
+    if catch_all.http_redirect_status not in {301, 302, 307, 308}:
+        raise ManifestError("`edge.catch_all.http_redirect_status` must be one of 301, 302, 307, or 308.")
 
 
 def _validate_proxy_routes(manifest: Manifest) -> None:

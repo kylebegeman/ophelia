@@ -15,6 +15,7 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `resources`: runtime limits
 - `env`: app-wide environment variables
 - `env_files`: manifest-relative env fragments copied into the runtime bundle
+- `edge`: optional public-edge features that need Caddy support beyond explicit host routes
 - `static_root`: filesystem root for static apps
 - `tunnel_target`: default upstream for tunnel apps
 - `redirect_to`: destination for redirect apps
@@ -53,6 +54,29 @@ Example:
 
 Pair that with exact-path passthrough routes for endpoints that should stay
 unaltered on the alias host.
+
+## Edge Fields
+
+Use `edge` for public-edge behavior that is not tied to one explicit domain.
+
+- `edge.on_demand_tls.ask`: Caddy on-demand TLS ask URL. Use Caddy env placeholders like `{$TOKEN_NAME}` for secrets; Ophelia copies those values from the app runtime `env` file into the shared Caddy env file during `ship deploy --apply`.
+- `edge.catch_all.service`: service target for a catch-all `https://` site block
+- `edge.catch_all.upstream`: direct upstream target for a catch-all `https://` site block
+- `edge.catch_all.http_redirect`: whether to render a catch-all `http://` to HTTPS redirect, default `true`
+- `edge.catch_all.http_redirect_status`: redirect status for that HTTP redirect, default `308`
+
+`edge.catch_all` requires `edge.on_demand_tls.ask` because Caddy needs a global
+ask endpoint before it should issue certificates for arbitrary hostnames.
+
+Example:
+
+```yaml
+edge:
+  on_demand_tls:
+    ask: http://my-app-control:8080/internal/caddy/allow?token={$MY_APP_EDGE_TOKEN}
+  catch_all:
+    service: redirector
+```
 
 ## Example: single-service app
 

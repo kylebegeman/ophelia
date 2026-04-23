@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .config import TEMPLATES_DIR
-from .manifest import Manifest, RouteConfig, ServiceConfig
+from .manifest import CatchAllEdgeConfig, Manifest, RouteConfig, ServiceConfig
 
 
 def render_compose(manifest: Manifest) -> Optional[str]:
@@ -21,8 +21,26 @@ def render_compose(manifest: Manifest) -> Optional[str]:
 
 def render_caddy(manifest: Manifest) -> str:
     template = _read_template("caddy/site.caddy.tpl")
-    sites_block = "\n\n".join(_render_site_block(manifest, domain, routes) for domain, routes in _group_routes_by_domain(manifest).items())
+    blocks = [
+        _render_site_block(manifest, domain, routes)
+        for domain, routes in _group_routes_by_domain(manifest).items()
+    ]
+    if manifest.edge.catch_all is not None:
+        blocks.append(_render_catch_all_edge_block(manifest, manifest.edge.catch_all))
+    sites_block = "\n\n".join(blocks)
     return template.replace("{{SITES_BLOCK}}", sites_block.rstrip()) + "\n"
+
+
+def render_caddy_global(manifest: Manifest) -> Optional[str]:
+    if manifest.edge.on_demand_tls is None:
+        return None
+
+    lines = [
+        "on_demand_tls {",
+        f"    ask {manifest.edge.on_demand_tls.ask}",
+        "}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def render_env_example(manifest: Manifest) -> str:
@@ -45,6 +63,10 @@ def render_env_example(manifest: Manifest) -> str:
         if key not in manifest.env:
             lines.append(f"{key}=replace-me")
 
+    for key in caddy_env_keys(manifest):
+        if key not in manifest.env and key not in service_secret_keys:
+            lines.append(f"{key}=replace-me")
+
     if manifest.profile == "prism" and manifest.prism is not None:
         lines.extend(
             [
@@ -53,6 +75,7 @@ def render_env_example(manifest: Manifest) -> str:
                 f"PRISM_CONSOLE_SURFACE={manifest.prism.surface}",
                 "PRISM_CONSOLE_SETUP_TOKEN=replace-me",
                 "PRISM_MFA_ENCRYPTION_KEY=replace-me",
+                "PRISM_CREDENTIAL_ENCRYPTION_KEY=replace-me",
             ]
         )
         if manifest.prism.console_asset_path:
@@ -204,6 +227,40 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
     return "\n".join(lines)
 
 
+def _render_catch_all_edge_block(manifest: Manifest, catch_all: CatchAllEdgeConfig) -> str:
+    lines: List[str] = []
+    if catch_all.http_redirect:
+        lines.extend(
+            [
+                "http:// {",
+                f"    redir https://{{host}}{{uri}} {catch_all.http_redirect_status}",
+                "}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "https:// {",
+            "    encode zstd gzip",
+            "    header {",
+            '        Strict-Transport-Security "max-age=31536000; includeSubDomains"',
+            "        X-Content-Type-Options nosniff",
+            "        X-Frame-Options DENY",
+            "        Referrer-Policy strict-origin-when-cross-origin",
+            "    }",
+            "    tls {",
+            "        on_demand",
+            "    }",
+            "    handle {",
+            f"        reverse_proxy {_resolve_catch_all_upstream(manifest, catch_all)}",
+            "    }",
+            "}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _render_proxy_route(
     lines: List[str],
     manifest: Manifest,
@@ -284,6 +341,15 @@ def _resolve_upstream(manifest: Manifest, route: RouteConfig) -> str:
     raise ValueError(f"Route for {route.domain} does not resolve to an upstream.")
 
 
+def _resolve_catch_all_upstream(manifest: Manifest, catch_all: CatchAllEdgeConfig) -> str:
+    if catch_all.upstream:
+        return catch_all.upstream
+    if catch_all.service:
+        service = manifest.services[catch_all.service]
+        return f"{manifest.service_alias(service.name)}:{service.port}"
+    raise ValueError(f"Catch-all edge for {manifest.app} does not resolve to an upstream.")
+
+
 def _render_matcher(route: RouteConfig) -> Optional[List[str]]:
     if route.path is not None:
         return [route.path]
@@ -322,6 +388,17 @@ def _collect_service_env_keys(manifest: Manifest) -> List[str]:
     keys = set()
     for service in manifest.services.values():
         keys.update(service.env.keys())
+    return sorted(keys)
+
+
+def caddy_env_keys(manifest: Manifest) -> List[str]:
+    values: List[str] = []
+    if manifest.edge.on_demand_tls is not None:
+        values.append(manifest.edge.on_demand_tls.ask)
+
+    keys = set()
+    for value in values:
+        keys.update(re.findall(r"\{\$([A-Za-z_][A-Za-z0-9_]*)\}", value))
     return sorted(keys)
 
 

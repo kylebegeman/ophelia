@@ -48,6 +48,8 @@
       caddy/
         dragon-writer.caddy
   caddy/
+    env
+    global.d/
     sites.d/
   static/
   backups/

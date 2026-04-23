@@ -58,7 +58,9 @@ python3 -m venv .venv
 
 By default `ship deploy` writes generated runtime state into
 `~/ophelia-runtime/apps/<app>/`.
-Shared Caddy snippets are staged into `~/ophelia-runtime/caddy/sites.d/`.
+Shared Caddy snippets are staged into `~/ophelia-runtime/caddy/sites.d/`;
+global edge snippets and Caddy env placeholders live under
+`~/ophelia-runtime/caddy/global.d/` and `~/ophelia-runtime/caddy/env`.
 
 ## Phase 1 Principles
 

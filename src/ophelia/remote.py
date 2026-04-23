@@ -94,6 +94,7 @@ def _build_remote_stage_script(
 ) -> str:
     app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
     caddy_target = f"{_shell_ref(remote_runtime_root)}/caddy/sites.d/{manifest.app}.caddy"
+    caddy_global_target = f"{_shell_ref(remote_runtime_root)}/caddy/global.d/{manifest.app}.caddy"
     release = {
         "app": manifest.app,
         "kind": manifest.kind,
@@ -107,6 +108,7 @@ def _build_remote_stage_script(
         "set -euo pipefail",
         f"APP_ROOT={app_root}",
         f"CADDY_TARGET={caddy_target}",
+        f"CADDY_GLOBAL_TARGET={caddy_global_target}",
         f"REMOTE_RUNTIME_ROOT={_shell_ref(remote_runtime_root)}",
         f"REMOTE_OPHELIA_ROOT={_shell_ref(remote_ophelia_root)}",
     ]
@@ -118,9 +120,11 @@ def _build_remote_stage_script(
             [
                 'mkdir -p "$APP_ROOT/caddy"',
                 'mkdir -p "$(dirname "$CADDY_TARGET")"',
+                'mkdir -p "$(dirname "$CADDY_GLOBAL_TARGET")"',
                 'if [ ! -f "$APP_ROOT/env" ] && [ -f "$APP_ROOT/env.example" ]; then cp "$APP_ROOT/env.example" "$APP_ROOT/env"; fi',
                 f'cat > "$APP_ROOT/release.json" <<\'EOF_RELEASE\'\n{json.dumps(release, indent=2, sort_keys=True)}\nEOF_RELEASE',
                 f'cp "$APP_ROOT/caddy/{manifest.app}.caddy" "$CADDY_TARGET"',
+                f'if [ -f "$APP_ROOT/caddy/global.d/{manifest.app}.caddy" ]; then cp "$APP_ROOT/caddy/global.d/{manifest.app}.caddy" "$CADDY_GLOBAL_TARGET"; else rm -f "$CADDY_GLOBAL_TARGET"; fi',
                 'echo "Staged runtime bundle and Caddy snippet."',
             ]
         )

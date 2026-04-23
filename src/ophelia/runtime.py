@@ -13,7 +13,9 @@ from .manifest import Manifest
 from .templates import (
     bundle_env_file_path,
     bundle_mount_path,
+    caddy_env_keys,
     render_caddy,
+    render_caddy_global,
     render_compose,
     render_env_example,
 )
@@ -34,6 +36,10 @@ def render_bundle(manifest: Manifest) -> Dict[Path, str]:
         Path("env.example"): render_env_example(manifest),
         Path("manifest.lock.json"): json.dumps(manifest.to_lock_dict(), indent=2, sort_keys=True) + "\n",
     }
+
+    caddy_global = render_caddy_global(manifest)
+    if caddy_global is not None:
+        bundle[Path("caddy") / "global.d" / f"{manifest.app}.caddy"] = caddy_global
 
     compose = render_compose(manifest)
     if compose is not None:
@@ -115,10 +121,20 @@ def apply_local_bundle(
         if manifest.addons.postgres or manifest.addons.redis:
             ensure_addons(manifest, app_root, ophelia_root)
 
+    caddy_env_changed = sync_caddy_env(manifest, app_root, runtime_root)
+
     caddy_source = app_root / "caddy" / f"{manifest.app}.caddy"
     caddy_target = runtime_root / "caddy" / "sites.d" / f"{manifest.app}.caddy"
     caddy_target.parent.mkdir(parents=True, exist_ok=True)
     caddy_target.write_text(caddy_source.read_text())
+
+    caddy_global_source = app_root / "caddy" / "global.d" / f"{manifest.app}.caddy"
+    caddy_global_target = runtime_root / "caddy" / "global.d" / f"{manifest.app}.caddy"
+    caddy_global_target.parent.mkdir(parents=True, exist_ok=True)
+    if caddy_global_source.exists():
+        caddy_global_target.write_text(caddy_global_source.read_text())
+    elif caddy_global_target.exists():
+        caddy_global_target.unlink()
 
     if manifest.kind in {"service", "multi-service"}:
         compose_path = app_root / "compose.yml"
@@ -139,11 +155,67 @@ def apply_local_bundle(
                 allow_failure=True,
             )
             if result and "caddy" in result.stdout:
-                _run(
-                    [*compose_args, "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"]
-                )
+                if caddy_env_changed:
+                    _run(
+                        [
+                            *compose_args,
+                            "--profile",
+                            "edge",
+                            "up",
+                            "-d",
+                            "--force-recreate",
+                            "caddy",
+                        ]
+                    )
+                else:
+                    _run(
+                        [
+                            *compose_args,
+                            "exec",
+                            "-T",
+                            "caddy",
+                            "caddy",
+                            "reload",
+                            "--config",
+                            "/etc/caddy/Caddyfile",
+                        ]
+                    )
 
     return app_root
+
+
+def sync_caddy_env(manifest: Manifest, app_root: Path, runtime_root: Path) -> bool:
+    keys = caddy_env_keys(manifest)
+    caddy_env_path = runtime_root / "caddy" / "env"
+    caddy_env_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not caddy_env_path.exists():
+        caddy_env_path.write_text("")
+
+    if not keys:
+        return False
+
+    app_env = _load_env_file(app_root / "env")
+    updates: Dict[str, str] = {}
+    missing: List[str] = []
+    for key in keys:
+        value = app_env.get(key, "").strip()
+        if not value or value == "replace-me":
+            missing.append(key)
+        else:
+            updates[key] = value
+
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(
+            f"Caddy on-demand TLS requires {joined} in {app_root / 'env'} before apply."
+        )
+
+    existing = _load_env_file(caddy_env_path)
+    changed = any(existing.get(key) != value for key, value in updates.items())
+    if changed:
+        _update_key_value_file(caddy_env_path, updates)
+    return changed
 
 
 def list_deployments(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> List[DeploymentRecord]:
@@ -201,3 +273,40 @@ def _copy_support_path(source: Path, destination: Path) -> None:
         shutil.copytree(source, destination, dirs_exist_ok=True)
         return
     shutil.copy2(source, destination)
+
+
+def _load_env_file(path: Path) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if not path.exists():
+        return values
+
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def _update_key_value_file(path: Path, updates: Dict[str, str]) -> None:
+    lines = path.read_text().splitlines() if path.exists() else []
+    remaining = dict(updates)
+    rendered: List[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            rendered.append(line)
+            continue
+
+        key, _ = line.split("=", 1)
+        if key in remaining:
+            rendered.append(f"{key}={remaining.pop(key)}")
+        else:
+            rendered.append(line)
+
+    for key, value in remaining.items():
+        rendered.append(f"{key}={value}")
+
+    path.write_text("\n".join(rendered) + "\n")

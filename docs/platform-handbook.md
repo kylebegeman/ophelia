@@ -114,6 +114,8 @@ Current intended shape:
 ~/ophelia-runtime/
   apps/
   caddy/
+    env
+    global.d/
     sites.d/
   static/
   backups/
@@ -515,6 +517,7 @@ Today:
 
 - `~/edge` is still live
 - Ophelia-generated Caddy snippets exist under `~/ophelia-runtime/caddy/sites.d`
+  and `~/ophelia-runtime/caddy/global.d`
 - full public ingress cutover has not happened yet
 - as of April 14, 2026, the new AspectAvy rehearsal DNS names for docs/admin/dev
   are not yet pointed at the VPS
