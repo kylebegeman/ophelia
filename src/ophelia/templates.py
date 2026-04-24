@@ -56,7 +56,7 @@ def render_env_example(manifest: Manifest) -> str:
         lines.append("DATABASE_URL=postgres://replace-me:replace-me@postgres:5432/replace-me")
 
     if manifest.addons.redis:
-        lines.append("REDIS_URL=redis://:replace-me@redis:6379/0")
+        lines.append("REDIS_URL=redis://default:replace-me@redis:6379/0")
 
     service_secret_keys = _collect_service_env_keys(manifest)
     for key in service_secret_keys:
@@ -169,8 +169,13 @@ def _render_healthcheck_block(service: ServiceConfig) -> List[str]:
     command = healthcheck.command or [
         "CMD-SHELL",
         (
-            f"wget -qO- http://127.0.0.1:{service.port}{healthcheck.path} "
-            ">/dev/null 2>&1 || exit 1"
+            "if command -v curl >/dev/null 2>&1; then "
+            f"curl -fsS http://127.0.0.1:{service.port}{healthcheck.path} >/dev/null; "
+            "elif command -v wget >/dev/null 2>&1; then "
+            f"wget -qO- http://127.0.0.1:{service.port}{healthcheck.path} >/dev/null; "
+            "else "
+            "exit 1; "
+            "fi"
         ),
     ]
     rendered_command = ", ".join(_quote(item) for item in command)

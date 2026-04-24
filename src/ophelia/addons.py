@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 import subprocess
+import time
 from pathlib import Path
 from typing import Dict
 
@@ -52,7 +53,7 @@ def ensure_addons(manifest: Manifest, app_root: Path, ophelia_root: Path) -> Non
         )
         state["redis"] = redis_state
         env_updates["REDIS_URL"] = (
-            f"redis://:{redis_state['password']}@redis:6379/{redis_state['database']}"
+            f"redis://default:{redis_state['password']}@redis:6379/{redis_state['database']}"
         )
 
     _write_state(state_path, state)
@@ -98,6 +99,8 @@ def _ensure_postgres_database(
     database = existing.get("database") or identifier
     user = existing.get("user") or identifier
     password = existing.get("password") or _random_secret()
+
+    _wait_for_postgres(shared_compose, shared_env)
 
     sql = "\n".join(
         [
@@ -145,6 +148,33 @@ def _ensure_postgres_database(
         "user": user,
         "password": password,
     }
+
+
+def _wait_for_postgres(shared_compose: Path, shared_env: Path, attempts: int = 30, delay: float = 1.0) -> None:
+    command = [
+        "docker",
+        "compose",
+        "--env-file",
+        str(shared_env),
+        "-f",
+        str(shared_compose),
+        "exec",
+        "-T",
+        "postgres",
+        "pg_isready",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+    ]
+
+    for _ in range(attempts):
+        result = subprocess.run(command, text=True, capture_output=True)
+        if result.returncode == 0:
+            return
+        time.sleep(delay)
+
+    raise RuntimeError("Postgres did not become ready before addon provisioning.")
 
 
 def _ensure_redis_binding(
