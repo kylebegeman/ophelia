@@ -139,7 +139,9 @@ def apply_local_bundle(
     if manifest.kind in {"service", "multi-service"}:
         compose_path = app_root / "compose.yml"
         if compose_path.exists():
-            _run(["docker", "compose", "-f", str(compose_path), "pull"], allow_failure=True)
+            # Image pulls are release-critical. Continuing after a failed pull can
+            # leave a host serving a stale local tag while the deploy appears done.
+            _run(["docker", "compose", "-f", str(compose_path), "pull"])
             _run(["docker", "compose", "-f", str(compose_path), "up", "-d"])
 
     if shared_compose is not None and shared_compose.exists():
