@@ -1,5 +1,5 @@
 {
-	email ops@begam.in
+	email ops@boop.at
 	import /etc/caddy/global.d/*.caddy
 }
 
