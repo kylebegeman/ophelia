@@ -46,6 +46,14 @@ case "$ENVIRONMENT" in
     ;;
 esac
 
+if [[ -n "${GHCR_TOKEN:-}" ]]; then
+  ghcr_username="${GHCR_USERNAME:-${GITHUB_ACTOR:-mrbagels}}"
+  printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$ghcr_username" --password-stdin >/dev/null
+elif [[ "${QUARK_REQUIRE_GHCR_LOGIN:-0}" == "1" ]]; then
+  echo "GHCR_TOKEN is required to pull the private Prism Quark image." >&2
+  exit 1
+fi
+
 "$REPO_ROOT/cli/ship" deploy "$MANIFEST" --runtime-root "$RUNTIME_ROOT"
 "$REPO_ROOT/platform/scripts/upsert-prism-surface-env.sh" "$APP_NAME"
 "$REPO_ROOT/cli/ship" deploy "$MANIFEST" --runtime-root "$RUNTIME_ROOT" --ophelia-root "$REPO_ROOT" --apply

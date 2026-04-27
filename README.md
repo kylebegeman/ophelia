@@ -175,11 +175,13 @@ For the dedicated Quark hosts:
 2. sync the Ophelia control plane onto the VPS without deleting remote-only state
 3. deploy the staging or production manifest with `platform/scripts/deploy-quark-ops.sh`
 
+`platform/scripts/apply-manifests.sh` intentionally skips `quark-ops*.ophelia.yml` unless `OPHELIA_APPLY_QUARK=1` is set. Broad platform deploys should not depend on the private Prism Quark image, GHCR package access, or `ops.begam.in` verification. Explicit Quark deploys can pull the private Prism image by exporting `GHCR_USERNAME` and `GHCR_TOKEN` before running `deploy-quark-ops.sh`.
+
 Example:
 
 ```bash
 cd /Users/kyle/Developer/projects/web/prism/platform
-./scripts/release/build-image.sh ghcr.io/mrbagels/prism:quark-next
+./scripts/release/build-image.sh ghcr.io/bagelworks/prism:quark-next
 
 cd /Users/kyle/Developer/projects/web/ophelia
 ./platform/scripts/deploy-quark-ops.sh --environment staging --verify
