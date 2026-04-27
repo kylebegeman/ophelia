@@ -172,7 +172,7 @@ version: 1
 app: quark-ops
 profile: prism
 kind: service
-image: ghcr.io/mrbagels/prism:quark-latest
+image: ghcr.io/bagelworks/prism:quark-latest
 
 env_files:
   - env/quark-ops.shared.env

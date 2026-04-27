@@ -177,7 +177,7 @@ Example:
 
 ```bash
 cd /Users/kyle/Developer/projects/web/prism/platform
-./scripts/release/build-image.sh ghcr.io/mrbagels/prism:quark-next
+./scripts/release/build-image.sh ghcr.io/bagelworks/prism:quark-next
 
 cd /Users/kyle/Developer/projects/web/ophelia
 ./platform/scripts/deploy-quark-ops.sh --environment staging --verify
