@@ -133,20 +133,21 @@ def _current_generated_files(app_root: Path) -> set[Path]:
 
 
 def _env_requirements(env_example: str) -> List[Dict[str, object]]:
-    requirements = []
+    by_key: Dict[str, Dict[str, object]] = {}
     for raw_line in env_example.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        requirements.append(
-            {
+        placeholder = _is_placeholder(value)
+        existing = by_key.get(key)
+        if existing is None or not placeholder:
+            by_key[key] = {
                 "key": key,
-                "placeholder": _is_placeholder(value),
-                "required_for_apply": _is_placeholder(value),
+                "placeholder": placeholder,
+                "required_for_apply": placeholder,
             }
-        )
-    return requirements
+    return [by_key[key] for key in sorted(by_key)]
 
 
 def _is_placeholder(value: str) -> bool:
