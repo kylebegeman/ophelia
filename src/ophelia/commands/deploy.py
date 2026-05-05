@@ -4,7 +4,7 @@ from pathlib import Path
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
 from ..remote import RemoteError, stage_remote_bundle
-from ..runtime import apply_local_bundle, deploy_bundle
+from ..runtime import apply_local_bundle, deploy_bundle, update_current_release_verification
 from ..verify import run_verifications
 
 
@@ -101,6 +101,7 @@ def run(args: Namespace) -> int:
         print(f"Applied bundle for {manifest.app} into {app_root}")
         if args.verify:
             verification = run_verifications(manifest)
+            update_current_release_verification(args.runtime_root, manifest.app, verification)
             for item in verification["results"]:
                 prefix = "✓" if item["ok"] else "✗"
                 detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"

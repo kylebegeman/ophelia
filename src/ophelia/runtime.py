@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +30,7 @@ class DeploymentRecord:
     runtime_path: Path
     deployed_at: str
     source_manifest: str
+    release_id: str | None = None
 
 
 def render_bundle(manifest: Manifest) -> Dict[Path, str]:
@@ -87,20 +90,42 @@ def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_di
 
 def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Path:
     app_root = runtime_root / "apps" / manifest.app
-    materialize_bundle(manifest, manifest_path, app_root)
+    bundle = render_bundle(manifest)
+    write_bundle(bundle, app_root)
+    sync_bundle_support_files(manifest, manifest_path, app_root)
 
     env_path = app_root / "env"
     env_example_path = app_root / "env.example"
     if not env_path.exists():
         env_path.write_text(env_example_path.read_text())
 
+    previous_release_id = current_release_id(runtime_root, manifest.app)
+    deployed_at = _utc_now()
+    release_id = _release_id(deployed_at, bundle)
     release = {
         "app": manifest.app,
+        "environment": getattr(manifest, "environment", None),
         "kind": manifest.kind,
+        "release_id": release_id,
+        "previous_release_id": previous_release_id,
         "source_manifest": str(manifest_path.resolve()),
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_hash": _sha256_bytes(manifest_path.read_bytes()) if manifest_path.exists() else None,
+        "rendered_bundle_hash": bundle_hash(bundle),
+        "git_sha": _git_sha(),
+        "images": image_references(manifest),
+        "image_digests": image_digests(manifest),
         "runtime_path": str(app_root.resolve()),
-        "deployed_at": _utc_now(),
+        "deployed_at": deployed_at,
+        "deployed_by": _deployed_by(),
+        "source": _deploy_source(),
+        "verification": {"status": "not_run", "ok": None, "results": []},
     }
+    releases_root = app_root / "releases"
+    releases_root.mkdir(parents=True, exist_ok=True)
+    (releases_root / f"{release_id}.json").write_text(
+        json.dumps(release, indent=2, sort_keys=True) + "\n"
+    )
     (app_root / "release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
     return app_root
 
@@ -239,13 +264,151 @@ def list_deployments(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> List[Deployme
                 runtime_path=Path(payload["runtime_path"]),
                 deployed_at=payload["deployed_at"],
                 source_manifest=payload["source_manifest"],
+                release_id=payload.get("release_id"),
             )
         )
     return deployments
 
 
+def current_release_id(runtime_root: Path, app: str) -> str | None:
+    release_path = runtime_root / "apps" / app / "release.json"
+    if not release_path.exists():
+        return None
+    try:
+        payload = json.loads(release_path.read_text())
+    except json.JSONDecodeError:
+        return None
+    release_id = payload.get("release_id")
+    return release_id if isinstance(release_id, str) and release_id else None
+
+
+def list_releases(runtime_root: Path, app: str) -> List[Dict[str, object]]:
+    releases_root = runtime_root / "apps" / app / "releases"
+    records: List[Dict[str, object]] = []
+
+    if releases_root.exists():
+        for release_path in sorted(releases_root.glob("*.json")):
+            try:
+                payload = json.loads(release_path.read_text())
+            except json.JSONDecodeError:
+                continue
+            payload.setdefault("release_id", release_path.stem)
+            records.append(payload)
+
+    if not records:
+        legacy_path = runtime_root / "apps" / app / "release.json"
+        if legacy_path.exists():
+            try:
+                payload = json.loads(legacy_path.read_text())
+            except json.JSONDecodeError:
+                payload = {}
+            if payload:
+                payload.setdefault("release_id", "legacy-current")
+                records.append(payload)
+
+    return sorted(records, key=lambda item: str(item.get("deployed_at", "")))
+
+
+def load_release(runtime_root: Path, app: str, release_id: str) -> Dict[str, object]:
+    release_path = runtime_root / "apps" / app / "releases" / f"{release_id}.json"
+    if release_path.exists():
+        return json.loads(release_path.read_text())
+
+    legacy_path = runtime_root / "apps" / app / "release.json"
+    if release_id == "current" and legacy_path.exists():
+        return json.loads(legacy_path.read_text())
+    if release_id == "legacy-current" and legacy_path.exists():
+        payload = json.loads(legacy_path.read_text())
+        payload.setdefault("release_id", "legacy-current")
+        return payload
+
+    raise FileNotFoundError(f"Release not found: {app}/{release_id}")
+
+
+def update_current_release_verification(runtime_root: Path, app: str, verification: Dict[str, object]) -> None:
+    app_root = runtime_root / "apps" / app
+    release_path = app_root / "release.json"
+    if not release_path.exists():
+        return
+
+    payload = json.loads(release_path.read_text())
+    payload["verification"] = verification
+    release_id = payload.get("release_id")
+    if isinstance(release_id, str):
+        historical_path = app_root / "releases" / f"{release_id}.json"
+        if historical_path.exists():
+            historical_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    release_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def bundle_hash(bundle: Dict[Path, str]) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    for relative_path in sorted(bundle):
+        digest.update(str(relative_path).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(bundle[relative_path].encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def image_references(manifest: Manifest) -> Dict[str, str]:
+    images: Dict[str, str] = {}
+    if manifest.image:
+        images["default"] = manifest.image
+    for service_name, service in sorted(manifest.services.items()):
+        image = service.image or manifest.image
+        if image:
+            images[service_name] = image
+    return images
+
+
+def image_digests(manifest: Manifest) -> Dict[str, str]:
+    digests: Dict[str, str] = {}
+    for name, image in image_references(manifest).items():
+        if "@sha256:" in image:
+            digests[name] = image.split("@", 1)[1]
+    return digests
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _release_id(deployed_at: str, bundle: Dict[Path, str]) -> str:
+    try:
+        stamp = datetime.fromisoformat(deployed_at).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    except ValueError:
+        stamp = deployed_at.replace("-", "").replace(":", "").replace("+", "").replace(" ", "T")
+    return f"{stamp}-{bundle_hash(bundle)[:12]}"
+
+
+def _sha256_bytes(content: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(content).hexdigest()
+
+
+def _git_sha() -> str | None:
+    from .config import REPO_ROOT
+
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _deployed_by() -> str:
+    return os.environ.get("OPHELIA_DEPLOYED_BY") or os.environ.get("GITHUB_ACTOR") or os.environ.get("USER") or "unknown"
+
+
+def _deploy_source() -> str:
+    return os.environ.get("OPHELIA_DEPLOY_SOURCE") or ("github-actions" if os.environ.get("GITHUB_ACTIONS") else "local")
 
 
 def _run(command: List[str], capture_output: bool = False, allow_failure: bool = False):
