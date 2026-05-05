@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 from .actions import action_catalog, cancel_job, run_job
 from .config import DEFAULT_RUNTIME_ROOT
+from .operator_reports import host_inventory, manifest_registry, release_registry
+from .config import REPO_ROOT
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> None:
@@ -27,6 +29,15 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/actions":
             self._json({"actions": action_catalog()})
+            return
+        if parsed.path == "/host/inventory":
+            self._json(host_inventory(self.runtime_root_value, REPO_ROOT))
+            return
+        if parsed.path == "/registry/manifests":
+            self._json(manifest_registry(REPO_ROOT / "manifests", self.runtime_root_value))
+            return
+        if parsed.path == "/registry/releases":
+            self._json(release_registry(self.runtime_root_value))
             return
         if parsed.path.startswith("/jobs/") and parsed.path.endswith("/events"):
             job_id = parsed.path.split("/")[2]
