@@ -115,6 +115,8 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
         "git_sha": _git_sha(),
         "images": image_references(manifest),
         "image_digests": image_digests(manifest),
+        "generated_files": [str(path) for path in sorted(bundle)],
+        "bundle_path": str((app_root / "release-bundles" / release_id).resolve()),
         "runtime_path": str(app_root.resolve()),
         "deployed_at": deployed_at,
         "deployed_by": _deployed_by(),
@@ -123,6 +125,7 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     }
     releases_root = app_root / "releases"
     releases_root.mkdir(parents=True, exist_ok=True)
+    write_bundle(bundle, app_root / "release-bundles" / release_id)
     (releases_root / f"{release_id}.json").write_text(
         json.dumps(release, indent=2, sort_keys=True) + "\n"
     )
