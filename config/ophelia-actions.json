@@ -1,0 +1,20 @@
+{
+  "api": {
+    "bind_host": "127.0.0.1",
+    "port": 8765
+  },
+  "callbacks_enabled": false,
+  "destructive_restore_enabled": false,
+  "disabled_actions": [],
+  "enabled_actions": ["*"],
+  "max_concurrent_jobs": 1,
+  "production_apply_enabled": false,
+  "allowed_manifest_roots": [
+    ".",
+    "manifests",
+    "examples"
+  ],
+  "allowed_runtime_roots": [
+    "~/ophelia-runtime"
+  ]
+}
