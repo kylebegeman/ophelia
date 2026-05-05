@@ -6,3 +6,7 @@ redirect_status: 308
 
 routes:
   - domain: www.bagels.top
+
+verify:
+  - name: redirect-target
+    url: https://www.bagels.top/

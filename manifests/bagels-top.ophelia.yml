@@ -5,3 +5,7 @@ static_root: /home/kyle/websites/bagels.top
 
 routes:
   - domain: bagels.top
+
+verify:
+  - name: landing
+    url: https://bagels.top/

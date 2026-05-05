@@ -173,6 +173,9 @@ When `prism.admin_domain` is set, Ophelia will synthesize a route for that host 
 ## Verification Checks
 
 `verify` entries are HTTP checks that `ship verify` or `ship deploy --apply --verify` can run after deployment.
+Ophelia-owned manifests should include at least one explicit verification check
+so preflight, conflict scanning, rollback reports, and Quark operator views can
+show concrete post-change checks.
 
 Fields:
 

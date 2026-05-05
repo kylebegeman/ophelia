@@ -6,3 +6,9 @@ static_root: /home/kyle/websites/joobily.me
 routes:
   - domain: joobily.me
   - domain: www.joobily.me
+
+verify:
+  - name: landing
+    url: https://joobily.me/
+  - name: www-landing
+    url: https://www.joobily.me/

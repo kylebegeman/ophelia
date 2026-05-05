@@ -39,6 +39,13 @@ class ConflictTests(unittest.TestCase):
             self.assertIn("duplicate_host_port", conflict_types)
             self.assertIn("duplicate_docker_alias", conflict_types)
 
+    def test_current_manifests_have_verification_checks(self) -> None:
+        manifest_dir = Path(__file__).resolve().parents[1] / "manifests"
+        report = scan_conflicts(manifest_dir)
+
+        warning_types = {item["type"] for item in report["warnings"]}
+        self.assertNotIn("missing_verification_checks", warning_types)
+
 
 def _manifest(app: str, domain: str, host_port: int) -> str:
     return f"""

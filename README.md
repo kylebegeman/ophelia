@@ -160,6 +160,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship drift <manifest>` and `ship drift all` for runtime drift detection.
 - `ship inspect conflicts` for cross-manifest platform conflict scanning.
 - `ship status`, `ship doctor`, and `ship list` for read-only runtime inspection.
+- `ship actions`, `ship jobs`, and `ship api serve` for Quark-facing local job integration.
 
 Most read-only commands accept `--json` for Quark/Prism integration.
 
