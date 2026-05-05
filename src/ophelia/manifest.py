@@ -100,6 +100,7 @@ class Manifest:
     version: int
     app: str
     kind: str
+    environment: Optional[str]
     profile: Optional[str]
     image: Optional[str]
     services: Dict[str, ServiceConfig]
@@ -137,6 +138,7 @@ def load_manifest(path: Path) -> Manifest:
     version = _require_int(raw, "version")
     app = _require_str(raw, "app")
     kind = _require_str(raw, "kind")
+    environment = _optional_environment(raw.get("environment"))
     profile = _optional_profile(raw.get("profile"))
     image = _optional_str(raw.get("image"), "image")
 
@@ -154,6 +156,7 @@ def load_manifest(path: Path) -> Manifest:
         version=version,
         app=app,
         kind=kind,
+        environment=environment,
         profile=profile,
         image=image,
         services=services,
@@ -222,6 +225,15 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
             healthcheck=health,
         )
     return services
+
+
+def _optional_environment(value: Any) -> Optional[str]:
+    environment = _optional_str(value, "environment")
+    if environment is None:
+        return None
+    if environment not in {"dev", "staging", "production"}:
+        raise ManifestError("`environment` must be one of `dev`, `staging`, or `production`.")
+    return environment
 
 
 def _parse_routes(raw: Any) -> List[RouteConfig]:

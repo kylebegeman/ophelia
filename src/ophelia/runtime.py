@@ -149,6 +149,11 @@ def apply_local_bundle(
         if manifest.addons.postgres or manifest.addons.redis:
             ensure_addons(manifest, app_root, ophelia_root)
 
+    placeholder_keys = placeholder_env_keys(app_root / "env")
+    if placeholder_keys:
+        joined = ", ".join(placeholder_keys)
+        raise RuntimeError(f"Refusing to apply with placeholder env values in {app_root / 'env'}: {joined}")
+
     caddy_env_changed = sync_caddy_env(manifest, app_root, runtime_root)
 
     caddy_source = app_root / "caddy" / f"{manifest.app}.caddy"
@@ -198,6 +203,18 @@ def apply_local_bundle(
                         ]
                     )
                 else:
+                    _run(
+                        [
+                            *compose_args,
+                            "exec",
+                            "-T",
+                            "caddy",
+                            "caddy",
+                            "validate",
+                            "--config",
+                            "/etc/caddy/Caddyfile",
+                        ]
+                    )
                     _run(
                         [
                             *compose_args,
@@ -375,6 +392,14 @@ def image_digests(manifest: Manifest) -> Dict[str, str]:
     return digests
 
 
+def placeholder_env_keys(path: Path) -> List[str]:
+    keys: List[str] = []
+    for key, value in _load_env_file(path).items():
+        if _is_placeholder_value(value):
+            keys.append(key)
+    return sorted(keys)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -412,6 +437,11 @@ def _deployed_by() -> str:
 
 def _deploy_source() -> str:
     return os.environ.get("OPHELIA_DEPLOY_SOURCE") or ("github-actions" if os.environ.get("GITHUB_ACTIONS") else "local")
+
+
+def _is_placeholder_value(value: str) -> bool:
+    lowered = value.strip().lower()
+    return lowered in {"", "replace-me", "changeme", "todo"} or "replace-me" in lowered
 
 
 def _run(command: List[str], capture_output: bool = False, allow_failure: bool = False):

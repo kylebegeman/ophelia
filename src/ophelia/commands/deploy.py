@@ -1,12 +1,13 @@
-from argparse import Namespace, _SubParsersAction
 import json
+import subprocess
+from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
-from ..planning import deploy_plan
+from ..planning import deploy_plan, deploy_confirmation_token
 from ..remote import RemoteError, stage_remote_bundle
-from ..runtime import apply_local_bundle, deploy_bundle, update_current_release_verification
+from ..runtime import apply_local_bundle, current_release_id, deploy_bundle, update_current_release_verification
 from ..verify import run_verifications
 
 
@@ -45,6 +46,10 @@ def register(subparsers: _SubParsersAction) -> None:
         help="Show the deploy plan without writing runtime state",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON for --plan")
+    parser.add_argument(
+        "--confirm",
+        help="Confirmation token required for production apply",
+    )
     parser.add_argument(
         "--verify",
         action="store_true",
@@ -101,6 +106,16 @@ def run(args: Namespace) -> int:
                 print("  none")
         return 0
 
+    plan = deploy_plan(manifest, args.manifest, args.runtime_root)
+    if args.apply and plan["confirmation_required"]:
+        expected = deploy_confirmation_token(plan)
+        if args.confirm != expected:
+            print(
+                "Production apply requires confirmation token "
+                f"{expected}. Run `ship deploy {args.manifest} --plan` first."
+            )
+            return 1
+
     if args.host:
         try:
             result = stage_remote_bundle(
@@ -131,13 +146,19 @@ def run(args: Namespace) -> int:
         return 0
 
     if args.apply:
-        app_root = apply_local_bundle(
-            manifest=manifest,
-            manifest_path=args.manifest,
-            runtime_root=args.runtime_root,
-            ophelia_root=args.ophelia_root,
-        )
+        try:
+            app_root = apply_local_bundle(
+                manifest=manifest,
+                manifest_path=args.manifest,
+                runtime_root=args.runtime_root,
+                ophelia_root=args.ophelia_root,
+            )
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            print(f"Local apply failed: {exc}")
+            return 1
         print(f"Applied bundle for {manifest.app} into {app_root}")
+        release_id = current_release_id(args.runtime_root, manifest.app) or "unknown"
+        print(f"Apply result: app={manifest.app} release={release_id} runtime={app_root}")
         if args.verify:
             verification = run_verifications(manifest)
             update_current_release_verification(args.runtime_root, manifest.app, verification)

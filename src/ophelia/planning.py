@@ -28,7 +28,7 @@ def deploy_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> 
     ]
     risk_notes = _risk_notes(manifest, env_requirements, diff)
 
-    return {
+    plan = {
         "app": manifest.app,
         "environment": getattr(manifest, "environment", None),
         "kind": manifest.kind,
@@ -62,6 +62,9 @@ def deploy_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> 
         "risk_notes": risk_notes,
         "summary": _summary(manifest, images, diff, env_requirements, checks),
     }
+    plan["confirmation_required"] = plan["environment"] == "production"
+    plan["confirmation_token"] = deploy_confirmation_token(plan) if plan["confirmation_required"] else None
+    return plan
 
 
 def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:
@@ -103,6 +106,21 @@ def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:
         "compose_changes": compose_changes,
         "clean": not changed_files and not removed_files,
     }
+
+
+def deploy_confirmation_token(plan: Dict[str, object]) -> str:
+    import json
+
+    payload = {
+        "action": "deploy.apply",
+        "app": plan.get("app"),
+        "environment": plan.get("environment"),
+        "rendered_bundle_hash": plan.get("rendered_bundle_hash"),
+        "changed_files": plan.get("changed_files"),
+        "removed_files": plan.get("removed_files"),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:20]
 
 
 def _current_generated_files(app_root: Path) -> set[Path]:
