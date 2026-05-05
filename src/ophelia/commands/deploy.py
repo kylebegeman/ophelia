@@ -1,8 +1,10 @@
 from argparse import Namespace, _SubParsersAction
+import json
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
+from ..planning import deploy_plan
 from ..remote import RemoteError, stage_remote_bundle
 from ..runtime import apply_local_bundle, deploy_bundle, update_current_release_verification
 from ..verify import run_verifications
@@ -38,6 +40,12 @@ def register(subparsers: _SubParsersAction) -> None:
         help="Start or update the app and reload shared Caddy when available",
     )
     parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Show the deploy plan without writing runtime state",
+    )
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON for --plan")
+    parser.add_argument(
         "--verify",
         action="store_true",
         help="Run post-deploy verification checks after --apply succeeds",
@@ -61,6 +69,37 @@ def run(args: Namespace) -> int:
     if args.verify and not args.apply:
         print("`--verify` requires `--apply`.")
         return 1
+    if args.plan and args.apply:
+        print("`--plan` cannot be combined with `--apply`.")
+        return 1
+    if args.json and not args.plan:
+        print("`--json` is currently supported for `deploy --plan`.")
+        return 1
+
+    if args.plan:
+        plan = deploy_plan(manifest, args.manifest, args.runtime_root)
+        if args.json:
+            print(json.dumps(plan, indent=2, sort_keys=True))
+        else:
+            print(plan["summary"])
+            print(f"App: {plan['app']}")
+            print(f"Environment: {plan['environment'] or 'unknown'}")
+            print("Services: " + (", ".join(plan["services_affected"]) or "none"))
+            print("Domains: " + (", ".join(plan["domains"]) or "none"))
+            print("Generated files:")
+            for path in plan["generated_files"]:
+                print(f"  - {path}")
+            print("Changed files:")
+            for item in plan["changed_files"]:
+                print(f"  - {item['path']} ({item['change']})")
+            if not plan["changed_files"]:
+                print("  none")
+            print("Risk notes:")
+            for note in plan["risk_notes"]:
+                print(f"  - {note}")
+            if not plan["risk_notes"]:
+                print("  none")
+        return 0
 
     if args.host:
         try:
