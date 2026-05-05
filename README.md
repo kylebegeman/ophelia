@@ -115,6 +115,10 @@ Recommended order:
 - pushes to `master` run the platform deployment workflow in `.github/workflows`
   once the repository is connected to GitHub secrets.
 
+Required deployment secrets are `VPS_HOST`, `VPS_PORT`, `VPS_USER`, and
+`VPS_SSH_KEY`. The workflow validates that those names are present before
+starting SSH and never prints their values.
+
 ## Next Milestones
 
 1. Harden release history, rollback, status, backup, drift, and preflight flows.

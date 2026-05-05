@@ -21,21 +21,25 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: python -m pip install PyYAML
+        run: python -m pip install -e .
 
       - name: Validate example manifests
-        run: |
-          ./cli/ship validate examples/dragonwriter.ophelia.yml
-          ./cli/ship validate examples/pokedex.ophelia.yml
-          ./cli/ship validate examples/portfolio.ophelia.yml
-          ./cli/ship validate examples/aspectavy-staging.ophelia.yml
+        run: make validate-examples
+
+      - name: Validate platform manifests
+        run: make validate-manifests
 
       - name: Render example bundles
-        run: |
-          ./cli/ship render examples/dragonwriter.ophelia.yml --output-dir build/dragonwriter
-          ./cli/ship render examples/pokedex.ophelia.yml --output-dir build/pokedex
-          ./cli/ship render examples/portfolio.ophelia.yml --output-dir build/portfolio
-          ./cli/ship render examples/aspectavy-staging.ophelia.yml --output-dir build/aspectavy-staging
+        run: make render-examples
+
+      - name: Render platform manifests
+        run: make render-manifests
+
+      - name: Run unit tests
+        run: make test PYTHON=python
 
       - name: Compile Python sources
-        run: python -m compileall src
+        run: make compile PYTHON=python
+
+      - name: Check docs
+        run: make docs-check PYTHON=python

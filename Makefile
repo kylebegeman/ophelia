@@ -1,4 +1,6 @@
-.PHONY: venv validate-examples render-examples validate-manifests render-manifests test compile
+PYTHON ?= .venv/bin/python
+
+.PHONY: venv validate-examples render-examples validate-manifests render-manifests test compile docs-check
 
 venv:
 	python3 -m venv .venv
@@ -26,7 +28,10 @@ render-manifests:
 	for manifest in manifests/*.ophelia.yml; do app=$$(basename "$$manifest" .ophelia.yml); ./cli/ship render "$$manifest" --output-dir "build/$$app" || exit 1; done
 
 test:
-	PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -v
 
 compile:
-	.venv/bin/python -m compileall src
+	$(PYTHON) -m compileall src
+
+docs-check:
+	PYTHONPATH=src $(PYTHON) -m ophelia.docs_check
