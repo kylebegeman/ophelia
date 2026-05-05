@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import shutil
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
+from urllib import request
+from urllib.error import URLError
+from urllib.parse import urlparse
 
 from .backup import backup_plan, create_backup, restore_plan, apply_restore
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
@@ -34,7 +38,18 @@ ACTION_DEFINITIONS: List[Dict[str, Any]] = []
 
 
 def action_catalog() -> List[Dict[str, Any]]:
-    return [dict(item) for item in ACTION_DEFINITIONS]
+    config = _load_action_config()
+    ttl = int(config.get("confirmation_token_ttl_seconds", 900))
+    callbacks_enabled = bool(config.get("callbacks_enabled", False))
+    return [
+        {
+            **dict(item),
+            "confirmation_token_ttl_seconds": ttl if item["mutation_level"] == "mutating" else None,
+            "callbacks_enabled": callbacks_enabled,
+        }
+        for item in ACTION_DEFINITIONS
+        if _action_enabled(item["id"], config)
+    ]
 
 
 def action_ids() -> set[str]:
@@ -63,6 +78,8 @@ def validate_action_inputs(action_id: str, inputs: Dict[str, Any]) -> None:
             raise ActionError("`environment` must be one of dev, staging, or production.")
         if key.endswith("_path") or key.endswith("_root"):
             _validate_path_value(key, value)
+        if key == "completion_callback_url":
+            _validate_callback_url(value)
 
 
 def run_action(action_id: str, inputs: Dict[str, Any], runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
@@ -136,9 +153,12 @@ def _run_deploy_apply(inputs: Dict[str, Any], runtime_root: Path) -> Dict[str, A
     manifest = load_manifest(manifest_path)
     plan = deploy_plan(manifest, manifest_path, runtime_root)
     if inputs.get("dry_run", True):
-        return _artifact("Deploy apply dry-run complete.", {"plan": plan, "required_confirmation_token": plan.get("confirmation_token")})
+        return _artifact(
+            "Deploy apply dry-run complete.",
+            _confirmation_payload(inputs, plan, deploy_confirmation_token(plan)),
+        )
     token = inputs.get("confirm_token")
-    if plan["confirmation_required"] and token != deploy_confirmation_token(plan):
+    if token != deploy_confirmation_token(plan):
         raise ActionError("Deploy apply confirmation token is missing or incorrect.")
     if plan["environment"] == "production" and not _load_action_config().get("production_apply_enabled", False):
         raise ActionError("Production deploy apply is disabled by action policy.")
@@ -155,7 +175,7 @@ def _run_confirmed_plan(
 ) -> Dict[str, Any]:
     plan = plan_factory()
     if inputs.get("dry_run", True):
-        return _artifact(dry_summary, {"plan": plan, "required_confirmation_token": plan["confirmation_token"]})
+        return _artifact(dry_summary, _confirmation_payload(inputs, plan, plan["confirmation_token"]))
     token = str(inputs.get("confirm_token") or "")
     if token != plan["confirmation_token"]:
         raise ActionError("Confirmation token is missing or incorrect.")
@@ -171,8 +191,11 @@ def _artifact(summary: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _definition(action_id: str) -> Dict[str, Any]:
+    config = _load_action_config()
     for item in ACTION_DEFINITIONS:
         if item["id"] == action_id:
+            if not _action_enabled(action_id, config):
+                raise ActionError(f"Action is disabled by policy: {action_id}")
             return item
     raise ActionError(f"Unknown action id: {action_id}")
 
@@ -187,6 +210,27 @@ def _load_manifest_input(inputs: Dict[str, Any]):
 def _validate_path_value(key: str, value: Any) -> None:
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ActionError(f"`{key}` is a malformed path.")
+
+
+def _validate_callback_url(value: Any) -> None:
+    if not isinstance(value, str) or not value:
+        raise ActionError("`completion_callback_url` must be a URL string.")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ActionError("`completion_callback_url` must be an http(s) URL.")
+
+
+def _confirmation_payload(inputs: Dict[str, Any], plan: Dict[str, Any], token: str) -> Dict[str, Any]:
+    expires_at = _confirmation_expires_at()
+    apply_inputs = {key: value for key, value in inputs.items() if key != "confirm_token"}
+    apply_inputs["dry_run"] = False
+    apply_inputs["confirm_token"] = token
+    return {
+        "plan": plan,
+        "required_confirmation_token": token,
+        "confirmation_expires_at": expires_at,
+        "exact_apply_input": apply_inputs,
+    }
 
 
 def _action(
@@ -267,10 +311,16 @@ ACTION_DEFINITIONS.extend(
 
 
 def _load_action_config() -> Dict[str, Any]:
-    path = REPO_ROOT / "config" / "ophelia-actions.json"
+    path = Path(os.environ.get("OPHELIA_ACTION_CONFIG", REPO_ROOT / "config" / "ophelia-actions.json"))
     if not path.exists():
         return {}
     return json.loads(path.read_text())
+
+
+def _action_enabled(action_id: str, config: Dict[str, Any]) -> bool:
+    enabled = config.get("enabled_actions", ["*"])
+    disabled = config.get("disabled_actions", [])
+    return ("*" in enabled or action_id in enabled) and action_id not in disabled
 
 
 class ActionError(ValueError):
@@ -321,6 +371,7 @@ def run_job(
     _event(events, "job.created", job_id=job_id, action_id=action_id)
     lock = _lock_path(runtime_root, action_id, inputs)
     lock_acquired = False
+    apply_confirmation_token: str | None = None
     try:
         if lock is not None:
             _acquire_lock(lock)
@@ -329,13 +380,18 @@ def run_job(
         job["started_at"] = _utc_now()
         _event(events, "job.started", job_id=job_id)
         _event(events, "step.started", step="execute_action")
+        if action_id in MUTATING_ACTIONS and not inputs.get("dry_run", True):
+            apply_confirmation_token = _validate_confirmation_record(runtime_root, action_id, inputs)
         result = run_action(action_id, inputs, runtime_root)
         job["result"] = result
         if action_id in MUTATING_ACTIONS and inputs.get("dry_run", True):
             job["state"] = "waiting_for_confirmation"
+            _register_confirmation_from_result(runtime_root, job, result, inputs)
         else:
             job["state"] = "succeeded"
             job["completed_at"] = _utc_now()
+            if apply_confirmation_token:
+                _consume_confirmation(runtime_root, apply_confirmation_token, job_id)
         _event(events, "job.completed", state=job["state"], summary=result["summary"])
     except Exception as exc:
         job["state"] = "failed"
@@ -347,6 +403,7 @@ def run_job(
         if lock_acquired and lock is not None and lock.exists():
             lock.unlink()
 
+    _maybe_send_completion_callback(inputs, job, events)
     _write_job(jobs_root, job, events)
     _append_audit(runtime_root, job)
     if idempotency_key and job["state"] != "failed":
@@ -382,6 +439,16 @@ def _event(events: List[Dict[str, Any]], event_type: str, **payload: Any) -> Non
 
 def _input_hash(action_id: str, inputs: Dict[str, Any]) -> str:
     sanitized = {key: value for key, value in inputs.items() if key != "confirm_token"}
+    encoded = json.dumps({"action_id": action_id, "inputs": sanitized}, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _confirmation_input_hash(action_id: str, inputs: Dict[str, Any]) -> str:
+    sanitized = {
+        key: value
+        for key, value in inputs.items()
+        if key not in {"confirm_token", "dry_run"}
+    }
     encoded = json.dumps({"action_id": action_id, "inputs": sanitized}, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -449,6 +516,107 @@ def _append_audit(runtime_root: Path, job: Dict[str, Any]) -> None:
     }
     with (audit_root / "jobs.ndjson").open("a") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def _confirmation_expires_at() -> str:
+    ttl = int(_load_action_config().get("confirmation_token_ttl_seconds", 900))
+    return (datetime.now(timezone.utc) + timedelta(seconds=ttl)).replace(microsecond=0).isoformat()
+
+
+def _register_confirmation_from_result(
+    runtime_root: Path,
+    job: Dict[str, Any],
+    result: Dict[str, Any],
+    inputs: Dict[str, Any],
+) -> None:
+    payload = result.get("payload") if isinstance(result, dict) else None
+    if not isinstance(payload, dict):
+        return
+    token = payload.get("required_confirmation_token")
+    expires_at = payload.get("confirmation_expires_at")
+    if not isinstance(token, str) or not token:
+        return
+    confirmations_root = runtime_root / "confirmations"
+    confirmations_root.mkdir(parents=True, exist_ok=True)
+    record = {
+        "token": token,
+        "action_id": job["action_id"],
+        "confirmation_input_hash": _confirmation_input_hash(str(job["action_id"]), inputs),
+        "created_at": _utc_now(),
+        "expires_at": expires_at,
+        "dry_run_job_id": job["job_id"],
+        "state": "active",
+    }
+    (confirmations_root / f"{token}.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def _validate_confirmation_record(runtime_root: Path, action_id: str, inputs: Dict[str, Any]) -> str:
+    token = inputs.get("confirm_token")
+    if not isinstance(token, str) or not token:
+        raise ActionError("confirmation token is missing or incorrect.")
+    path = runtime_root / "confirmations" / f"{token}.json"
+    if not path.exists():
+        raise ActionError("confirmation token was not issued by a prior dry-run job.")
+    record = json.loads(path.read_text())
+    if record.get("state") != "active":
+        raise ActionError("confirmation token is no longer active.")
+    if record.get("action_id") != action_id:
+        raise ActionError("confirmation token action does not match this job.")
+    expected_hash = _confirmation_input_hash(action_id, inputs)
+    if record.get("confirmation_input_hash") != expected_hash:
+        raise ActionError("confirmation token input hash does not match this job.")
+    expires_at = record.get("expires_at")
+    if isinstance(expires_at, str) and _parse_datetime(expires_at) < datetime.now(timezone.utc):
+        raise ActionError("confirmation token has expired.")
+    return token
+
+
+def _consume_confirmation(runtime_root: Path, token: str, job_id: str) -> None:
+    path = runtime_root / "confirmations" / f"{token}.json"
+    if not path.exists():
+        return
+    record = json.loads(path.read_text())
+    record["state"] = "consumed"
+    record["consumed_by_job_id"] = job_id
+    record["consumed_at"] = _utc_now()
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def _parse_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _maybe_send_completion_callback(
+    inputs: Dict[str, Any],
+    job: Dict[str, Any],
+    events: List[Dict[str, Any]],
+) -> None:
+    callback_url = inputs.get("completion_callback_url")
+    if not callback_url:
+        return
+    config = _load_action_config()
+    if not config.get("callbacks_enabled", False):
+        job.setdefault("warnings", []).append("Completion callback requested but callbacks are disabled by policy.")
+        _event(events, "warning", warning="completion_callback_disabled")
+        return
+    body = json.dumps(job, sort_keys=True).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    secret_name = config.get("callback_secret_env")
+    secret = os.environ.get(secret_name) if isinstance(secret_name, str) else None
+    if secret:
+        signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        headers["X-Ophelia-Signature"] = f"sha256={signature}"
+    try:
+        req = request.Request(str(callback_url), data=body, headers=headers, method="POST")
+        with request.urlopen(req, timeout=5) as response:
+            _event(events, "command.completed", command="completion_callback", status=response.status)
+    except (OSError, URLError) as exc:
+        warning = f"Completion callback failed: {exc}"
+        job.setdefault("warnings", []).append(warning)
+        _event(events, "warning", warning=warning)
 
 
 def _artifact_links(inputs: Dict[str, Any]) -> Dict[str, Any]:

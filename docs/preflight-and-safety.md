@@ -16,9 +16,15 @@ Confirmation tokens are derived from the planned action and relevant inputs.
 Changing the manifest, target release, backup id, or runtime files that affect
 the plan changes the token.
 
+For Job/Action API applies, the token is also persisted as an expiring
+confirmation record tied to action id plus input hash. API applies fail when the
+token is missing, wrong, expired, already consumed, or not issued by a prior
+dry-run job.
+
 Safety gates currently implemented:
 
 - production deploy apply requires a matching token
+- API mutating applies require a prior dry-run token for staging and production
 - placeholder env values block apply
 - image pulls fail the deploy instead of silently continuing
 - Caddy validation runs before reload when an existing shared Caddy container

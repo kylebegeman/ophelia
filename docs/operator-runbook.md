@@ -59,3 +59,14 @@ Operator notes:
 ./cli/ship notes list --release <release-id>
 ./cli/ship notes add --job <job-id> "manual env fix applied"
 ```
+
+Local API smoke:
+
+```bash
+./cli/ship api serve --host 127.0.0.1 --port 8765
+curl http://127.0.0.1:8765/health
+curl http://127.0.0.1:8765/actions
+```
+
+For mutating API jobs, run the job once with `dry_run: true`, then submit the
+returned `exact_apply_input` only after the operator explicitly confirms.

@@ -1,9 +1,12 @@
 {
   "api": {
     "bind_host": "127.0.0.1",
-    "port": 8765
+    "port": 8765,
+    "contract_version": "2026-05-05"
   },
   "callbacks_enabled": false,
+  "callback_secret_env": "OPHELIA_CALLBACK_SECRET",
+  "confirmation_token_ttl_seconds": 900,
   "destructive_restore_enabled": false,
   "disabled_actions": [],
   "enabled_actions": ["*"],

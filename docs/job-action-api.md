@@ -25,6 +25,7 @@ Mutating commands require confirmation tokens from their matching plans:
 
 API endpoints:
 
+- `GET /health`
 - `GET /actions`
 - `POST /jobs`
 - `GET /jobs/<job_id>`
@@ -40,3 +41,15 @@ There is no arbitrary shell endpoint. Jobs use typed schemas, idempotency keys,
 job state, audit records, local-only binding, and optional artifact link fields.
 Operation templates return explicit step lists and result artifacts; they do
 not execute autonomous deploy workflows.
+
+Mutating API jobs are stricter than direct staging CLI applies: `deploy.apply`,
+`deploy.rollback.apply`, `backup.create`, and `restore.apply` must first run
+with `dry_run: true`. The dry-run stores a confirmation record under the runtime
+root, returns `required_confirmation_token`, `confirmation_expires_at`, and
+`exact_apply_input`, and the apply job must submit the matching token before it
+expires. Successful apply consumes the token.
+
+Completion callbacks are disabled by default. When enabled in
+`config/ophelia-actions.json`, Ophelia posts the completed job JSON to
+`completion_callback_url` and signs the payload with `X-Ophelia-Signature:
+sha256=<hmac>` when `OPHELIA_CALLBACK_SECRET` is set.

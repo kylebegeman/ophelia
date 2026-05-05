@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -27,6 +28,17 @@ class OpheliaHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/health":
+            self._json(
+                {
+                    "ok": True,
+                    "service": "ophelia",
+                    "api_bind": "local-only",
+                    "runtime_root": str(self.runtime_root_value),
+                    "ophelia_commit": _git_sha(),
+                }
+            )
+            return
         if parsed.path == "/actions":
             self._json({"actions": action_catalog()})
             return
@@ -94,7 +106,10 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
             return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON body: {exc}") from exc
 
     def _json(self, payload, status: int = 200) -> None:
         data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -117,3 +132,8 @@ class OpheliaHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):  # noqa: A003
         return
+
+
+def _git_sha() -> str | None:
+    result = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], text=True, capture_output=True)
+    return result.stdout.strip() if result.returncode == 0 else None
