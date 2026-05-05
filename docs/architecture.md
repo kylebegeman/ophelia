@@ -114,13 +114,12 @@ Preferred flow:
 
 1. app repo builds an image in CI
 2. image is pushed to GHCR
-3. `ship deploy` renders runtime config
-4. `ship deploy` pulls the image and updates the app on the VPS
-5. Caddy reloads against generated snippets
-
-The current codebase only implements manifest parsing and local runtime bundle
-generation plus remote bundle staging. Service startup and Caddy activation are
-available through `ship deploy --host ... --apply`.
+3. `ship deploy --plan` explains generated files, image references, env
+   requirements, route changes, and verification checks
+4. confirmed `ship deploy --apply` writes release metadata and rendered bundle
+   snapshots, pulls images, and updates the app on the VPS
+5. Caddy reloads only after generated snippets are staged and validation is
+   possible
 
 For platform-owned ingress, Ophelia now also includes:
 
@@ -131,6 +130,11 @@ For platform-owned ingress, Ophelia now also includes:
 
 Those scripts let the VPS reconcile platform manifests without hand-editing
 public edge config.
+
+Every deploy writes a current `release.json` pointer plus immutable release
+records under `apps/<app>/releases/`. New releases also snapshot rendered
+bundles under `apps/<app>/release-bundles/` so rollback can restore generated
+Compose and Caddy files without deleting runtime state.
 
 ## Two Deployment Modes
 
@@ -153,18 +157,20 @@ This is the steady-state path:
 That split keeps Ophelia as the platform control plane while each app repo owns
 its own release lifecycle.
 
-## Incremental Cutover
+## Safety And Inspection
 
-The current VPS still uses `~/edge` for public ingress. Ophelia should migrate
-in this order:
+Ophelia does not expose arbitrary shell execution. Operational commands are
+allowlisted and deterministic. Mutating flows are dry-run-first where risk is
+material:
 
-1. start shared foundation services
-2. migrate app runtime state and deployment flow
-3. use `host_port` bridge bindings for apps that still need to sit behind the
-   legacy `~/edge` Caddy
-4. move remaining public edge hosts into Ophelia manifests
-5. validate generated Ophelia Caddy config
-6. move public ingress to Ophelia Caddy through the cutover script
+- production deploy apply requires a confirmation token from the matching plan
+- rollback apply requires the rollback plan token
+- backup create and restore preview apply require plan tokens
+- restore apply creates a preview/report and does not overwrite active env,
+  runtime files, or volumes
+
+Read-only inspection is available through `ship status`, `ship doctor`,
+`ship diff`, `ship drift`, `ship inspect conflicts`, and `ship explain`.
 
 ## AspectAvy Domain Layout
 

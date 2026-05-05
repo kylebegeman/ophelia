@@ -7,6 +7,7 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `version`: integer manifest version
 - `app`: stable app slug
 - `kind`: `service`, `multi-service`, `static`, `tunnel`, or `redirect`
+- `environment`: optional `dev`, `staging`, or `production`
 - `profile`: optional deployment preset, currently `prism`
 - `image`: default container image reference for service-based apps
 - `services`: named service definitions
@@ -22,6 +23,10 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `redirect_status`: redirect status for redirect apps
 - `verify`: optional post-deploy HTTP verification checks
 - `prism`: Prism-specific config when `profile: prism`
+
+`environment` is backward compatible. Old manifests without it still load and
+are treated as `unknown` by inspection commands. When set to `production`,
+Ophelia requires a deploy-plan confirmation token before local apply.
 
 ## Service Fields
 
@@ -83,6 +88,7 @@ edge:
 ```yaml
 version: 1
 app: dragon-writer
+environment: production
 kind: service
 image: ghcr.io/mrbagels/dragon-writer:latest
 
@@ -194,6 +200,7 @@ Use `bind: true` for persistent host paths such as uploads or local backup direc
 ```yaml
 version: 1
 app: quark-ops
+environment: production
 profile: prism
 kind: service
 image: ghcr.io/bagelworks/prism:quark-latest
@@ -237,6 +244,7 @@ verify:
 ```yaml
 version: 1
 app: portfolio
+environment: production
 kind: static
 static_root: /home/kyle/ophelia-runtime/static/portfolio
 

@@ -80,4 +80,4 @@ The remaining follow-up is narrower:
 - Authelia
 - Uptime Kuma integration
 - GlitchTip
-- one-command rollback with traffic switching
+- traffic-aware rollback on top of release-bundle rollback

@@ -25,6 +25,10 @@ logs, and pulled images.
 - [Architecture](docs/architecture.md)
 - [AspectAvy Host Layout](docs/aspectavy-host-layout.md)
 - [Manifest Spec](docs/manifest-spec.md)
+- [Releases and Rollback](docs/releases-and-rollback.md)
+- [Preflight and Safety](docs/preflight-and-safety.md)
+- [Operator Runbook](docs/operator-runbook.md)
+- [Job/Action API Notes](docs/job-action-api.md)
 - [Migration Plan](docs/migration-plan.md)
 
 ## Repository Layout
@@ -73,6 +77,12 @@ python3 -m venv .venv
 ./cli/ship validate examples/dragonwriter.ophelia.yml
 ./cli/ship render examples/dragonwriter.ophelia.yml --output-dir ./build/dragonwriter
 ./cli/ship deploy examples/dragonwriter.ophelia.yml
+./cli/ship deploy examples/dragonwriter.ophelia.yml --plan
+./cli/ship diff examples/dragonwriter.ophelia.yml
+./cli/ship explain examples/dragonwriter.ophelia.yml
+./cli/ship inspect conflicts
+./cli/ship status
+./cli/ship doctor
 ./cli/ship verify examples/dragonwriter.ophelia.yml
 ./cli/ship bootstrap-host kyle@209.74.71.165 --ssh-port 22022
 ./cli/ship list
@@ -132,8 +142,26 @@ starting SSH and never prints their values.
 Use this for initial setup, testing, or one-off deploys from your machine:
 
 ```bash
+./cli/ship deploy path/to/.ophelia.yml --plan
 ./cli/ship deploy path/to/.ophelia.yml --host kyle@209.74.71.165 --ssh-port 22022 --apply
 ```
+
+Production manifests require a confirmation token from `ship deploy --plan`
+before local apply. Mutating operator commands follow the same dry-run-first
+shape: plan, inspect the report, then pass the matching `--confirm` token.
+
+### Operator command groups
+
+- `ship validate|render|explain|diff|deploy --plan` for manifest inspection.
+- `ship deploy --apply --confirm <token>` for confirmed production apply.
+- `ship releases <app>` and `ship release show <app> <release-id>` for release history.
+- `ship rollback plan|apply` for file-level rollback from release bundle snapshots.
+- `ship backup plan|create` and `ship restore plan|apply` for backup creation and safe restore previews.
+- `ship drift <manifest>` and `ship drift all` for runtime drift detection.
+- `ship inspect conflicts` for cross-manifest platform conflict scanning.
+- `ship status`, `ship doctor`, and `ship list` for read-only runtime inspection.
+
+Most read-only commands accept `--json` for Quark/Prism integration.
 
 For static apps, sync built assets first or pass a static build directory once that
 workflow is added to the app repo.

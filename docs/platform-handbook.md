@@ -517,16 +517,15 @@ Why:
 
 These are the important unfinished pieces.
 
-### 1. Public Ophelia Caddy is not yet the live edge
+### 1. Legacy edge cleanup remains
 
 Today:
 
-- `~/edge` is still live
+- public ingress runs through Ophelia-managed Caddy
 - Ophelia-generated Caddy snippets exist under `~/ophelia-runtime/caddy/sites.d`
   and `~/ophelia-runtime/caddy/global.d`
-- full public ingress cutover has not happened yet
-- as of April 14, 2026, the new AspectAvy rehearsal DNS names for docs/admin/dev
-  are not yet pointed at the VPS
+- legacy `~/edge` remains only as rollback/reference material until it is
+  intentionally cleaned up
 
 ### 2. Old cron jobs still exist
 
@@ -546,13 +545,12 @@ It still contains scripts/logs/backup assumptions that are no longer the platfor
 
 `pokedex-dev-api-1` is restarting and the dev environment has not been migrated yet.
 
-### 5. Rollback ergonomics are still early
+### 5. Rollback is file-level, not traffic-aware yet
 
-We do not yet have the full intended release UX such as:
-
-- release history browsing
-- one-command rollback by digest
-- traffic-aware rollback flow
+Ophelia now records release history and can plan/apply rollback from rendered
+bundle snapshots. This restores generated Compose and Caddy files and writes a
+rollback report. It does not yet implement traffic-aware rollout or container
+health orchestration.
 
 ### 6. Observability is still light
 
@@ -567,9 +565,12 @@ We do not yet have:
 
 Authelia was intentionally not introduced yet because the platform runtime and deploy path needed to stabilize first.
 
-### 8. Backups need a unified Ophelia-owned story
+### 8. Backups have a safe foundation
 
-There are bootstrap/backup scripts in the platform repo, but the live machine still carries legacy backup assumptions that need to be reconciled and cleaned up.
+`ship backup plan|create` records app env, rendered config, release metadata,
+static assets when present, and database backup intent. Postgres live dump
+execution remains gated for a later pass. `ship restore apply` creates a restore
+preview and report instead of overwriting active runtime state.
 
 ## What Was Already Proven
 
@@ -599,7 +600,8 @@ This is the order that still makes the most sense.
 
 1. Clean up stale cron and old `begam.in` operational drift.
 2. Decide whether to migrate or delete the broken Pokedex dev environment.
-3. Add stronger status/doctor/release inspection commands to `ship`.
+3. Use `ship status`, `ship doctor`, `ship releases`, `ship drift`, and
+   `ship inspect conflicts` during platform changes.
 4. Clean up the stopped legacy AspectAvy containers and old rollback artifacts
    once the new runtime has soaked long enough.
 5. Decide whether to migrate or delete the broken Pokedex dev environment.
@@ -610,8 +612,8 @@ This is the order that still makes the most sense.
 
 ### Later
 
-7. Add rollback UX.
-8. Add proper backup/restore workflows owned by Ophelia.
+7. Add traffic-aware rollback UX.
+8. Add live database dump/restore execution behind stricter gates.
 9. Add Authelia if admin/auth protection is still wanted.
 10. Add monitoring/observability if the VPS footprint allows it.
 
