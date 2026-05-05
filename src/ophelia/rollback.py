@@ -24,6 +24,7 @@ def rollback_plan(runtime_root: Path, app: str, release_id: str) -> Dict[str, ob
     app_root = runtime_root / "apps" / app
     bundle_root = _bundle_root(app_root, target)
     changes = _planned_changes(app_root, bundle_root)
+    verification_plan = _verification_plan(bundle_root, app, target)
     blockers: List[str] = []
     warnings: List[str] = []
 
@@ -43,6 +44,11 @@ def rollback_plan(runtime_root: Path, app: str, release_id: str) -> Dict[str, ob
         "target_deployed_at": target.get("deployed_at"),
         "bundle_path": str(bundle_root),
         "changes": changes,
+        "post_apply_verification": verification_plan,
+        "traffic_switching": {
+            "managed_by_ophelia": False,
+            "mode": "file-level generated config restore",
+        },
         "warnings": warnings,
         "blockers": blockers,
         "can_apply": not blockers,
@@ -84,7 +90,7 @@ def apply_rollback(runtime_root: Path, app: str, release_id: str, confirm: str) 
         _copy_path(source, target)
         restored.append(str(relative_path))
 
-    _restore_shared_caddy(runtime_root, app, bundle_root, restored)
+    shared_caddy_updates = _restore_shared_caddy(runtime_root, app, bundle_root, restored)
 
     target_release = load_release(runtime_root, app, release_id)
     current_pointer = dict(target_release)
@@ -102,8 +108,15 @@ def apply_rollback(runtime_root: Path, app: str, release_id: str, confirm: str) 
         "target_release_id": plan.get("target_release_id"),
         "applied_at": _utc_now(),
         "restored_files": restored,
-        "shared_caddy_updated": True,
+        "shared_caddy_updated": bool(shared_caddy_updates),
+        "shared_caddy_updates": shared_caddy_updates,
         "deleted_files": [],
+        "verification": {
+            "status": "not_run",
+            "checks": plan["post_apply_verification"]["checks"],
+            "recommended_command": plan["post_apply_verification"]["recommended_command"],
+        },
+        "traffic_switching": plan["traffic_switching"],
         "summary": plan["summary"],
     }
     reports_root = app_root / "rollback-reports"
@@ -159,18 +172,62 @@ def _copy_path(source: Path, target: Path) -> None:
     shutil.copy2(source, target)
 
 
-def _restore_shared_caddy(runtime_root: Path, app: str, bundle_root: Path, restored: List[str]) -> None:
+def _restore_shared_caddy(runtime_root: Path, app: str, bundle_root: Path, restored: List[str]) -> List[str]:
+    updates: List[str] = []
     site_source = bundle_root / "caddy" / f"{app}.caddy"
     if site_source.exists():
         site_target = runtime_root / "caddy" / "sites.d" / f"{app}.caddy"
         _copy_path(site_source, site_target)
-        restored.append(str(site_target.relative_to(runtime_root)))
+        relative = str(site_target.relative_to(runtime_root))
+        restored.append(relative)
+        updates.append(relative)
 
     global_source = bundle_root / "caddy" / "global.d" / f"{app}.caddy"
     if global_source.exists():
         global_target = runtime_root / "caddy" / "global.d" / f"{app}.caddy"
         _copy_path(global_source, global_target)
-        restored.append(str(global_target.relative_to(runtime_root)))
+        relative = str(global_target.relative_to(runtime_root))
+        restored.append(relative)
+        updates.append(relative)
+    return updates
+
+
+def _verification_plan(bundle_root: Path, app: str, release: Dict[str, object]) -> Dict[str, object]:
+    lock_path = bundle_root / "manifest.lock.json"
+    lock = _load_json(lock_path)
+    checks = []
+    raw_checks = lock.get("verify", []) if isinstance(lock, dict) else []
+    if isinstance(raw_checks, list):
+        for item in raw_checks:
+            if not isinstance(item, dict):
+                continue
+            checks.append(
+                {
+                    "name": item.get("name") or item.get("url"),
+                    "url": item.get("url"),
+                    "expect_status": item.get("expect_status", 200),
+                    "contains_required": bool(item.get("contains")),
+                }
+            )
+    manifest_path = release.get("manifest_path") or release.get("source_manifest")
+    return {
+        "available": bool(checks),
+        "checks": checks,
+        "source": str(lock_path) if lock_path.exists() else None,
+        "recommended_command": f"./cli/ship verify {manifest_path}" if manifest_path else None,
+        "status_after_apply": "not_run",
+        "note": "Rollback apply restores generated files; verification is reported but not executed automatically.",
+    }
+
+
+def _load_json(path: Path) -> Dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _utc_now() -> str:

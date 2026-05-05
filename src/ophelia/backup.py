@@ -42,6 +42,13 @@ def backup_plan(runtime_root: Path, app: str) -> Dict[str, object]:
         "runtime_path": str(app_root),
         "backup_root": str(runtime_root / "backups" / "apps" / app),
         "files": files,
+        "coverage": {
+            "app_env": any(item["path"] == "env" for item in files),
+            "rendered_config": any(item["path"] in {"compose.yml", "caddy", "manifest.lock.json"} for item in files),
+            "release_metadata": any(item["path"] in {"release.json", "releases"} for item in files),
+            "postgres_metadata": bool(addons.get("postgres")),
+            "static_assets": static_root.exists(),
+        },
         "static_assets": {
             "path": str(static_root),
             "present": static_root.exists(),
@@ -57,6 +64,9 @@ def backup_plan(runtime_root: Path, app: str) -> Dict[str, object]:
         "warnings": warnings,
         "blockers": blockers,
         "can_apply": not blockers,
+        "operator_confirmation_required": True,
+        "restore_preview_supported": True,
+        "destructive_restore_supported": False,
     }
     plan["confirmation_token"] = backup_token(plan)
     plan["summary"] = f"Backup {app} with {len(files)} runtime item(s) and static assets {'present' if static_root.exists() else 'absent'}."
@@ -94,8 +104,11 @@ def create_backup(runtime_root: Path, app: str, confirm: str) -> Dict[str, objec
         "runtime_root": str(runtime_root),
         "copied_items": copied,
         "database": plan["database"],
+        "coverage": plan["coverage"],
         "warnings": plan["warnings"],
         "secrets_redacted_in_report": True,
+        "restore_preview_supported": True,
+        "destructive_restore_supported": False,
     }
     backup_root.mkdir(parents=True, exist_ok=True)
     (backup_root / "backup-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -125,6 +138,10 @@ def restore_plan(runtime_root: Path, app: str, backup_id: str) -> Dict[str, obje
         "backup_path": str(backup_root),
         "preview_path": str(runtime_root / "apps" / app / "restore-previews" / backup_id),
         "files": files,
+        "file_count": len(files),
+        "active_runtime_modified_on_apply": False,
+        "operator_confirmation_required": True,
+        "destructive_restore_supported": False,
         "warnings": warnings,
         "blockers": blockers,
         "can_apply": not blockers,
@@ -155,6 +172,7 @@ def apply_restore(runtime_root: Path, app: str, backup_id: str, confirm: str) ->
         "preview_path": str(preview_path),
         "applied_at": _utc_now(),
         "active_runtime_modified": False,
+        "destructive_restore_supported": False,
         "summary": plan["summary"],
         "warnings": plan["warnings"],
     }

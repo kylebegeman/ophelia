@@ -35,6 +35,8 @@ class RollbackTests(unittest.TestCase):
             self.assertTrue(plan["can_apply"])
             self.assertTrue(plan["confirmation_token"])
             self.assertTrue(any(item["path"] == "compose.yml" for item in plan["changes"]))
+            self.assertTrue(plan["post_apply_verification"]["available"])
+            self.assertFalse(plan["traffic_switching"]["managed_by_ophelia"])
 
             report = apply_rollback(
                 runtime_root,
@@ -46,6 +48,9 @@ class RollbackTests(unittest.TestCase):
             self.assertIn("rollback-test:v1", (first_root / "compose.yml").read_text())
             self.assertEqual(first_release_id, report["target_release_id"])
             self.assertEqual([], report["deleted_files"])
+            self.assertEqual("not_run", report["verification"]["status"])
+            self.assertEqual("health", report["verification"]["checks"][0]["name"])
+            self.assertFalse(report["traffic_switching"]["managed_by_ophelia"])
             self.assertTrue((first_root / "rollback-reports" / f"{report['report_id']}.json").exists())
 
     def test_apply_requires_matching_confirmation_token(self) -> None:
@@ -74,6 +79,9 @@ services:
 routes:
   - domain: rollback-test.example.com
     service: web
+verify:
+  - name: health
+    url: https://rollback-test.example.com/health
 """.strip() + "\n"
 
 

@@ -26,17 +26,25 @@ class BackupTests(unittest.TestCase):
 
             plan = backup_plan(runtime_root, "backup-test")
             self.assertTrue(plan["can_apply"])
+            self.assertTrue(plan["coverage"]["app_env"])
+            self.assertTrue(plan["restore_preview_supported"])
+            self.assertFalse(plan["destructive_restore_supported"])
             self.assertNotIn("super-secret", str(plan))
 
             backup = create_backup(runtime_root, "backup-test", str(plan["confirmation_token"]))
             self.assertNotIn("super-secret", str(backup))
+            self.assertTrue(backup["coverage"]["app_env"])
+            self.assertFalse(backup["destructive_restore_supported"])
             backup_id = str(backup["backup_id"])
 
             restore = restore_plan(runtime_root, "backup-test", backup_id)
             self.assertTrue(restore["can_apply"])
+            self.assertFalse(restore["active_runtime_modified_on_apply"])
+            self.assertFalse(restore["destructive_restore_supported"])
             report = apply_restore(runtime_root, "backup-test", backup_id, str(restore["confirmation_token"]))
 
             self.assertFalse(report["active_runtime_modified"])
+            self.assertFalse(report["destructive_restore_supported"])
             self.assertTrue((Path(str(report["preview_path"])) / "restore-report.json").exists())
             self.assertIn("super-secret", (Path(str(backup["backup_path"])) / "runtime" / "env").read_text())
 
