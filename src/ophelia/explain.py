@@ -89,6 +89,12 @@ def explain_manifest(manifest: Manifest, manifest_path: Path) -> Dict[str, objec
             "writes_rendered_bundle_snapshot": True,
             "rollback_eligible_after_deploy": True,
         },
+        "deployment_ordering": {
+            "depends_on": manifest.depends_on,
+            "deployment_order": manifest.deployment_order,
+            "migration_before": manifest.migration_before,
+            "verify_before_next": manifest.verify_before_next,
+        },
         "risk_notes": _risk_notes(manifest, env_requirements, checks),
         "summary": (
             f"{manifest.app} is a {manifest.kind} manifest with "

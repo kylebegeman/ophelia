@@ -6,9 +6,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .actions import action_catalog, cancel_job, run_job
-from .config import DEFAULT_RUNTIME_ROOT
+from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .operator_reports import host_inventory, manifest_registry, release_registry
-from .config import REPO_ROOT
+from .operations import list_operations, run_operation
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> None:
@@ -38,6 +38,9 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/registry/releases":
             self._json(release_registry(self.runtime_root_value))
+            return
+        if parsed.path == "/operations":
+            self._json(list_operations())
             return
         if parsed.path.startswith("/jobs/") and parsed.path.endswith("/events"):
             job_id = parsed.path.split("/")[2]
@@ -70,6 +73,20 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/jobs/") and parsed.path.endswith("/cancel"):
             job_id = parsed.path.split("/")[2]
             self._json(cancel_job(self.runtime_root_value, job_id))
+            return
+        if parsed.path == "/operations/run":
+            body = self._read_json()
+            try:
+                result = run_operation(
+                    body.get("name"),
+                    body.get("confirm"),
+                    Path(body["manifest_dir"]) if body.get("manifest_dir") else REPO_ROOT / "manifests",
+                    self.runtime_root_value,
+                )
+            except (TypeError, ValueError) as exc:
+                self._json({"error": str(exc)}, status=400)
+                return
+            self._json(result)
             return
         self._json({"error": "not found"}, status=404)
 

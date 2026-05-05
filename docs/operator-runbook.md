@@ -41,3 +41,21 @@ Backup and restore preview:
 ./cli/ship restore plan <app> <backup-id>
 ./cli/ship restore apply <app> <backup-id> --confirm <token>
 ```
+
+Operation templates and cleanup:
+
+```bash
+./cli/ship operations list
+./cli/ship operations run deploy-with-preflight --dry-run
+./cli/ship operations run deploy-with-preflight --confirm <token>
+./cli/ship gc plan
+./cli/ship gc apply --confirm <token>
+```
+
+Operator notes:
+
+```bash
+./cli/ship notes add --release <release-id> "rolled back because health check failed"
+./cli/ship notes list --release <release-id>
+./cli/ship notes add --job <job-id> "manual env fix applied"
+```

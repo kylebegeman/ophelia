@@ -1,7 +1,8 @@
 # Job / Action API Notes
 
-The local HTTP Job/Action API is not implemented yet. The current integration
-surface is the structured `ship` command set with stable JSON output.
+The local HTTP Job/Action API foundation is implemented with `ship api serve`.
+It binds to `127.0.0.1` by default and exposes JSON endpoints for actions,
+jobs, job events, host inventory, and registries.
 
 Quark can call these read-only commands today:
 
@@ -22,6 +23,20 @@ Mutating commands require confirmation tokens from their matching plans:
 - `ship backup create ... --confirm <token>`
 - `ship restore apply ... --confirm <token>`
 
-There is no arbitrary shell endpoint. A later API should wrap this command
-catalog with typed schemas, idempotency keys, job state, audit records,
-local-only binding, and optional callbacks.
+API endpoints:
+
+- `GET /actions`
+- `POST /jobs`
+- `GET /jobs/<job_id>`
+- `GET /jobs/<job_id>/events`
+- `POST /jobs/<job_id>/cancel`
+- `GET /host/inventory`
+- `GET /registry/manifests`
+- `GET /registry/releases`
+- `GET /operations`
+- `POST /operations/run`
+
+There is no arbitrary shell endpoint. Jobs use typed schemas, idempotency keys,
+job state, audit records, local-only binding, and optional artifact link fields.
+Operation templates return explicit step lists and result artifacts; they do
+not execute autonomous deploy workflows.

@@ -7,10 +7,13 @@ from .diff import register as register_diff
 from .doctor import register as register_doctor
 from .drift import register as register_drift
 from .explain import register as register_explain
+from .gc import register as register_gc
 from .host import register as register_host
 from .inspect import register as register_inspect
 from .jobs import register as register_jobs
 from .list_apps import register as register_list
+from .notes import register as register_notes
+from .operations import register as register_operations
 from .preflight import register as register_preflight
 from .release import register as register_release
 from .registry import register as register_registry
@@ -34,6 +37,9 @@ def register_commands(subparsers):
     register_preflight(subparsers)
     register_secrets(subparsers)
     register_runtime(subparsers)
+    register_operations(subparsers)
+    register_notes(subparsers)
+    register_gc(subparsers)
     register_validate(subparsers)
     register_explain(subparsers)
     register_verify(subparsers)

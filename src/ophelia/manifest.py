@@ -116,6 +116,10 @@ class Manifest:
     redirect_status: int = 308
     verify: List[VerificationCheck] = field(default_factory=list)
     prism: Optional[PrismConfig] = None
+    depends_on: List[str] = field(default_factory=list)
+    deployment_order: Optional[int] = None
+    migration_before: List[str] = field(default_factory=list)
+    verify_before_next: bool = False
 
     def service_alias(self, service_name: str) -> str:
         return f"{self.app}-{service_name}"
@@ -172,6 +176,10 @@ def load_manifest(path: Path) -> Manifest:
         redirect_status=_optional_int(raw.get("redirect_status"), "redirect_status") or 308,
         verify=verify,
         prism=prism,
+        depends_on=_string_list(raw.get("depends_on", []), "depends_on"),
+        deployment_order=_optional_int(raw.get("deployment_order"), "deployment_order"),
+        migration_before=_string_list(raw.get("migration_before", []), "migration_before"),
+        verify_before_next=_as_bool(raw.get("verify_before_next", False), "verify_before_next"),
     )
 
     _validate_manifest(manifest)

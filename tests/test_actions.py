@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.actions import ActionError, action_catalog, run_job, validate_action_inputs
+from ophelia.api import serve
 
 
 class ActionTests(unittest.TestCase):
@@ -17,6 +18,7 @@ class ActionTests(unittest.TestCase):
         ids = {item["id"] for item in action_catalog()}
         self.assertIn("deploy.apply", ids)
         self.assertIn("runtime.status", ids)
+        self.assertIn("restore.apply", ids)
         self.assertIn("release.show", ids)
 
     def test_invalid_action_inputs_are_rejected(self) -> None:
@@ -103,6 +105,10 @@ class ActionTests(unittest.TestCase):
             )
             self.assertEqual("failed", locked.job["state"])
             self.assertIn("locked", locked.job["error"])
+
+    def test_api_rejects_non_local_bind_host(self) -> None:
+        with self.assertRaises(ValueError):
+            serve("0.0.0.0", 8765)
 
 
 def _production_static_manifest(static_root: Path) -> str:

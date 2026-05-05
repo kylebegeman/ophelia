@@ -23,10 +23,19 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `redirect_status`: redirect status for redirect apps
 - `verify`: optional post-deploy HTTP verification checks
 - `prism`: Prism-specific config when `profile: prism`
+- `depends_on`: optional app/service slugs that should be considered prerequisites
+- `deployment_order`: optional integer sort key for explicit multi-app plans
+- `migration_before`: optional migration step names that must run before apply
+- `verify_before_next`: optional boolean requiring verification before later ordered apps
 
 `environment` is backward compatible. Old manifests without it still load and
 are treated as `unknown` by inspection commands. When set to `production`,
 Ophelia requires a deploy-plan confirmation token before local apply.
+
+Dependency metadata is advisory. Ophelia reports it in `ship explain`,
+`ship preflight`, and operation templates, but it does not auto-run multi-app
+deploys unless an operator explicitly invokes a template and confirms each
+mutating step.
 
 ## Service Fields
 

@@ -9,6 +9,8 @@ Dry-run-first flows:
 - `ship rollback plan` before rollback apply
 - `ship backup plan` before backup create
 - `ship restore plan` before restore preview apply
+- `ship operations run <name> --dry-run` before confirming an operation template
+- `ship gc plan` before runtime cleanup apply
 
 Confirmation tokens are derived from the planned action and relevant inputs.
 Changing the manifest, target release, backup id, or runtime files that affect
@@ -22,10 +24,14 @@ Safety gates currently implemented:
 - Caddy validation runs before reload when an existing shared Caddy container
   is available
 - restore apply writes a preview/report and does not overwrite active state
+- runtime GC never deletes current releases, env/secrets, backups, or the
+  configured rollback window
+- operation templates list deterministic steps and persist an artifact report,
+  but do not run autonomous workflows
 - status and doctor report Docker warnings without mutating host state
 
 Known limitations:
 
-- preflight is still composed from individual commands, not a single command
 - live Postgres dump/restore execution is not enabled by default
 - rollback is file-level and not traffic-aware yet
+- callbacks are not enabled by default

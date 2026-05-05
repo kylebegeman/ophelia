@@ -116,6 +116,14 @@ def run_action(action_id: str, inputs: Dict[str, Any], runtime_root: Path = DEFA
         )
     if action_id == "restore.plan":
         return _artifact("Restore plan complete.", restore_plan(runtime_root, inputs["app"], inputs["backup_id"]))
+    if action_id == "restore.apply":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: restore_plan(runtime_root, inputs["app"], inputs["backup_id"]),
+            lambda token: apply_restore(runtime_root, inputs["app"], inputs["backup_id"], token),
+            "Restore dry-run complete.",
+            "Restore preview created.",
+        )
     if action_id == "release.list":
         return _artifact("Release list complete.", {"app": inputs["app"], "releases": list_releases(runtime_root, inputs["app"])})
     if action_id == "release.show":
@@ -251,6 +259,7 @@ ACTION_DEFINITIONS.extend(
         _action("backup.plan", "Plan an app backup.", "backup", "read", ["app"]),
         _action("backup.create", "Create an app backup.", "backup", "mutating", ["app"], dry_run=True, confirm=True),
         _action("restore.plan", "Plan a restore preview.", "restore", "read", ["app", "backup_id"]),
+        _action("restore.apply", "Create a restore preview.", "restore", "mutating", ["app", "backup_id"], dry_run=True, confirm=True),
         _action("release.list", "List app releases.", "release", "read", ["app"]),
         _action("release.show", "Show one release.", "release", "read", ["app", "release_id"]),
     ]
