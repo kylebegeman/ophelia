@@ -1,3 +1,4 @@
+from .backup import register as register_backup
 from .bootstrap_host import register as register_bootstrap_host
 from .deploy import register as register_deploy
 from .diff import register as register_diff
@@ -13,6 +14,7 @@ from .verify import register as register_verify
 
 def register_commands(subparsers):
     register_bootstrap_host(subparsers)
+    register_backup(subparsers)
     register_validate(subparsers)
     register_verify(subparsers)
     register_render(subparsers)
