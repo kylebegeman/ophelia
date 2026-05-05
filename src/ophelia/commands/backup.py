@@ -14,12 +14,14 @@ def register(subparsers: _SubParsersAction) -> None:
     plan_parser = backup_subparsers.add_parser("plan", help="Plan an app backup")
     plan_parser.add_argument("app", help="App id")
     plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     plan_parser.set_defaults(handler=run_backup_plan)
 
     create_parser = backup_subparsers.add_parser("create", help="Create an app backup")
     create_parser.add_argument("app", help="App id")
     create_parser.add_argument("--confirm", required=True, help="Confirmation token from backup plan")
     create_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    create_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     create_parser.set_defaults(handler=run_backup_create)
 
     restore_parser = subparsers.add_parser("restore", help="Plan or apply restore previews")
@@ -28,6 +30,7 @@ def register(subparsers: _SubParsersAction) -> None:
     restore_plan_parser.add_argument("app", help="App id")
     restore_plan_parser.add_argument("backup_id", help="Backup id")
     restore_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    restore_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     restore_plan_parser.set_defaults(handler=run_restore_plan)
 
     restore_apply_parser = restore_subparsers.add_parser("apply", help="Create a restore preview")
@@ -35,6 +38,7 @@ def register(subparsers: _SubParsersAction) -> None:
     restore_apply_parser.add_argument("backup_id", help="Backup id")
     restore_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from restore plan")
     restore_apply_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    restore_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     restore_apply_parser.set_defaults(handler=run_restore_apply)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
@@ -21,11 +22,15 @@ def register(subparsers: _SubParsersAction) -> None:
         default=REPO_ROOT,
         help="Ophelia checkout root",
     )
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     parser.set_defaults(handler=run)
 
 
 def run(args: Namespace) -> int:
     report = status_report(args.runtime_root, args.ophelia_root, args.ophelia_root / "manifests")
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
     print(f"Runtime root: {report['runtime_root']}")
     print(f"Runtime exists: {'yes' if report['runtime_root_exists'] else 'no'}")
     print(f"Docker: {report['docker'].get('version') or 'unavailable'}")

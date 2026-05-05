@@ -17,6 +17,7 @@ def register(subparsers: _SubParsersAction) -> None:
         default=DEFAULT_RUNTIME_ROOT,
         help="Runtime root to inspect",
     )
+    releases_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     releases_parser.set_defaults(handler=run_releases)
 
     release_parser = subparsers.add_parser("release", help="Inspect one release record")
@@ -30,11 +31,15 @@ def register(subparsers: _SubParsersAction) -> None:
         default=DEFAULT_RUNTIME_ROOT,
         help="Runtime root to inspect",
     )
+    show_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     show_parser.set_defaults(handler=run_release_show)
 
 
 def run_releases(args: Namespace) -> int:
     records = list_releases(args.runtime_root, args.app)
+    if args.json:
+        print(json.dumps({"app": args.app, "releases": records}, indent=2, sort_keys=True))
+        return 0
     if not records:
         print(f"No releases found for {args.app} in {args.runtime_root}")
         return 0

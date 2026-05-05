@@ -21,6 +21,7 @@ def register(subparsers: _SubParsersAction) -> None:
         default=DEFAULT_RUNTIME_ROOT,
         help="Runtime root to inspect",
     )
+    plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     plan_parser.set_defaults(handler=run_plan)
 
     apply_parser = rollback_subparsers.add_parser("apply", help="Apply a planned rollback")
@@ -33,6 +34,7 @@ def register(subparsers: _SubParsersAction) -> None:
         default=DEFAULT_RUNTIME_ROOT,
         help="Runtime root to mutate",
     )
+    apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     apply_parser.set_defaults(handler=run_apply)
 
 
