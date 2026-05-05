@@ -1,5 +1,6 @@
 version: 1
 app: quark-ops-staging
+environment: staging
 profile: prism
 kind: service
 image: ghcr.io/bagelworks/prism:quark-next

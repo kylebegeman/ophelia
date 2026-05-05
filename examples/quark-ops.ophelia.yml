@@ -1,5 +1,6 @@
 version: 1
 app: quark-ops
+environment: production
 profile: prism
 kind: service
 image: ghcr.io/bagelworks/prism:quark-latest

@@ -27,6 +27,7 @@ from .templates import (
 class DeploymentRecord:
     app: str
     kind: str
+    environment: str | None
     runtime_path: Path
     deployed_at: str
     source_manifest: str
@@ -281,6 +282,7 @@ def list_deployments(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> List[Deployme
             DeploymentRecord(
                 app=payload["app"],
                 kind=payload["kind"],
+                environment=payload.get("environment"),
                 runtime_path=Path(payload["runtime_path"]),
                 deployed_at=payload["deployed_at"],
                 source_manifest=payload["source_manifest"],

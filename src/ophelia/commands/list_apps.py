@@ -22,7 +22,10 @@ def run(args: Namespace) -> int:
         print(f"No deployments found in {args.runtime_root}")
         return 0
 
-    print("APP\tKIND\tDEPLOYED AT\tRUNTIME PATH")
+    print("APP\tKIND\tENVIRONMENT\tDEPLOYED AT\tRUNTIME PATH")
     for record in deployments:
-        print(f"{record.app}\t{record.kind}\t{record.deployed_at}\t{record.runtime_path}")
+        print(
+            f"{record.app}\t{record.kind}\t{record.environment or 'unknown'}\t"
+            f"{record.deployed_at}\t{record.runtime_path}"
+        )
     return 0

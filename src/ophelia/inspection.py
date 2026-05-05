@@ -34,6 +34,7 @@ def status_report(runtime_root: Path, ophelia_root: Path, manifest_dir: Path) ->
             {
                 "app": deployment.app,
                 "kind": deployment.kind,
+                "environment": deployment.environment,
                 "release_id": deployment.release_id,
                 "deployed_at": deployment.deployed_at,
                 "runtime_path": str(deployment.runtime_path),

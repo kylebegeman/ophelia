@@ -40,6 +40,23 @@ routes:
         with self.assertRaises(ManifestError):
             self._load(manifest)
 
+    def test_environment_metadata_is_optional_and_validated(self) -> None:
+        manifest = """
+version: 1
+app: env-aware
+environment: staging
+kind: static
+static_root: /tmp/env-aware
+routes:
+  - domain: env-aware.example.com
+"""
+        loaded = self._load(manifest)
+        self.assertEqual("staging", loaded.environment)
+
+        invalid = manifest.replace("staging", "qa")
+        with self.assertRaises(ManifestError):
+            self._load(invalid)
+
     def test_tunnel_manifest_supports_route_upstreams(self) -> None:
         manifest = """
 version: 1

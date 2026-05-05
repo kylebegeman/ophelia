@@ -51,7 +51,8 @@ def run(args: Namespace) -> int:
             print(
                 "  "
                 f"{app['app']} release={app.get('release_id') or 'unknown'} "
-                f"kind={app['kind']} caddy_active={'yes' if caddy['active'] else 'no'} "
+                f"kind={app['kind']} environment={app.get('environment') or 'unknown'} "
+                f"caddy_active={'yes' if caddy['active'] else 'no'} "
                 f"caddy_synced={'yes' if caddy['synced'] else 'no'}"
             )
     else:

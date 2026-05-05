@@ -8,6 +8,7 @@ RUNTIME_ROOT="${OPHELIA_RUNTIME_ROOT:-$HOME/ophelia-runtime}"
 ENVIRONMENT="production"
 VERIFY=0
 MANIFEST=""
+CONFIRM=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,9 +24,13 @@ while [[ $# -gt 0 ]]; do
       VERIFY=1
       shift
       ;;
+    --confirm)
+      CONFIRM="${2:?Missing value for --confirm}"
+      shift 2
+      ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Usage: deploy-quark-ops.sh [--environment production|staging] [--manifest path] [--verify]" >&2
+      echo "Usage: deploy-quark-ops.sh [--environment production|staging] [--manifest path] [--verify] [--confirm token]" >&2
       exit 1
       ;;
   esac
@@ -56,7 +61,24 @@ fi
 
 "$REPO_ROOT/cli/ship" deploy "$MANIFEST" --runtime-root "$RUNTIME_ROOT"
 "$REPO_ROOT/platform/scripts/upsert-prism-surface-env.sh" "$APP_NAME"
-"$REPO_ROOT/cli/ship" deploy "$MANIFEST" --runtime-root "$RUNTIME_ROOT" --ophelia-root "$REPO_ROOT" --apply
+
+deploy_args=(
+  deploy "$MANIFEST"
+  --runtime-root "$RUNTIME_ROOT"
+  --ophelia-root "$REPO_ROOT"
+  --apply
+)
+
+if [[ "$ENVIRONMENT" == "production" ]]; then
+  if [[ -z "$CONFIRM" ]]; then
+    echo "Production deploy requires --confirm. Run this plan command and pass its confirmation_token:" >&2
+    "$REPO_ROOT/cli/ship" deploy "$MANIFEST" --runtime-root "$RUNTIME_ROOT" --plan --json >&2
+    exit 1
+  fi
+  deploy_args+=(--confirm "$CONFIRM")
+fi
+
+"$REPO_ROOT/cli/ship" "${deploy_args[@]}"
 
 if [[ "$VERIFY" == "1" ]]; then
   "$REPO_ROOT/cli/ship" verify "$MANIFEST"

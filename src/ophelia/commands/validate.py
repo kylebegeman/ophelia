@@ -47,6 +47,7 @@ def run(args: Namespace) -> int:
 
     print(f"Manifest valid: {manifest.app}")
     print(f"  kind: {manifest.kind}")
+    print(f"  environment: {getattr(manifest, 'environment', None) or 'unknown'}")
     print(f"  profile: {manifest.profile or 'none'}")
     print(f"  routes: {len(manifest.routes)}")
     print(f"  services: {', '.join(manifest.services.keys()) or 'none'}")
