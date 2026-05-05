@@ -10,6 +10,14 @@
 
 ## Boundaries
 
+### stack ownership
+
+Quark is the source of truth for operator workflows, documentation, and future
+console UX. Prism is the backend engine for APIs, artifacts, metadata, audit,
+and state. OpenClaw owns agent and runtime orchestration. Ophelia owns VPS
+deployment control-plane behavior: manifests, rendered Caddy/Compose/runtime
+files, host operations, backups, rollback, and runtime inspection.
+
 ### `ophelia` owns
 
 - `ship` CLI
@@ -34,6 +42,25 @@
 - Docker volumes
 - logs and backups
 
+## Checkout Locations
+
+The canonical workstation checkout is:
+
+```text
+/Users/kyle/Developer/platforms/ophelia
+```
+
+During migration, an older checkout path may still exist at:
+
+```text
+/Users/kyle/Developer/projects/web/ophelia
+```
+
+That older path is compatibility-only. Commands should be written repo-relative
+and should not assume either absolute workstation path. The VPS source checkout
+continues to live at `~/ophelia`, while generated runtime state continues to
+live under `~/ophelia-runtime`.
+
 ## Runtime Shape
 
 ```text
@@ -45,6 +72,7 @@
       env.example
       manifest.lock.json
       release.json
+      releases/
       caddy/
         dragon-writer.caddy
   caddy/

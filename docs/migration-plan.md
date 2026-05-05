@@ -2,6 +2,7 @@
 
 ## Current VPS Reality
 
+- the canonical workstation checkout is `/Users/kyle/Developer/platforms/ophelia`
 - public ingress now runs through Ophelia-managed Caddy on `80/443`
 - app deployments are spread across independent repos
 - several apps still own their own Postgres containers
@@ -12,15 +13,18 @@
 
 ## Migration Order
 
-1. Back up the current VPS state exactly as-is.
-2. Create `ophelia-runtime` and shared Docker networks.
-3. Stand up shared Postgres and Redis alongside the current apps.
-4. Move public edge hosts into platform-owned manifests in `manifests/`.
-5. Reconcile platform manifests through `platform/scripts/apply-manifests.sh`.
-6. Validate generated Caddy config through `platform/scripts/validate-caddy.sh`.
-7. Cut public ingress over with `platform/scripts/cutover-public-edge.sh`.
-8. Move app repos onto repo-owned Ophelia manifests and shared services.
-9. Remove stale cron jobs and old ingress config after cutover.
+1. Keep the current local worktree intact until `_worktrees/` is removed with
+   `git worktree remove` or intentionally archived.
+2. Move the main checkout to `/Users/kyle/Developer/platforms/ophelia`.
+3. Back up the current VPS state exactly as-is.
+4. Create `ophelia-runtime` and shared Docker networks.
+5. Stand up shared Postgres and Redis alongside the current apps.
+6. Move public edge hosts into platform-owned manifests in `manifests/`.
+7. Reconcile platform manifests through `platform/scripts/apply-manifests.sh`.
+8. Validate generated Caddy config through `platform/scripts/validate-caddy.sh`.
+9. Cut public ingress over with `platform/scripts/cutover-public-edge.sh`.
+10. Move app repos onto repo-owned Ophelia manifests and shared services.
+11. Remove stale cron jobs and old ingress config after cutover.
 
 ## First Apps To Migrate
 

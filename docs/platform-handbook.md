@@ -58,11 +58,17 @@ Important: `ophelia` is not the machine hostname. It is the platform repo/runtim
 
 ### 1. Created a dedicated platform repo
 
-Local repo:
+Canonical local repo:
 
 ```text
-/Users/kyle/Developer/projects/web/ophelia
+/Users/kyle/Developer/platforms/ophelia
 ```
+
+The older local path `/Users/kyle/Developer/projects/web/ophelia` may remain
+during migration, but it is no longer the canonical platform location. The
+local `_worktrees/` directory contains the `codex/quark-image-namespace` Git
+worktree and should be treated as local workspace metadata, not platform source
+state.
 
 Purpose:
 
@@ -422,7 +428,7 @@ Current state:
 ### Platform repo
 
 ```text
-/Users/kyle/Developer/projects/web/ophelia
+/Users/kyle/Developer/platforms/ophelia
 ```
 
 Owns:

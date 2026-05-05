@@ -40,10 +40,32 @@ ophelia/
   templates/              # Render templates for compose and Caddy
 ```
 
+## Canonical Locations
+
+The canonical workstation checkout is:
+
+```text
+/Users/kyle/Developer/platforms/ophelia
+```
+
+The current checkout may still live at
+`/Users/kyle/Developer/projects/web/ophelia` during migration. Commands are
+repo-relative and compute template paths from the installed Python package, so
+they work from either location as long as they are run from a complete checkout.
+
+The VPS copy remains `~/ophelia`, and runtime state remains
+`~/ophelia-runtime`. Runtime state, env files, backups, pulled images, and
+generated bundles are not moved into the source checkout.
+
+The local `_worktrees/` directory is a Git worktree holding branch
+`codex/quark-image-namespace`. It is intentionally ignored by the main repo and
+should not be deleted as part of the canonical path migration unless that
+worktree is removed with `git worktree remove`.
+
 ## Quick Start
 
 ```bash
-cd /Users/kyle/Developer/projects/web/ophelia
+cd /Users/kyle/Developer/platforms/ophelia
 python3 -m venv .venv
 .venv/bin/python -m ensurepip --upgrade
 .venv/bin/python -m pip install PyYAML
@@ -95,10 +117,9 @@ Recommended order:
 
 ## Next Milestones
 
-1. Clean up the remaining legacy/manual VPS deployments and stale cron drift.
-2. Add release history, rollback, and health-check verification.
-3. Keep moving app repos onto repo-owned Ophelia manifests and GHCR-backed CI deploys.
-4. Layer in Authelia once the basic runtime path is stable.
+1. Harden release history, rollback, status, backup, drift, and preflight flows.
+2. Keep moving app repos onto repo-owned Ophelia manifests and GHCR-backed CI deploys.
+3. Layer in optional auth and monitoring after the runtime path is inspectable.
 
 ## Deploy Flows
 
@@ -183,7 +204,7 @@ Example:
 cd /Users/kyle/Developer/projects/web/prism/platform
 ./scripts/release/build-image.sh ghcr.io/bagelworks/prism:quark-next
 
-cd /Users/kyle/Developer/projects/web/ophelia
+cd /Users/kyle/Developer/platforms/ophelia
 ./platform/scripts/deploy-quark-ops.sh --environment staging --verify
 ```
 
