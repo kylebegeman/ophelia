@@ -3,6 +3,7 @@ from .bootstrap_host import register as register_bootstrap_host
 from .deploy import register as register_deploy
 from .diff import register as register_diff
 from .doctor import register as register_doctor
+from .drift import register as register_drift
 from .list_apps import register as register_list
 from .release import register as register_release
 from .render import register as register_render
@@ -20,6 +21,7 @@ def register_commands(subparsers):
     register_render(subparsers)
     register_deploy(subparsers)
     register_diff(subparsers)
+    register_drift(subparsers)
     register_status(subparsers)
     register_doctor(subparsers)
     register_list(subparsers)
