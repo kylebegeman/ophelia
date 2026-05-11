@@ -52,6 +52,7 @@ require_secret_or_existing() {
 
 setup_token="${PRISM_CONSOLE_SETUP_TOKEN:-${QUARK_SETUP_TOKEN:-}}"
 mfa_key="${PRISM_MFA_ENCRYPTION_KEY:-${QUARK_MFA_ENCRYPTION_KEY:-}}"
+credential_key="${PRISM_CREDENTIAL_ENCRYPTION_KEY:-${QUARK_CREDENTIAL_ENCRYPTION_KEY:-}}"
 surface="${PRISM_CONSOLE_SURFACE:-quark}"
 asset_path="${PRISM_CONSOLE_ASSET_PATH:-/opt/prism/console}"
 dashboard_title="${QUARK_DASHBOARD_TITLE:-}"
@@ -60,6 +61,7 @@ upsert_line "PRISM_CONSOLE_SURFACE" "$surface"
 upsert_line "PRISM_CONSOLE_ASSET_PATH" "$asset_path"
 require_secret_or_existing "PRISM_CONSOLE_SETUP_TOKEN" "$setup_token"
 require_secret_or_existing "PRISM_MFA_ENCRYPTION_KEY" "$mfa_key"
+require_secret_or_existing "PRISM_CREDENTIAL_ENCRYPTION_KEY" "$credential_key"
 
 if [[ -n "$dashboard_title" ]]; then
   upsert_line "QUARK_DASHBOARD_TITLE" "$dashboard_title"
