@@ -81,5 +81,7 @@ fi
 "$REPO_ROOT/cli/ship" "${deploy_args[@]}"
 
 if [[ "$VERIFY" == "1" ]]; then
-  "$REPO_ROOT/cli/ship" verify "$MANIFEST"
+  "$REPO_ROOT/cli/ship" verify "$MANIFEST" \
+    --attempts "${OPHELIA_VERIFY_ATTEMPTS:-12}" \
+    --delay "${OPHELIA_VERIFY_DELAY:-5}"
 fi

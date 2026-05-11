@@ -10,6 +10,8 @@ def register(subparsers: _SubParsersAction) -> None:
     parser = subparsers.add_parser("verify", help="Run post-deploy verification checks for an app manifest")
     parser.add_argument("manifest", type=Path, help="Path to the .ophelia manifest")
     parser.add_argument("--timeout", type=int, default=10, help="Per-request timeout in seconds")
+    parser.add_argument("--attempts", type=int, default=1, help="Number of verification attempts before failing")
+    parser.add_argument("--delay", type=float, default=5, help="Delay between verification attempts in seconds")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     parser.set_defaults(handler=run)
 
@@ -32,11 +34,14 @@ def run(args: Namespace) -> int:
         print(f"No verification checks configured or inferred for {manifest.app}.")
         return 0
 
-    payload = run_verifications(manifest, timeout=args.timeout)
+    payload = run_verifications(manifest, timeout=args.timeout, attempts=args.attempts, delay=args.delay)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if payload["ok"] else 1
-    print(f"Verification results for {manifest.app}")
+    attempt_detail = ""
+    if payload.get("attempts", 1) > 1:
+        attempt_detail = f" after attempt {payload.get('attempt')}/{payload.get('attempts')}"
+    print(f"Verification results for {manifest.app}{attempt_detail}")
     for result in payload["results"]:
         prefix = "✓" if result["ok"] else "✗"
         detail = f"HTTP {result['status_code']}" if result["status_code"] is not None else "request failed"
