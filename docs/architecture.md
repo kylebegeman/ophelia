@@ -131,10 +131,13 @@ For platform-owned ingress, Ophelia now also includes:
 Those scripts let the VPS reconcile platform manifests without hand-editing
 public edge config.
 
-Every deploy writes a current `release.json` pointer plus immutable release
-records under `apps/<app>/releases/`. New releases also snapshot rendered
-bundles under `apps/<app>/release-bundles/` so rollback can restore generated
-Compose and Caddy files without deleting runtime state.
+Every deploy writes a latest `release.json` pointer plus immutable release
+records under `apps/<app>/releases/`. Successful applies also write
+`active_release.json`, which is the release Ophelia treats as active for
+rollback, status, and generated support-file cleanup. New releases snapshot
+rendered bundles under `apps/<app>/release-bundles/` so rollback can restore
+generated Compose, Caddy, env fragment, and artifact files without deleting
+operator-managed runtime state.
 
 ## Two Deployment Modes
 

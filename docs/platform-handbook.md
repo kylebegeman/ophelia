@@ -122,6 +122,7 @@ Current intended shape:
   caddy/
     env
     global.d/
+      ophelia-on-demand-tls.caddy
     sites.d/
   static/
   backups/
@@ -523,7 +524,7 @@ Today:
 
 - public ingress runs through Ophelia-managed Caddy
 - Ophelia-generated Caddy snippets exist under `~/ophelia-runtime/caddy/sites.d`
-  and `~/ophelia-runtime/caddy/global.d`
+  and host-level Caddy globals exist under `~/ophelia-runtime/caddy/global.d`
 - legacy `~/edge` remains only as rollback/reference material until it is
   intentionally cleaned up
 

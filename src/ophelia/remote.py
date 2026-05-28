@@ -41,6 +41,11 @@ def stage_remote_bundle(
     remote_runtime_root: str,
     remote_ophelia_root: str,
     apply: bool,
+    verify: bool = False,
+    verify_attempts: int | None = None,
+    verify_interval: float | None = None,
+    verify_timeout: float | None = None,
+    verify_failure_mode: str | None = None,
 ) -> str:
     remote_runtime_root = _rsync_path(remote_runtime_root)
     with tempfile.TemporaryDirectory(prefix=f"ophelia-{manifest.app}-") as temp_dir:
@@ -54,6 +59,11 @@ def stage_remote_bundle(
         remote_runtime_root=remote_runtime_root,
         remote_ophelia_root=remote_ophelia_root,
         apply=apply,
+        verify=verify,
+        verify_attempts=verify_attempts,
+        verify_interval=verify_interval,
+        verify_timeout=verify_timeout,
+        verify_failure_mode=verify_failure_mode,
     )
     completed = _run(_ssh_command(host, ssh_port, script), capture_output=True)
     return completed.stdout.strip()
@@ -76,7 +86,15 @@ def _sync_bundle(
         "--exclude",
         "release.json",
         "--exclude",
+        "active_release.json",
+        "--exclude",
         "releases/",
+        "--exclude",
+        "release-bundles/",
+        "--exclude",
+        "addons.json",
+        "--exclude",
+        "restore-previews/",
         "-e",
         f"ssh -p {ssh_port}",
         f"{bundle_root}/",
@@ -91,6 +109,11 @@ def _build_remote_stage_script(
     remote_runtime_root: str,
     remote_ophelia_root: str,
     apply: bool,
+    verify: bool = False,
+    verify_attempts: int | None = None,
+    verify_interval: float | None = None,
+    verify_timeout: float | None = None,
+    verify_failure_mode: str | None = None,
 ) -> str:
     app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
     caddy_target = f"{_shell_ref(remote_runtime_root)}/caddy/sites.d/{manifest.app}.caddy"
@@ -114,7 +137,15 @@ def _build_remote_stage_script(
     ]
 
     if apply:
-        lines.extend(_build_apply_lines())
+        lines.extend(
+            _build_apply_lines(
+                verify=verify,
+                verify_attempts=verify_attempts,
+                verify_interval=verify_interval,
+                verify_timeout=verify_timeout,
+                verify_failure_mode=verify_failure_mode,
+            )
+        )
     else:
         lines.extend(
             [
@@ -132,10 +163,36 @@ def _build_remote_stage_script(
     return "\n".join(lines)
 
 
-def _build_apply_lines() -> List[str]:
+def _build_apply_lines(
+    verify: bool = False,
+    verify_attempts: int | None = None,
+    verify_interval: float | None = None,
+    verify_timeout: float | None = None,
+    verify_failure_mode: str | None = None,
+) -> List[str]:
+    command = [
+        "./cli/ship",
+        "deploy",
+        '"$APP_ROOT/manifest.lock.json"',
+        "--runtime-root",
+        '"$REMOTE_RUNTIME_ROOT"',
+        "--ophelia-root",
+        '"$REMOTE_OPHELIA_ROOT"',
+        "--apply",
+    ]
+    if verify:
+        command.append("--verify")
+        if verify_attempts is not None:
+            command.extend(["--verify-attempts", str(verify_attempts)])
+        if verify_interval is not None:
+            command.extend(["--verify-interval", str(verify_interval)])
+        if verify_timeout is not None:
+            command.extend(["--verify-timeout", str(verify_timeout)])
+        if verify_failure_mode is not None:
+            command.extend(["--verify-failure-mode", shlex.quote(verify_failure_mode)])
     return [
         'cd "$REMOTE_OPHELIA_ROOT"',
-        './cli/ship deploy "$APP_ROOT/manifest.lock.json" --runtime-root "$REMOTE_RUNTIME_ROOT" --ophelia-root "$REMOTE_OPHELIA_ROOT" --apply',
+        " ".join(command),
     ]
 
 
@@ -157,6 +214,8 @@ def _run(command: List[str], capture_output: bool = False) -> subprocess.Complet
             text=True,
             capture_output=capture_output,
         )
+    except OSError as exc:
+        raise RemoteError(str(exc)) from exc
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else ""
         stdout = exc.stdout.strip() if exc.stdout else ""

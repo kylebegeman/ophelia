@@ -29,6 +29,7 @@ logs, and pulled images.
 - [Preflight and Safety](docs/preflight-and-safety.md)
 - [Operator Runbook](docs/operator-runbook.md)
 - [Job/Action API Notes](docs/job-action-api.md)
+- [Host Contract](docs/host-contract.md)
 - [Migration Plan](docs/migration-plan.md)
 
 ## Repository Layout
@@ -84,6 +85,7 @@ python3 -m venv .venv
 ./cli/ship status
 ./cli/ship doctor
 ./cli/ship verify examples/dragonwriter.ophelia.yml
+./cli/ship verify dragon-writer
 ./cli/ship bootstrap-host kyle@209.74.71.165 --ssh-port 22022
 ./cli/ship list
 ```
@@ -176,6 +178,9 @@ Use this after an app repo is set up with GitHub Actions:
 3. CI SSHes into the VPS and runs `~/ophelia/cli/ship deploy ... --apply`.
 
 If the app has public health checks or operator surfaces that should be part of the release contract, run `~/ophelia/cli/ship deploy ... --apply --verify` instead.
+Verification retries by default for first-deploy TLS races and records apply
+status separately from verify status. If apply succeeds but external
+verification fails, rerun it with `~/ophelia/cli/ship verify <app>`.
 
 For static sites this means:
 

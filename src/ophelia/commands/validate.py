@@ -3,6 +3,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..manifest import ManifestError, load_manifest
+from ..verify import verification_checks
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -22,6 +23,7 @@ def run(args: Namespace) -> int:
         print(f"Manifest invalid: {exc}")
         return 1
 
+    checks = verification_checks(manifest)
     if args.json:
         print(
             json.dumps(
@@ -37,7 +39,8 @@ def run(args: Namespace) -> int:
                         "postgres": manifest.addons.postgres,
                         "redis": manifest.addons.redis,
                     },
-                    "verification_checks": len(manifest.verify),
+                    "verification_checks": len(checks),
+                    "explicit_verification_checks": len(manifest.verify),
                 },
                 indent=2,
                 sort_keys=True,
@@ -53,6 +56,7 @@ def run(args: Namespace) -> int:
     print(f"  services: {', '.join(manifest.services.keys()) or 'none'}")
     print(f"  postgres: {'yes' if manifest.addons.postgres else 'no'}")
     print(f"  redis: {'yes' if manifest.addons.redis else 'no'}")
-    if manifest.verify:
-        print(f"  verify: {len(manifest.verify)} explicit checks")
+    if checks:
+        kind = "explicit" if manifest.verify else "inferred"
+        print(f"  verify: {len(checks)} {kind} checks")
     return 0

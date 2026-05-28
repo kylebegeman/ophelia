@@ -1,7 +1,10 @@
+from .app import register as register_app
+from .apps import register as register_apps
 from .actions import register as register_actions
 from .api import register as register_api
 from .backup import register as register_backup
 from .bootstrap_host import register as register_bootstrap_host
+from .caddy import register as register_caddy
 from .deploy import register as register_deploy
 from .diff import register as register_diff
 from .doctor import register as register_doctor
@@ -28,6 +31,9 @@ from .verify import register as register_verify
 
 def register_commands(subparsers):
     register_bootstrap_host(subparsers)
+    register_apps(subparsers)
+    register_app(subparsers)
+    register_caddy(subparsers)
     register_actions(subparsers)
     register_api(subparsers)
     register_jobs(subparsers)

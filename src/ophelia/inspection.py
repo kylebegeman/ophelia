@@ -30,18 +30,24 @@ def status_report(runtime_root: Path, ophelia_root: Path, manifest_dir: Path) ->
         app_root = runtime_root / "apps" / deployment.app
         generated_caddy = app_root / "caddy" / f"{deployment.app}.caddy"
         active_caddy = runtime_root / "caddy" / "sites.d" / f"{deployment.app}.caddy"
+        generated_hash = _file_hash(generated_caddy)
+        active_hash = _file_hash(active_caddy)
         apps.append(
             {
                 "app": deployment.app,
                 "kind": deployment.kind,
                 "environment": deployment.environment,
                 "release_id": deployment.release_id,
+                "latest_release_id": deployment.release_id,
+                "active_release_id": deployment.active_release_id,
+                "applied": deployment.applied,
+                "verified": deployment.verified,
                 "deployed_at": deployment.deployed_at,
                 "runtime_path": str(deployment.runtime_path),
                 "caddy": {
                     "generated": generated_caddy.exists(),
                     "active": active_caddy.exists(),
-                    "synced": _file_hash(generated_caddy) == _file_hash(active_caddy),
+                    "synced": generated_hash is not None and generated_hash == active_hash,
                 },
             }
         )

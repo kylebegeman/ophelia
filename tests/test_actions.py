@@ -29,6 +29,10 @@ class ActionTests(unittest.TestCase):
             validate_action_inputs("manifest.validate", {})
         with self.assertRaises(ActionError):
             validate_action_inputs("manifest.validate", {"manifest_path": "x", "extra": "nope"})
+        with self.assertRaises(ActionError):
+            run_job("", {}, Path(tempfile.gettempdir()) / "ophelia-empty-action-test")
+        with self.assertRaises(ActionError):
+            run_job("manifest.validate", [], Path(tempfile.gettempdir()) / "ophelia-bad-input-test")  # type: ignore[arg-type]
 
     def test_mutating_dry_run_returns_waiting_job_with_token(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -127,7 +131,7 @@ class ActionTests(unittest.TestCase):
             self.assertTrue(second.existing)
             self.assertEqual(first.job["job_id"], second.job["job_id"])
 
-            lock = runtime_root / "locks" / "safe-static-unknown.lock"
+            lock = runtime_root / "locks" / "safe-static-production.lock"
             lock.parent.mkdir(parents=True, exist_ok=True)
             lock.write_text("held")
             locked = run_job(
@@ -137,6 +141,20 @@ class ActionTests(unittest.TestCase):
             )
             self.assertEqual("failed", locked.job["state"])
             self.assertIn("locked", locked.job["error"])
+
+    def test_same_input_jobs_get_distinct_ids_without_idempotency_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_production_static_manifest(root / "static"))
+            (root / "static").mkdir()
+            inputs = {"manifest_path": str(manifest_path), "runtime_root": str(runtime_root), "dry_run": True}
+
+            first = run_job("deploy.apply", inputs, runtime_root)
+            second = run_job("deploy.apply", inputs, runtime_root)
+
+            self.assertNotEqual(first.job["job_id"], second.job["job_id"])
 
     def test_api_rejects_non_local_bind_host(self) -> None:
         with self.assertRaises(ValueError):

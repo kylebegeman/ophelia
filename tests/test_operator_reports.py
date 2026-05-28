@@ -39,6 +39,10 @@ class OperatorReportTests(unittest.TestCase):
             self.assertIn("API_TOKEN", secrets["blocking_keys"])
             self.assertTrue(ownership["ophelia_generated_files"])
 
+            (runtime_root / "apps" / "operator-test" / "env").write_text("API_TOKEN=real-token\n")
+            resolved = secrets_required(manifest, manifest_path, runtime_root)
+            self.assertEqual([], resolved["blocking_keys"])
+
             env = {**os.environ, "OPHELIA_SKIP_DOCKER_STATUS": "1"}
             result = subprocess.run(
                 [

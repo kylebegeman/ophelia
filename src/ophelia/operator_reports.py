@@ -14,7 +14,7 @@ from .explain import explain_manifest
 from .inspection import status_report
 from .manifest import Manifest, ManifestError, load_manifest
 from .planning import bundle_diff
-from .runtime import list_releases
+from .runtime import active_release_id, list_releases
 from .templates import render_env_example
 from .verify import verification_checks
 
@@ -43,6 +43,7 @@ def manifest_registry(manifest_dir: Path, runtime_root: Path) -> Dict[str, objec
         except ManifestError as exc:
             errors.append({"path": str(manifest_path), "error": str(exc)})
             continue
+        active = active_release_id(runtime_root, manifest.app)
         current = _current_release(runtime_root, manifest.app)
         entries.append(
             {
@@ -52,7 +53,8 @@ def manifest_registry(manifest_dir: Path, runtime_root: Path) -> Dict[str, objec
                 "domains": sorted({route.domain for route in manifest.routes}),
                 "kind": manifest.kind,
                 "profile": manifest.profile,
-                "current_deployed_release": current.get("release_id"),
+                "current_deployed_release": active,
+                "latest_release": current.get("release_id"),
                 "last_validation": {"ok": True},
             }
         )
@@ -75,6 +77,10 @@ def release_registry(runtime_root: Path) -> Dict[str, object]:
                         "image_digests": release.get("image_digests", {}),
                         "manifest_hash": release.get("manifest_hash"),
                         "deployed_at": release.get("deployed_at"),
+                        "active": release.get("active"),
+                        "latest": release.get("latest"),
+                        "applied": release.get("applied"),
+                        "verified": release.get("verified"),
                         "verification_status": (release.get("verification") or {}).get("status")
                         if isinstance(release.get("verification"), dict)
                         else None,
@@ -146,6 +152,7 @@ def secrets_required(manifest: Manifest, manifest_path: Path, runtime_root: Path
         present = key in actual
         runtime_placeholder = _is_placeholder(actual.get(key, "")) if present else False
         if placeholder or runtime_placeholder:
+            blocking = placeholder and (not present or runtime_placeholder)
             requirements.append(
                 {
                     "key": key,
@@ -154,7 +161,7 @@ def secrets_required(manifest: Manifest, manifest_path: Path, runtime_root: Path
                     "missing": placeholder and not present,
                     "placeholder_detected": placeholder or runtime_placeholder,
                     "used_by": _used_by(manifest, key),
-                    "blocking_for_apply": placeholder or not present or runtime_placeholder,
+                    "blocking_for_apply": blocking,
                 }
             )
     return {
@@ -170,7 +177,7 @@ def runtime_ownership(runtime_root: Path, app: str) -> Dict[str, object]:
     return {
         "app": app,
         "runtime_path": str(app_root),
-        "ophelia_generated_files": _existing(app_root, ["compose.yml", "env.example", "manifest.lock.json", "release.json", "caddy", "releases", "release-bundles"]),
+        "ophelia_generated_files": _existing(app_root, ["compose.yml", "env.example", "manifest.lock.json", "release.json", "active_release.json", "caddy", "releases", "release-bundles"]),
         "operator_managed_files": _existing(app_root, ["env", "notes"]),
         "secret_runtime_files": _existing(app_root, ["env", "addons.json"]),
         "static_assets": _existing(runtime_root / "static", [app]),

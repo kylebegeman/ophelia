@@ -84,6 +84,12 @@ def explain_manifest(manifest: Manifest, manifest_path: Path) -> Dict[str, objec
             }
             for check in checks
         ],
+        "verification_policy": {
+            "attempts": manifest.verify_policy.attempts,
+            "interval": manifest.verify_policy.interval,
+            "timeout": manifest.verify_policy.timeout,
+            "failure_mode": manifest.verify_policy.failure_mode,
+        },
         "release_behavior": {
             "writes_release_record": True,
             "writes_rendered_bundle_snapshot": True,

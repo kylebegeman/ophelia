@@ -14,10 +14,10 @@ def gc_plan(runtime_root: Path, keep_releases: int = 5) -> Dict[str, object]:
     apps_root = runtime_root / "apps"
     if apps_root.exists():
         for app_root in sorted(path for path in apps_root.iterdir() if path.is_dir()):
-            current = _current_release_id(app_root)
+            protected_releases = _protected_release_ids(app_root)
             bundles_root = app_root / "release-bundles"
             bundles = sorted([path for path in bundles_root.iterdir() if path.is_dir()]) if bundles_root.exists() else []
-            protected = {current} | {path.name for path in bundles[-keep_releases:]}
+            protected = protected_releases | {path.name for path in bundles[-keep_releases:]}
             for bundle in bundles:
                 if bundle.name not in protected:
                     candidates.append({"path": str(bundle), "reason": "old release bundle"})
@@ -78,8 +78,16 @@ def gc_token(plan: Dict[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()[:20]
 
 
-def _current_release_id(app_root: Path) -> str | None:
-    release_path = app_root / "release.json"
+def _protected_release_ids(app_root: Path) -> set[str]:
+    release_ids = set()
+    for filename in ("release.json", "active_release.json"):
+        release_id = _release_id_from_path(app_root / filename)
+        if release_id is not None:
+            release_ids.add(release_id)
+    return release_ids
+
+
+def _release_id_from_path(release_path: Path) -> str | None:
     if not release_path.exists():
         return None
     try:

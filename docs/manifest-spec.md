@@ -81,6 +81,9 @@ Use `edge` for public-edge behavior that is not tied to one explicit domain.
 
 `edge.catch_all` requires `edge.on_demand_tls.ask` because Caddy needs a global
 ask endpoint before it should issue certificates for arbitrary hostnames.
+Ophelia renders one host-level `on_demand_tls` block from the active release set.
+All active apps that use on-demand TLS must share the same ask endpoint; apply
+fails during `caddy_global_sync` if active manifests disagree.
 
 Example:
 
@@ -183,6 +186,31 @@ Fields:
 - `url`: required `http://` or `https://` URL
 - `expect_status`: expected status code, default `200`
 - `contains`: optional substring that must appear in the response body
+
+`verify_policy` controls retry behavior and whether failed verification should
+block the command. Defaults are tuned for first deploys where Caddy may still be
+obtaining a certificate:
+
+- `attempts`: total verification attempts, default `12`
+- `interval`: initial delay between attempts in seconds, default `5`
+- `timeout`: per-request and TLS handshake timeout in seconds, default `10`
+- `failure_mode`: `hard` or `warn`, default `hard`
+
+Verification uses backoff between attempts and separates certificate readiness
+from external route checks for `https://` URLs. A failed run reports the phase as
+`certificate_obtain` when TLS is not ready, or `external_route_verify` when TLS is
+ready but the HTTP check still fails.
+
+```yaml
+verify:
+  - name: health
+    url: https://ops.begam.in/health
+verify_policy:
+  attempts: 12
+  interval: 5
+  timeout: 10
+  failure_mode: hard
+```
 
 Prism manifests infer verification checks when `verify` is omitted:
 

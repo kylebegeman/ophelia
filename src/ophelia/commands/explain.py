@@ -35,6 +35,12 @@ def run(args: Namespace) -> int:
         print("Services: " + (", ".join(service["name"] for service in report["services"]) or "none"))
         print("Required secrets: " + (", ".join(item["key"] for item in report["required_secrets"]) or "none"))
         print("Verification checks: " + str(len(report["verification_checks"])))
+        policy = report["verification_policy"]
+        print(
+            "Verification policy: "
+            f"attempts={policy['attempts']} interval={policy['interval']}s "
+            f"timeout={policy['timeout']}s failure_mode={policy['failure_mode']}"
+        )
         if report["risk_notes"]:
             print("Risk notes:")
             for note in report["risk_notes"]:

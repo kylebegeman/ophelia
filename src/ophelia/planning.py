@@ -14,6 +14,7 @@ def deploy_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> 
     diff = bundle_diff(manifest, runtime_root)
     env_requirements = _env_requirements(bundle.get(Path("env.example"), ""))
     checks = verification_checks(manifest)
+    verify_policy = manifest.verify_policy
     images = image_references(manifest)
     digests = image_digests(manifest)
     routes = [
@@ -59,6 +60,12 @@ def deploy_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> 
             }
             for check in checks
         ],
+        "verification_policy": {
+            "attempts": verify_policy.attempts,
+            "interval": verify_policy.interval,
+            "timeout": verify_policy.timeout,
+            "failure_mode": verify_policy.failure_mode,
+        },
         "risk_notes": risk_notes,
         "summary": _summary(manifest, images, diff, env_requirements, checks),
     }

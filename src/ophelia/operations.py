@@ -170,7 +170,7 @@ def _artifact(summary: str, payload: Dict[str, object]) -> Dict[str, object]:
 def _write_operation_report(runtime_root: Path, report: Dict[str, object]) -> Path:
     reports_root = runtime_root / "operations"
     reports_root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     report_path = reports_root / f"{stamp}-{report['operation']}.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report_path

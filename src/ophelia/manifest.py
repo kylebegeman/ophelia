@@ -35,6 +35,14 @@ class VerificationCheck:
 
 
 @dataclass
+class VerificationPolicy:
+    attempts: int = 12
+    interval: float = 5.0
+    timeout: float = 10.0
+    failure_mode: str = "hard"
+
+
+@dataclass
 class PrismConfig:
     admin_domain: Optional[str] = None
     console_asset_path: Optional[str] = None
@@ -115,6 +123,7 @@ class Manifest:
     redirect_to: Optional[str] = None
     redirect_status: int = 308
     verify: List[VerificationCheck] = field(default_factory=list)
+    verify_policy: VerificationPolicy = field(default_factory=VerificationPolicy)
     prism: Optional[PrismConfig] = None
     depends_on: List[str] = field(default_factory=list)
     deployment_order: Optional[int] = None
@@ -154,6 +163,7 @@ def load_manifest(path: Path) -> Manifest:
     services = _parse_services(raw.get("services", {}))
     edge = _parse_edge(raw.get("edge", {}))
     verify = _parse_verifications(raw.get("verify", []))
+    verify_policy = _parse_verification_policy(raw.get("verify_policy", {}))
     prism = _parse_prism(raw.get("prism"))
 
     manifest = Manifest(
@@ -175,6 +185,7 @@ def load_manifest(path: Path) -> Manifest:
         redirect_to=_optional_str(raw.get("redirect_to"), "redirect_to"),
         redirect_status=_optional_int(raw.get("redirect_status"), "redirect_status") or 308,
         verify=verify,
+        verify_policy=verify_policy,
         prism=prism,
         depends_on=_string_list(raw.get("depends_on", []), "depends_on"),
         deployment_order=_optional_int(raw.get("deployment_order"), "deployment_order"),
@@ -394,6 +405,36 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
             )
         )
     return checks
+
+
+def _parse_verification_policy(raw: Any) -> VerificationPolicy:
+    if raw is None:
+        return VerificationPolicy()
+    if not isinstance(raw, dict):
+        raise ManifestError("`verify_policy` must be a mapping.")
+
+    attempts = _optional_int(raw.get("attempts"), "verify_policy.attempts")
+    if attempts is not None and attempts < 1:
+        raise ManifestError("`verify_policy.attempts` must be at least 1.")
+
+    interval = _optional_float(raw.get("interval"), "verify_policy.interval")
+    if interval is not None and interval < 0:
+        raise ManifestError("`verify_policy.interval` must be 0 or greater.")
+
+    timeout = _optional_float(raw.get("timeout"), "verify_policy.timeout")
+    if timeout is not None and timeout <= 0:
+        raise ManifestError("`verify_policy.timeout` must be greater than 0.")
+
+    failure_mode = _optional_str(raw.get("failure_mode"), "verify_policy.failure_mode") or "hard"
+    if failure_mode not in {"hard", "warn"}:
+        raise ManifestError("`verify_policy.failure_mode` must be `hard` or `warn`.")
+
+    return VerificationPolicy(
+        attempts=attempts or 12,
+        interval=5.0 if interval is None else interval,
+        timeout=10.0 if timeout is None else timeout,
+        failure_mode=failure_mode,
+    )
 
 
 def _parse_prism(raw: Any) -> Optional[PrismConfig]:
@@ -636,9 +677,17 @@ def _optional_path(value: Any, field_name: str) -> Optional[str]:
 def _optional_int(value: Any, field_name: str) -> Optional[int]:
     if value is None:
         return None
-    if not isinstance(value, int) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ManifestError(f"`{field_name}` must be a positive integer.")
     return value
+
+
+def _optional_float(value: Any, field_name: str) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ManifestError(f"`{field_name}` must be a number.")
+    return float(value)
 
 
 def _optional_profile(value: Any) -> Optional[str]:
@@ -652,7 +701,7 @@ def _require_int(raw: Dict[str, Any], field_name: str, prefix: str = "") -> int:
 
 
 def _require_int_value(value: Any, field_name: str) -> int:
-    if not isinstance(value, int) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ManifestError(f"`{field_name}` must be a positive integer.")
     return value
 

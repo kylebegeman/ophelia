@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 ship = "ophelia.main:main"
+ophelia = "ophelia.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

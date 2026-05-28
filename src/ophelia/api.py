@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .actions import action_catalog, cancel_job, run_job
+from .actions import ActionError, action_catalog, cancel_job, run_job
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .operator_reports import host_inventory, manifest_registry, release_registry
 from .operations import list_operations, run_operation
@@ -71,24 +71,31 @@ class OpheliaHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/jobs":
-            body = self._read_json()
-            result = run_job(
-                body.get("action_id"),
-                body.get("inputs") or {},
-                self.runtime_root_value,
-                requested_by=body.get("requested_by") or "api",
-                source=body.get("source") or "api",
-                idempotency_key=body.get("idempotency_key"),
-            )
+            try:
+                body = self._read_json()
+                result = run_job(
+                    body.get("action_id"),
+                    body.get("inputs") or {},
+                    self.runtime_root_value,
+                    requested_by=body.get("requested_by") or "api",
+                    source=body.get("source") or "api",
+                    idempotency_key=body.get("idempotency_key"),
+                )
+            except (ActionError, ValueError, TypeError) as exc:
+                self._json({"error": str(exc)}, status=400)
+                return
             self._json(result.job, status=201)
             return
         if parsed.path.startswith("/jobs/") and parsed.path.endswith("/cancel"):
             job_id = parsed.path.split("/")[2]
-            self._json(cancel_job(self.runtime_root_value, job_id))
+            try:
+                self._json(cancel_job(self.runtime_root_value, job_id))
+            except ActionError as exc:
+                self._json({"error": str(exc)}, status=404)
             return
         if parsed.path == "/operations/run":
-            body = self._read_json()
             try:
+                body = self._read_json()
                 result = run_operation(
                     body.get("name"),
                     body.get("confirm"),
@@ -103,13 +110,19 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, status=404)
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Invalid Content-Length header.") from exc
         if length == 0:
             return {}
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
-        except json.JSONDecodeError as exc:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"Invalid JSON body: {exc}") from exc
+        if not isinstance(body, dict):
+            raise ValueError("JSON body must be an object.")
+        return body
 
     def _json(self, payload, status: int = 200) -> None:
         data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")

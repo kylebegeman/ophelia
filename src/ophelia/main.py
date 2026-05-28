@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from .commands import register_commands
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ship", description="Ophelia deployment control plane")
+    parser = argparse.ArgumentParser(
+        prog=Path(sys.argv[0]).name,
+        description="Ophelia deployment control plane",
+    )
     subparsers = parser.add_subparsers(dest="command")
     register_commands(subparsers)
     return parser

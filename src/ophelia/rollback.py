@@ -7,12 +7,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
-from .runtime import current_release_id, load_release
+from .runtime import (
+    activate_release,
+    cleanup_inactive_support_files,
+    current_release_id,
+    load_release,
+    sync_caddy_global_config,
+)
 
 
 ROLLBACK_FILES = [
     Path("compose.yml"),
     Path("caddy"),
+    Path("env.d"),
+    Path("artifacts"),
     Path("env.example"),
     Path("manifest.lock.json"),
 ]
@@ -97,7 +105,27 @@ def apply_rollback(runtime_root: Path, app: str, release_id: str, confirm: str) 
     current_pointer["rollback_applied_at"] = _utc_now()
     current_pointer["rollback_from_release_id"] = plan.get("current_release_id")
     current_pointer["source"] = "rollback"
+    current_pointer["applied"] = True
+    current_pointer["verified"] = None
+    current_pointer["apply"] = {
+        "status": "applied",
+        "ok": True,
+        "applied": True,
+        "phase": "rollback_restore",
+        "restored_files": restored,
+    }
+    current_pointer["verification"] = {
+        "status": "not_run",
+        "ok": None,
+        "verified": None,
+        "results": [],
+        "recommended_command": plan["post_apply_verification"]["recommended_command"],
+    }
     (app_root / "release.json").write_text(json.dumps(current_pointer, indent=2, sort_keys=True) + "\n")
+    activate_release(runtime_root, app, current_pointer)
+    cleanup_inactive_support_files(runtime_root, app)
+    if sync_caddy_global_config(runtime_root):
+        shared_caddy_updates.append(str(Path("caddy") / "global.d" / "ophelia-on-demand-tls.caddy"))
 
     report_id = f"{_compact_stamp()}-to-{plan['target_release_id']}"
     report = {
@@ -182,13 +210,9 @@ def _restore_shared_caddy(runtime_root: Path, app: str, bundle_root: Path, resto
         restored.append(relative)
         updates.append(relative)
 
-    global_source = bundle_root / "caddy" / "global.d" / f"{app}.caddy"
-    if global_source.exists():
-        global_target = runtime_root / "caddy" / "global.d" / f"{app}.caddy"
-        _copy_path(global_source, global_target)
-        relative = str(global_target.relative_to(runtime_root))
-        restored.append(relative)
-        updates.append(relative)
+    legacy_global = runtime_root / "caddy" / "global.d" / f"{app}.caddy"
+    if legacy_global.exists():
+        legacy_global.unlink()
     return updates
 
 
@@ -209,12 +233,11 @@ def _verification_plan(bundle_root: Path, app: str, release: Dict[str, object]) 
                     "contains_required": bool(item.get("contains")),
                 }
             )
-    manifest_path = release.get("manifest_path") or release.get("source_manifest")
     return {
         "available": bool(checks),
         "checks": checks,
         "source": str(lock_path) if lock_path.exists() else None,
-        "recommended_command": f"./cli/ship verify {manifest_path}" if manifest_path else None,
+        "recommended_command": f"./cli/ship verify {app}",
         "status_after_apply": "not_run",
         "note": "Rollback apply restores generated files; verification is reported but not executed automatically.",
     }
@@ -235,4 +258,4 @@ def _utc_now() -> str:
 
 
 def _compact_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

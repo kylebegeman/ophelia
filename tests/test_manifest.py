@@ -57,6 +57,46 @@ routes:
         with self.assertRaises(ManifestError):
             self._load(invalid)
 
+    def test_verify_policy_configures_retry_and_failure_mode(self) -> None:
+        manifest = """
+version: 1
+app: verify-policy
+kind: static
+static_root: /tmp/verify-policy
+routes:
+  - domain: verify-policy.example.com
+verify:
+  - name: health
+    url: https://verify-policy.example.com/health
+verify_policy:
+  attempts: 4
+  interval: 2.5
+  timeout: 3
+  failure_mode: warn
+"""
+        loaded = self._load(manifest)
+
+        self.assertEqual(4, loaded.verify_policy.attempts)
+        self.assertEqual(2.5, loaded.verify_policy.interval)
+        self.assertEqual(3.0, loaded.verify_policy.timeout)
+        self.assertEqual("warn", loaded.verify_policy.failure_mode)
+
+    def test_rejects_boolean_values_for_integer_fields(self) -> None:
+        manifest = """
+version: 1
+app: bool-port
+kind: service
+image: ghcr.io/example/bool-port:latest
+services:
+  web:
+    port: true
+routes:
+  - domain: bool-port.example.com
+    service: web
+"""
+        with self.assertRaises(ManifestError):
+            self._load(manifest)
+
     def test_tunnel_manifest_supports_route_upstreams(self) -> None:
         manifest = """
 version: 1
@@ -131,7 +171,7 @@ edge:
         self.assertIsNotNone(caddy_global)
         self.assertIn("on_demand_tls", caddy_global or "")
         self.assertIn("BOOP_INTERNAL_RUNTIME_TOKEN=replace-me", bundle[Path("env.example")])
-        self.assertIn(Path("caddy/global.d/boop.caddy"), bundle)
+        self.assertNotIn(Path("caddy/global.d/boop.caddy"), bundle)
 
     def test_prism_profile_supports_env_files_mounts_and_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

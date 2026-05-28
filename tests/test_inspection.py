@@ -29,6 +29,9 @@ class InspectionTests(unittest.TestCase):
 
             self.assertTrue(report["runtime_root_exists"])
             self.assertEqual("inspect-test", report["known_apps"][0]["app"])
+            self.assertFalse(report["known_apps"][0]["caddy"]["synced"])
+            self.assertFalse(report["known_apps"][0]["applied"])
+            self.assertIsNone(report["known_apps"][0]["verified"])
             self.assertIn("disk_usage", report)
             self.assertIn("warnings", report)
 

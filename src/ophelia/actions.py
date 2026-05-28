@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import shutil
 import time
 from dataclasses import dataclass
@@ -342,6 +343,10 @@ def run_job(
     idempotency_key: str | None = None,
     events_json: bool = False,
 ) -> JobResult:
+    if not isinstance(action_id, str) or not action_id:
+        raise ActionError("action_id must be a non-empty string.")
+    if not isinstance(inputs, dict):
+        raise ActionError("inputs must be an object.")
     runtime_root = Path(inputs.get("runtime_root") or runtime_root).expanduser()
     jobs_root = runtime_root / "jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -454,8 +459,8 @@ def _confirmation_input_hash(action_id: str, inputs: Dict[str, Any]) -> str:
 
 
 def _job_id(action_id: str, input_hash: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{stamp}-{action_id.replace('.', '-')}-{input_hash[:10]}"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{stamp}-{action_id.replace('.', '-')}-{input_hash[:10]}-{secrets.token_hex(3)}"
 
 
 def _idempotent_job(jobs_root: Path, action_id: str, key: str, input_hash: str) -> str | None:
@@ -482,21 +487,27 @@ def _lock_path(runtime_root: Path, action_id: str, inputs: Dict[str, Any]) -> Pa
     if action_id not in MUTATING_ACTIONS:
         return None
     app = inputs.get("app")
+    environment = inputs.get("environment")
     if not app and inputs.get("manifest_path"):
         try:
-            app = load_manifest(Path(inputs["manifest_path"])).app
+            manifest = load_manifest(Path(inputs["manifest_path"]))
+            app = manifest.app
+            environment = environment or manifest.environment
         except Exception:
             app = "unknown"
-    environment = inputs.get("environment") or "unknown"
+    environment = environment or "unknown"
     lock_root = runtime_root / "locks"
     lock_root.mkdir(parents=True, exist_ok=True)
     return lock_root / f"{app}-{environment}.lock"
 
 
 def _acquire_lock(path: Path) -> None:
-    if path.exists():
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
         raise ActionError(f"Concurrent mutating job is already locked: {path.name}")
-    path.write_text(str(os.getpid()))
+    with os.fdopen(fd, "w") as handle:
+        handle.write(str(os.getpid()))
 
 
 def _append_audit(runtime_root: Path, job: Dict[str, Any]) -> None:

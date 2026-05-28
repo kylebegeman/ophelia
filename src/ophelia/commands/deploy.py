@@ -7,8 +7,8 @@ from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
 from ..planning import deploy_plan, deploy_confirmation_token
 from ..remote import RemoteError, stage_remote_bundle
-from ..runtime import apply_local_bundle, current_release_id, deploy_bundle, update_current_release_verification
-from ..verify import run_verifications
+from ..runtime import ApplyPhaseError, apply_local_bundle, current_release_id, deploy_bundle, update_current_release_verification
+from ..verify import run_verifications, verification_blocks_release
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -55,6 +55,10 @@ def register(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="Run post-deploy verification checks after --apply succeeds",
     )
+    parser.add_argument("--verify-attempts", type=int, help="Override manifest verification attempts")
+    parser.add_argument("--verify-interval", type=float, help="Override manifest verification interval in seconds")
+    parser.add_argument("--verify-timeout", type=float, help="Override manifest verification request timeout in seconds")
+    parser.add_argument("--verify-failure-mode", choices=["hard", "warn"], help="Override manifest verification failure mode")
     parser.add_argument(
         "--ophelia-root",
         type=Path,
@@ -80,6 +84,15 @@ def run(args: Namespace) -> int:
     if args.json and not args.plan:
         print("`--json` is currently supported for `deploy --plan`.")
         return 1
+    if args.verify_attempts is not None and args.verify_attempts < 1:
+        print("verification attempts must be at least 1.")
+        return 1
+    if args.verify_interval is not None and args.verify_interval < 0:
+        print("verification interval must be 0 or greater.")
+        return 1
+    if args.verify_timeout is not None and args.verify_timeout <= 0:
+        print("verification timeout must be greater than 0.")
+        return 1
 
     if args.plan:
         plan = deploy_plan(manifest, args.manifest, args.runtime_root)
@@ -91,6 +104,12 @@ def run(args: Namespace) -> int:
             print(f"Environment: {plan['environment'] or 'unknown'}")
             print("Services: " + (", ".join(plan["services_affected"]) or "none"))
             print("Domains: " + (", ".join(plan["domains"]) or "none"))
+            policy = plan["verification_policy"]
+            print(
+                "Verification policy: "
+                f"attempts={policy['attempts']} interval={policy['interval']}s "
+                f"timeout={policy['timeout']}s failure_mode={policy['failure_mode']}"
+            )
             print("Generated files:")
             for path in plan["generated_files"]:
                 print(f"  - {path}")
@@ -126,6 +145,11 @@ def run(args: Namespace) -> int:
                 remote_runtime_root=args.remote_runtime_root,
                 remote_ophelia_root=args.remote_ophelia_root,
                 apply=args.apply,
+                verify=args.verify,
+                verify_attempts=args.verify_attempts,
+                verify_interval=args.verify_interval,
+                verify_timeout=args.verify_timeout,
+                verify_failure_mode=args.verify_failure_mode,
             )
         except RemoteError as exc:
             print(f"Remote deploy failed: {exc}")
@@ -135,14 +159,6 @@ def run(args: Namespace) -> int:
         print(f"{mode.capitalize()} bundle for {manifest.app} on {args.host}")
         if result:
             print(result)
-        if args.verify:
-            verification = run_verifications(manifest)
-            for item in verification["results"]:
-                prefix = "✓" if item["ok"] else "✗"
-                detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"
-                print(f"{prefix} {item['name']}: {detail} -> {item['url']}")
-            if not verification["ok"]:
-                return 1
         return 0
 
     if args.apply:
@@ -153,23 +169,66 @@ def run(args: Namespace) -> int:
                 runtime_root=args.runtime_root,
                 ophelia_root=args.ophelia_root,
             )
+        except ApplyPhaseError as exc:
+            print(f"Local apply failed during {exc.phase}: {exc}")
+            return 1
         except (RuntimeError, subprocess.CalledProcessError) as exc:
             print(f"Local apply failed: {exc}")
             return 1
         print(f"Applied bundle for {manifest.app} into {app_root}")
         release_id = current_release_id(args.runtime_root, manifest.app) or "unknown"
-        print(f"Apply result: app={manifest.app} release={release_id} runtime={app_root}")
+        verified = "not_run"
+        print(f"Apply result: app={manifest.app} release={release_id} applied=true verified={verified} runtime={app_root}")
         if args.verify:
-            verification = run_verifications(manifest)
+            try:
+                verification = _run_verification(manifest, args)
+            except ValueError as exc:
+                print(str(exc))
+                return 1
             update_current_release_verification(args.runtime_root, manifest.app, verification)
-            for item in verification["results"]:
-                prefix = "✓" if item["ok"] else "✗"
-                detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"
-                print(f"{prefix} {item['name']}: {detail} -> {item['url']}")
-            return 0 if verification["ok"] else 1
+            _print_verification(manifest.app, verification)
+            if not verification["ok"]:
+                print(
+                    "Verify result: "
+                    f"app={manifest.app} release={release_id} applied=true verified=false "
+                    f"phase={verification.get('phase')} failure_mode={verification.get('failure_mode')} "
+                    f"rerun=\"ship verify {manifest.app} --runtime-root {args.runtime_root}\""
+                )
+            else:
+                print(f"Verify result: app={manifest.app} release={release_id} applied=true verified=true")
+            return 1 if verification_blocks_release(verification) else 0
         return 0
 
     app_root = deploy_bundle(manifest, args.manifest, args.runtime_root)
     print(f"Deployed bundle for {manifest.app} into {app_root}")
     print("Use --apply to activate locally, or --host to stage/apply on the VPS.")
     return 0
+
+
+def _run_verification(manifest, args: Namespace):
+    return run_verifications(
+        manifest,
+        timeout=args.verify_timeout,
+        attempts=args.verify_attempts,
+        interval=args.verify_interval,
+        failure_mode=args.verify_failure_mode,
+    )
+
+
+def _print_verification(app: str, verification: dict) -> None:
+    attempt_detail = ""
+    if verification.get("attempts", 1) > 1:
+        attempt_detail = f" after attempt {verification.get('attempt')}/{verification.get('attempts')}"
+    print(
+        f"Verification results for {app}{attempt_detail}: "
+        f"phase={verification.get('phase')} status={verification.get('status')} "
+        f"failure_mode={verification.get('failure_mode')}"
+    )
+    for item in verification["results"]:
+        prefix = "ok" if item["ok"] else "failed"
+        detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"
+        phase = item.get("phase") or verification.get("phase")
+        print(f"  {prefix} {item['name']}: phase={phase} {detail} -> {item['url']}")
+        if item.get("error"):
+            kind = f"{item.get('error_kind')}: " if item.get("error_kind") else ""
+            print(f"    {kind}{item['error']}")

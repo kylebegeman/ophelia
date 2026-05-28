@@ -14,9 +14,11 @@ BACKUP_RELATIVE_PATHS = [
     Path("env.example"),
     Path("manifest.lock.json"),
     Path("release.json"),
+    Path("active_release.json"),
     Path("addons.json"),
     Path("caddy"),
     Path("releases"),
+    Path("release-bundles"),
 ]
 
 
@@ -45,7 +47,7 @@ def backup_plan(runtime_root: Path, app: str) -> Dict[str, object]:
         "coverage": {
             "app_env": any(item["path"] == "env" for item in files),
             "rendered_config": any(item["path"] in {"compose.yml", "caddy", "manifest.lock.json"} for item in files),
-            "release_metadata": any(item["path"] in {"release.json", "releases"} for item in files),
+            "release_metadata": any(item["path"] in {"release.json", "active_release.json", "releases", "release-bundles"} for item in files),
             "postgres_metadata": bool(addons.get("postgres")),
             "static_assets": static_root.exists(),
         },
@@ -59,6 +61,7 @@ def backup_plan(runtime_root: Path, app: str) -> Dict[str, object]:
         },
         "release_metadata": {
             "current": (app_root / "release.json").exists(),
+            "active": (app_root / "active_release.json").exists(),
             "history": (app_root / "releases").exists(),
         },
         "warnings": warnings,
@@ -237,7 +240,7 @@ def _token(action: str, plan: Dict[str, object]) -> str:
 
 
 def _backup_id(app: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     suffix = hashlib.sha256(f"{app}:{stamp}".encode("utf-8")).hexdigest()[:8]
     return f"{stamp}-{suffix}"
 
