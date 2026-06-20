@@ -313,6 +313,7 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
         "        Referrer-Policy strict-origin-when-cross-origin",
         "    }",
     ]
+    lines.extend(_render_edge_tls_block(manifest))
 
     if manifest.kind == "static":
         lines.extend(
@@ -344,6 +345,17 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
 
     lines.append("}")
     return "\n".join(lines)
+
+
+def _render_edge_tls_block(manifest: Manifest) -> List[str]:
+    tls = manifest.edge.tls
+    if tls is None or tls.mode == "auto":
+        return []
+    if tls.mode == "internal":
+        return ["    tls internal"]
+    if tls.mode == "custom" and tls.cert_file and tls.key_file:
+        return [f"    tls {json.dumps(tls.cert_file)} {json.dumps(tls.key_file)}"]
+    return []
 
 
 def _render_catch_all_edge_block(manifest: Manifest, catch_all: CatchAllEdgeConfig) -> str:

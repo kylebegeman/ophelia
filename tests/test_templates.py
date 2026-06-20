@@ -92,6 +92,59 @@ routes:
         self.assertIn("www.bagels.top {", rendered)
         self.assertIn("redir https://bagels.top{uri} 308", rendered)
 
+    def test_edge_tls_internal_renders_site_tls_directive(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: lumen-staging
+kind: service
+image: ghcr.io/example/lumen:latest
+services:
+  web:
+    port: 3773
+routes:
+  - domain: lumen-staging.begam.in
+    service: web
+edge:
+  tls:
+    mode: internal
+"""
+        )
+
+        rendered = render_caddy(manifest)
+
+        self.assertIn("lumen-staging.begam.in {", rendered)
+        self.assertIn("    tls internal", rendered)
+        self.assertIn("reverse_proxy lumen-staging-web:3773", rendered)
+
+    def test_edge_tls_custom_renders_site_tls_files(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: lumen-production
+kind: service
+image: ghcr.io/example/lumen:latest
+services:
+  web:
+    port: 3773
+routes:
+  - domain: lumen.begam.in
+    service: web
+edge:
+  tls:
+    mode: custom
+    cert_file: /etc/caddy/certs/lumen-origin.pem
+    key_file: /etc/caddy/certs/lumen-origin.key
+"""
+        )
+
+        rendered = render_caddy(manifest)
+
+        self.assertIn(
+            '    tls "/etc/caddy/certs/lumen-origin.pem" "/etc/caddy/certs/lumen-origin.key"',
+            rendered,
+        )
+
     def _load(self, content: str):
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest_path = Path(temp_dir) / "app.ophelia.yml"

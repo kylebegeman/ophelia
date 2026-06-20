@@ -150,10 +150,23 @@ unaltered on the alias host.
 Use `edge` for public-edge behavior that is not tied to one explicit domain.
 
 - `edge.on_demand_tls.ask`: Caddy on-demand TLS ask URL. Use Caddy env placeholders like `{$TOKEN_NAME}` for secrets; Ophelia copies those values from the app runtime `env` file into the shared Caddy env file during `ship deploy --apply`.
+- `edge.tls.mode`: TLS rendering for explicit site blocks. Defaults to `auto`,
+  which leaves Caddy's public ACME behavior unchanged. Use `internal` for
+  private Cloudflare Access origins that cannot complete public ACME challenges,
+  or `custom` with `cert_file` and `key_file` for a provisioned origin
+  certificate.
+- `edge.tls.cert_file`: certificate file path for `mode: custom`
+- `edge.tls.key_file`: private key file path for `mode: custom`
 - `edge.catch_all.service`: service target for a catch-all `https://` site block
 - `edge.catch_all.upstream`: direct upstream target for a catch-all `https://` site block
 - `edge.catch_all.http_redirect`: whether to render a catch-all `http://` to HTTPS redirect, default `true`
 - `edge.catch_all.http_redirect_status`: redirect status for that HTTP redirect, default `308`
+
+For Cloudflare-protected private hostnames, prefer a Cloudflare Origin CA
+certificate rendered with `mode: custom` when the operator has one available.
+`mode: internal` renders Caddy's internal CA and is suitable only when the edge
+provider is configured to accept encrypted origin connections without public CA
+validation.
 
 `edge.catch_all` requires `edge.on_demand_tls.ask` because Caddy needs a global
 ask endpoint before it should issue certificates for arbitrary hostnames.
@@ -162,6 +175,20 @@ All active apps that use on-demand TLS must share the same ask endpoint; apply
 fails during `caddy_global_sync` if active manifests disagree.
 
 Example:
+
+```yaml
+edge:
+  tls:
+    mode: internal
+```
+
+```yaml
+edge:
+  tls:
+    mode: custom
+    cert_file: /etc/caddy/certs/app-origin.pem
+    key_file: /etc/caddy/certs/app-origin.key
+```
 
 ```yaml
 edge:

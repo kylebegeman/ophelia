@@ -159,6 +159,13 @@ class OnDemandTLSConfig:
 
 
 @dataclass
+class EdgeTLSConfig:
+    mode: str = "auto"
+    cert_file: Optional[str] = None
+    key_file: Optional[str] = None
+
+
+@dataclass
 class CatchAllEdgeConfig:
     service: Optional[str] = None
     upstream: Optional[str] = None
@@ -169,6 +176,7 @@ class CatchAllEdgeConfig:
 @dataclass
 class EdgeConfig:
     on_demand_tls: Optional[OnDemandTLSConfig] = None
+    tls: Optional[EdgeTLSConfig] = None
     catch_all: Optional[CatchAllEdgeConfig] = None
 
 
@@ -398,8 +406,9 @@ def _parse_edge(raw: Any) -> EdgeConfig:
         raise ManifestError("`edge` must be a mapping.")
 
     on_demand_tls = _parse_on_demand_tls(raw.get("on_demand_tls"))
+    tls = _parse_edge_tls(raw.get("tls"))
     catch_all = _parse_catch_all_edge(raw.get("catch_all"))
-    return EdgeConfig(on_demand_tls=on_demand_tls, catch_all=catch_all)
+    return EdgeConfig(on_demand_tls=on_demand_tls, tls=tls, catch_all=catch_all)
 
 
 def _parse_on_demand_tls(raw: Any) -> Optional[OnDemandTLSConfig]:
@@ -412,6 +421,32 @@ def _parse_on_demand_tls(raw: Any) -> Optional[OnDemandTLSConfig]:
     if not ask.startswith(("http://", "https://")):
         raise ManifestError("`edge.on_demand_tls.ask` must start with `http://` or `https://`.")
     return OnDemandTLSConfig(ask=ask)
+
+
+def _parse_edge_tls(raw: Any) -> Optional[EdgeTLSConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`edge.tls` must be a mapping.")
+
+    mode = _optional_str(raw.get("mode"), "edge.tls.mode") or "auto"
+    if mode not in {"auto", "internal", "custom"}:
+        raise ManifestError("`edge.tls.mode` must be one of `auto`, `internal`, or `custom`.")
+
+    cert_file = _optional_str(raw.get("cert_file"), "edge.tls.cert_file")
+    key_file = _optional_str(raw.get("key_file"), "edge.tls.key_file")
+    if cert_file or key_file:
+        if not cert_file or not key_file:
+            raise ManifestError("`edge.tls.cert_file` and `edge.tls.key_file` must be set together.")
+        if mode == "auto":
+            mode = "custom"
+        elif mode != "custom":
+            raise ManifestError("`edge.tls` certificate files require `mode: custom`.")
+
+    if mode == "custom" and (not cert_file or not key_file):
+        raise ManifestError("`edge.tls.mode: custom` requires `cert_file` and `key_file`.")
+
+    return EdgeTLSConfig(mode=mode, cert_file=cert_file, key_file=key_file)
 
 
 def _parse_catch_all_edge(raw: Any) -> Optional[CatchAllEdgeConfig]:

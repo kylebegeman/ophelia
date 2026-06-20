@@ -244,6 +244,25 @@ edge:
         with self.assertRaises(ManifestError):
             self._load(manifest)
 
+    def test_edge_tls_custom_requires_cert_and_key_files(self) -> None:
+        manifest = """
+version: 1
+app: broken-edge-tls
+kind: service
+services:
+  web:
+    port: 3000
+routes:
+  - domain: app.example.com
+    service: web
+edge:
+  tls:
+    mode: custom
+    cert_file: /etc/caddy/certs/app.pem
+"""
+        with self.assertRaises(ManifestError):
+            self._load(manifest)
+
     def test_edge_catch_all_renders_global_and_site_blocks(self) -> None:
         manifest = """
 version: 1
