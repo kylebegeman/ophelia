@@ -4,7 +4,7 @@ import json
 import re
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .config import TEMPLATES_DIR
 from .manifest import CatchAllEdgeConfig, Manifest, RouteConfig, ServiceConfig
@@ -16,7 +16,30 @@ def render_compose(manifest: Manifest) -> Optional[str]:
 
     template = _read_template("compose/app.compose.tpl")
     services_block = "\n".join(_render_service_block(manifest, service) for service in manifest.services.values())
-    return template.replace("{{SERVICES_BLOCK}}", services_block.rstrip())
+    networks_block = _render_networks_block(manifest)
+    return (
+        template.replace("{{SERVICES_BLOCK}}", services_block.rstrip())
+        .replace("{{NETWORKS_BLOCK}}", networks_block.rstrip())
+    )
+
+
+def compose_network_summary(manifest: Manifest) -> Dict[str, Any]:
+    internal_name = internal_network_name(manifest)
+    return {
+        "edge": "ophelia-edge",
+        "internal": internal_name,
+        "internal_mode": manifest.networking.internal,
+        "edge_mode": manifest.networking.edge,
+        "internal_external": manifest.networking.internal == "shared",
+        "current_compatibility": manifest.networking.internal == "shared",
+    }
+
+
+def internal_network_name(manifest: Manifest) -> str:
+    if manifest.networking.internal == "per-app":
+        environment = manifest.environment or "default"
+        return f"{manifest.app}-{environment}-internal"
+    return "ophelia-internal"
 
 
 def render_caddy(manifest: Manifest) -> str:
@@ -149,6 +172,7 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
             service_lines.append(f"      - {_quote(item)}")
 
     service_lines.extend(_render_healthcheck_block(service))
+    internal_network = internal_network_name(manifest)
     service_lines.extend(
         [
             f"    mem_limit: {_quote(manifest.resources.memory)}",
@@ -156,12 +180,40 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
             "      ophelia-edge:",
             "        aliases:",
             f"          - {_quote(manifest.service_alias(service.name))}",
-            "      ophelia-internal:",
+            f"      {internal_network}:",
             "        aliases:",
             f"          - {_quote(manifest.service_alias(service.name))}",
         ]
     )
+    if manifest.networking.internal == "per-app":
+        service_lines.append(f"          - {_quote(service.name)}")
     return "\n".join(service_lines)
+
+
+def _render_networks_block(manifest: Manifest) -> str:
+    lines = [
+        "  ophelia-edge:",
+        "    external: true",
+    ]
+    internal_network = internal_network_name(manifest)
+    if manifest.networking.internal == "per-app":
+        lines.extend(
+            [
+                f"  {internal_network}:",
+                f"    name: {_quote(internal_network)}",
+                "    labels:",
+                f"      ophelia.app: {_quote(manifest.app)}",
+                f"      ophelia.environment: {_quote(manifest.environment or 'unknown')}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "  ophelia-internal:",
+                "    external: true",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _render_healthcheck_block(service: ServiceConfig) -> List[str]:

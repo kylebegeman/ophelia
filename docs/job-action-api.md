@@ -15,6 +15,22 @@ Quark can call these read-only commands today:
 - `ship inspect conflicts --json`
 - `ship drift <manifest> --json`
 - `ship releases <app> --json`
+- `ship pack validate <manifest> --json`
+- `ship pack explain <manifest> --json`
+- `ship pack init --app <app> --json` for preview-only scaffolding
+- `ship env diff <app> --environment <env> --json`
+- `ship backup status <app> --environment <env> --json`
+- `ship app readiness <app> --environment <env> --json`
+- `ship app runbook <app> --environment <env> --json`
+- `ship app export plan <app> --environment <env> --json`
+- `ship app import plan <bundle-or-metadata> --json`
+- `ship app restore-drill plan <app> --environment <env> --json`
+- `ship app cutover plan <app> --from <source> --to <target> --json`
+- `ship app traffic plan <app> --from <source> --to <target> --target-origin <origin> --json`
+- `ship app traffic rollback plan <app> --receipt <traffic-receipt-id> --json`
+- `ship app isolation plan <app> --environment <env> --json`
+- `ship receipts list --json`
+- `ship receipts show <receipt-id> --json`
 
 Mutating commands require confirmation tokens from their matching plans:
 
@@ -22,6 +38,41 @@ Mutating commands require confirmation tokens from their matching plans:
 - `ship rollback apply ... --confirm <token>`
 - `ship backup create ... --confirm <token>`
 - `ship restore apply ... --confirm <token>`
+- `ship app export create ... --confirm <token>` for metadata/runtime export bundles
+- `ship app import apply ... --confirm <token>` for isolated rehearsal import previews
+- `ship app restore-drill apply ... --confirm <token>` for artifact/listability drill receipts
+- `ship app cutover apply ... --confirm <token>` for cutover checkpoint receipts
+- `ship app traffic apply ... --confirm <token>` for production traffic checkpoint receipts
+- `ship app traffic rollback apply ... --confirm <token>` for file-provider traffic rollback receipts
+
+Isolation apply is not exposed as a standalone mutating action descriptor.
+Per-app internal networks are enabled by manifest opt-in
+`networking.internal: per-app`, then rendered through the normal deploy
+plan/apply flow. Export create, import apply, restore drill apply, and cutover
+apply are exposed as dry-run-first action descriptors, but they only write local
+artifacts and receipts. Cutover apply does not mutate Caddy or DNS.
+Traffic apply records exact DNS/Caddy provider intent and writes a checkpoint
+receipt by default. File-backed provider execution is available through typed
+fields: `dns_provider`, `caddy_provider`, `provider_config`, and
+`execute_provider_mutation`. It still requires the prior dry-run confirmation
+record, a matching token, a provider config file, and provider config
+`allow_mutation: true`. The file backend writes local DNS/Caddy artifacts and
+receipts. The Cloudflare DNS backend uses `api_token_env`, lists matching DNS
+records, patches exactly one existing record by default, and never stores token
+values in plans or receipts. Creating a missing record requires
+`allow_create: true`. Cloudflare TTL must be automatic `1` or between `30` and
+`86400` seconds. Live Caddy reload is available only when the Caddy provider
+config also sets `reload: true` and `allow_reload: true`, with `sites_dir`
+matching `<runtime_root>/caddy/sites.d`.
+Traffic plan/apply also accept target health fields:
+`target_health_url`, `run_target_health`, `target_health_timeout`, and
+`target_health_expect_status`. Health checks are read-only and included in the
+confirmation-token input hash. Health URLs must be http(s) URLs without
+credentials, query strings, or fragments.
+Traffic rollback is a separate action pair, `app.traffic.rollback.plan` and
+`app.traffic.rollback.apply`. Rollback apply restores prior provider state
+captured by a traffic apply receipt and blocks cases that would require deleting
+previously absent records or files.
 
 API endpoints:
 

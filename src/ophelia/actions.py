@@ -23,6 +23,30 @@ from .explain import explain_manifest
 from .inspection import doctor_report, status_report
 from .manifest import ManifestError, load_manifest
 from .planning import deploy_confirmation_token, deploy_plan, bundle_diff
+from .portability import (
+    app_readiness_report,
+    app_runbook_report,
+    backup_status_report,
+    cutover_apply,
+    cutover_plan,
+    env_shape_diff_report,
+    export_create,
+    export_plan,
+    import_apply,
+    import_plan,
+    isolation_plan,
+    pack_explain_report,
+    pack_init_report,
+    pack_validation_report,
+    receipt_list_report,
+    receipt_show_report,
+    restore_drill_apply,
+    restore_drill_plan,
+    traffic_apply,
+    traffic_plan,
+    traffic_rollback_apply,
+    traffic_rollback_plan,
+)
 from .rollback import apply_rollback, rollback_plan
 from .runtime import apply_local_bundle, list_releases, load_release
 
@@ -32,6 +56,12 @@ MUTATING_ACTIONS = {
     "deploy.rollback.apply",
     "backup.create",
     "restore.apply",
+    "app.export.create",
+    "app.import.apply",
+    "app.restore-drill.apply",
+    "app.cutover.apply",
+    "app.traffic.apply",
+    "app.traffic.rollback.apply",
 }
 
 
@@ -77,7 +107,28 @@ def validate_action_inputs(action_id: str, inputs: Dict[str, Any]) -> None:
             raise ActionError(f"`{key}` must be a boolean.")
         if key == "environment" and value not in {"dev", "staging", "production"}:
             raise ActionError("`environment` must be one of dev, staging, or production.")
-        if key.endswith("_path") or key.endswith("_root"):
+        if key == "mode" and value not in {"rehearsal", "cutover"}:
+            raise ActionError("`mode` must be one of rehearsal or cutover.")
+        if key == "ttl" and (not str(value).isdigit() or int(str(value)) <= 0):
+            raise ActionError("`ttl` must be a positive integer string.")
+        if key == "dns_provider" and value not in {"manual", "file", "cloudflare"}:
+            raise ActionError("`dns_provider` must be one of manual, file, or cloudflare.")
+        if key == "caddy_provider" and value not in {"manual", "file"}:
+            raise ActionError("`caddy_provider` must be one of manual or file.")
+        if key == "target_health_timeout":
+            try:
+                timeout = float(str(value))
+            except ValueError as exc:
+                raise ActionError("`target_health_timeout` must be a positive number string.") from exc
+            if timeout <= 0:
+                raise ActionError("`target_health_timeout` must be greater than zero.")
+        if key == "target_health_expect_status" and (not str(value).isdigit() or not 100 <= int(str(value)) <= 599):
+            raise ActionError("`target_health_expect_status` must be an HTTP status code string.")
+        if key == "target_health_url":
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ActionError("`target_health_url` must be an http(s) URL without credentials, query strings, or fragments.")
+        if key.endswith("_path") or key.endswith("_root") or key == "provider_config":
             _validate_path_value(key, value)
         if key == "completion_callback_url":
             _validate_callback_url(value)
@@ -99,6 +150,37 @@ def run_action(action_id: str, inputs: Dict[str, Any], runtime_root: Path = DEFA
         return _artifact("Manifest diff complete.", bundle_diff(load_manifest(manifest_path), runtime_root))
     if action_id == "manifest.conflicts":
         return _artifact("Conflict scan complete.", scan_conflicts(manifest_dir))
+    if action_id == "pack.validate":
+        manifest_path = Path(inputs["manifest_path"])
+        return _artifact("Pack validation complete.", pack_validation_report(load_manifest(manifest_path), manifest_path))
+    if action_id == "pack.explain":
+        manifest_path = Path(inputs["manifest_path"])
+        return _artifact("Pack explain complete.", pack_explain_report(load_manifest(manifest_path), manifest_path))
+    if action_id == "pack.init.preview":
+        return _artifact(
+            "Pack init preview complete.",
+            pack_init_report(
+                app=inputs["app"],
+                environment=inputs.get("environment"),
+                critical=bool(inputs.get("critical", False)),
+                postgres=bool(inputs.get("postgres", False)),
+                redis=bool(inputs.get("redis", False)),
+                uploads=bool(inputs.get("uploads", False)),
+                root=Path(inputs.get("directory") or "."),
+                write=False,
+                force=False,
+            ),
+        )
+    if action_id == "env.diff":
+        return _artifact(
+            "Env diff complete.",
+            env_shape_diff_report(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+        )
     if action_id == "deploy.plan":
         manifest_path = Path(inputs["manifest_path"])
         return _artifact("Deploy plan complete.", deploy_plan(load_manifest(manifest_path), manifest_path, runtime_root))
@@ -124,6 +206,16 @@ def run_action(action_id: str, inputs: Dict[str, Any], runtime_root: Path = DEFA
         return _artifact("Runtime drift complete.", manifest_drift(manifest, manifest_path, runtime_root))
     if action_id == "backup.plan":
         return _artifact("Backup plan complete.", backup_plan(runtime_root, inputs["app"]))
+    if action_id == "backup.status":
+        return _artifact(
+            "Backup status complete.",
+            backup_status_report(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+        )
     if action_id == "backup.create":
         return _run_confirmed_plan(
             inputs,
@@ -146,6 +238,257 @@ def run_action(action_id: str, inputs: Dict[str, Any], runtime_root: Path = DEFA
         return _artifact("Release list complete.", {"app": inputs["app"], "releases": list_releases(runtime_root, inputs["app"])})
     if action_id == "release.show":
         return _artifact("Release show complete.", load_release(runtime_root, inputs["app"], inputs["release_id"]))
+    if action_id == "app.readiness":
+        return _artifact(
+            "App readiness complete.",
+            app_readiness_report(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+        )
+    if action_id == "app.runbook":
+        return _artifact(
+            "App runbook complete.",
+            app_runbook_report(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+        )
+    if action_id == "app.export.plan":
+        return _artifact(
+            "App export plan complete.",
+            export_plan(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                ophelia_root=REPO_ROOT,
+                include_postgres=bool(inputs.get("include_postgres", False)),
+            ),
+        )
+    if action_id == "app.export.create":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: export_plan(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                ophelia_root=REPO_ROOT,
+                include_postgres=bool(inputs.get("include_postgres", False)),
+            ),
+            lambda token: export_create(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                confirm=token,
+                ophelia_root=REPO_ROOT,
+                include_postgres=bool(inputs.get("include_postgres", False)),
+            ),
+            "App export create dry-run complete.",
+            "App export create complete.",
+        )
+    if action_id == "app.import.plan":
+        return _artifact("App import plan complete.", import_plan(Path(inputs["source_path"]), runtime_root=runtime_root, ophelia_root=REPO_ROOT))
+    if action_id == "app.import.apply":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: import_plan(
+                Path(inputs["source_path"]),
+                runtime_root=runtime_root,
+                mode=inputs.get("mode") or "rehearsal",
+                ophelia_root=REPO_ROOT,
+            ),
+            lambda token: import_apply(
+                Path(inputs["source_path"]),
+                runtime_root=runtime_root,
+                mode=inputs.get("mode") or "rehearsal",
+                confirm=token,
+                ophelia_root=REPO_ROOT,
+            ),
+            "App import apply dry-run complete.",
+            "App import apply complete.",
+        )
+    if action_id == "app.restore-drill.plan":
+        return _artifact(
+            "Restore drill plan complete.",
+            restore_drill_plan(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                source=Path(inputs["source_path"]) if inputs.get("source_path") else None,
+            ),
+        )
+    if action_id == "app.restore-drill.apply":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: restore_drill_plan(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                source=Path(inputs["source_path"]) if inputs.get("source_path") else None,
+            ),
+            lambda token: restore_drill_apply(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                source=Path(inputs["source_path"]) if inputs.get("source_path") else None,
+                confirm=token,
+            ),
+            "Restore drill apply dry-run complete.",
+            "Restore drill apply complete.",
+        )
+    if action_id == "app.cutover.plan":
+        return _artifact(
+            "Cutover plan complete.",
+            cutover_plan(
+                inputs["app"],
+                source_host=inputs["source_host"],
+                target_host=inputs["target_host"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+        )
+    if action_id == "app.cutover.apply":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: cutover_plan(
+                inputs["app"],
+                source_host=inputs["source_host"],
+                target_host=inputs["target_host"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+            lambda token: cutover_apply(
+                inputs["app"],
+                source_host=inputs["source_host"],
+                target_host=inputs["target_host"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                confirm=token,
+            ),
+            "Cutover apply dry-run complete.",
+            "Cutover apply complete.",
+        )
+    if action_id == "app.traffic.plan":
+        return _artifact(
+            "Traffic plan complete.",
+            traffic_plan(
+                inputs["app"],
+                source_host=inputs["source_host"],
+                target_host=inputs["target_host"],
+                target_origin=inputs["target_origin"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                dns_provider=inputs.get("dns_provider") or "manual",
+                caddy_provider=inputs.get("caddy_provider") or "manual",
+                ttl=int(inputs.get("ttl") or "300"),
+                provider_config=Path(inputs["provider_config"]) if inputs.get("provider_config") else None,
+                execute_provider_mutation=bool(inputs.get("execute_provider_mutation", False)),
+                target_health_url=inputs.get("target_health_url"),
+                run_target_health=bool(inputs.get("run_target_health", False)),
+                target_health_timeout=float(inputs.get("target_health_timeout") or "10"),
+                target_health_expect_status=int(inputs.get("target_health_expect_status") or "200"),
+            ),
+        )
+    if action_id == "app.traffic.apply":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: traffic_plan(
+                inputs["app"],
+                source_host=inputs["source_host"],
+                target_host=inputs["target_host"],
+                target_origin=inputs["target_origin"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                dns_provider=inputs.get("dns_provider") or "manual",
+                caddy_provider=inputs.get("caddy_provider") or "manual",
+                ttl=int(inputs.get("ttl") or "300"),
+                provider_config=Path(inputs["provider_config"]) if inputs.get("provider_config") else None,
+                execute_provider_mutation=bool(inputs.get("execute_provider_mutation", False)),
+                target_health_url=inputs.get("target_health_url"),
+                run_target_health=bool(inputs.get("run_target_health", False)),
+                target_health_timeout=float(inputs.get("target_health_timeout") or "10"),
+                target_health_expect_status=int(inputs.get("target_health_expect_status") or "200"),
+            ),
+            lambda token: traffic_apply(
+                inputs["app"],
+                source_host=inputs["source_host"],
+                target_host=inputs["target_host"],
+                target_origin=inputs["target_origin"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+                dns_provider=inputs.get("dns_provider") or "manual",
+                caddy_provider=inputs.get("caddy_provider") or "manual",
+                ttl=int(inputs.get("ttl") or "300"),
+                provider_config=Path(inputs["provider_config"]) if inputs.get("provider_config") else None,
+                execute_provider_mutation=bool(inputs.get("execute_provider_mutation", False)),
+                target_health_url=inputs.get("target_health_url"),
+                run_target_health=bool(inputs.get("run_target_health", False)),
+                target_health_timeout=float(inputs.get("target_health_timeout") or "10"),
+                target_health_expect_status=int(inputs.get("target_health_expect_status") or "200"),
+                confirm=token,
+            ),
+            "Traffic apply dry-run complete.",
+            "Traffic apply complete.",
+        )
+    if action_id == "app.traffic.rollback.plan":
+        return _artifact(
+            "Traffic rollback plan complete.",
+            traffic_rollback_plan(
+                inputs["app"],
+                receipt_id=inputs["receipt_id"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+            ),
+        )
+    if action_id == "app.traffic.rollback.apply":
+        return _run_confirmed_plan(
+            inputs,
+            lambda: traffic_rollback_plan(
+                inputs["app"],
+                receipt_id=inputs["receipt_id"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+            ),
+            lambda token: traffic_rollback_apply(
+                inputs["app"],
+                receipt_id=inputs["receipt_id"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                confirm=token,
+            ),
+            "Traffic rollback apply dry-run complete.",
+            "Traffic rollback apply complete.",
+        )
+    if action_id == "app.isolation.plan":
+        return _artifact(
+            "Isolation plan complete.",
+            isolation_plan(
+                inputs["app"],
+                environment=inputs.get("environment"),
+                runtime_root=runtime_root,
+                manifest_path=Path(inputs["manifest_path"]) if inputs.get("manifest_path") else None,
+            ),
+        )
+    if action_id == "receipts.list":
+        return _artifact("Receipt list complete.", receipt_list_report(runtime_root, app=inputs.get("app"), environment=inputs.get("environment")))
+    if action_id == "receipts.show":
+        return _artifact("Receipt show complete.", receipt_show_report(inputs["receipt_id"], runtime_root=runtime_root))
     raise ActionError(f"Unknown action id: {action_id}")
 
 
@@ -251,8 +594,29 @@ def _action(
         "runtime_root": {"type": "string"},
         "release_id": {"type": "string"},
         "backup_id": {"type": "string"},
+        "receipt_id": {"type": "string"},
+        "source_path": {"type": "string"},
+        "source_host": {"type": "string"},
+        "target_host": {"type": "string"},
+        "target_origin": {"type": "string"},
+        "dns_provider": {"type": "string"},
+        "caddy_provider": {"type": "string"},
+        "ttl": {"type": "string"},
+        "provider_config": {"type": "string"},
+        "execute_provider_mutation": {"type": "boolean"},
+        "target_health_url": {"type": "string"},
+        "run_target_health": {"type": "boolean"},
+        "target_health_timeout": {"type": "string"},
+        "target_health_expect_status": {"type": "string"},
+        "directory": {"type": "string"},
+        "mode": {"type": "string"},
         "dry_run": {"type": "boolean"},
         "confirm_token": {"type": "string"},
+        "critical": {"type": "boolean"},
+        "postgres": {"type": "boolean"},
+        "include_postgres": {"type": "boolean"},
+        "redis": {"type": "boolean"},
+        "uploads": {"type": "boolean"},
         "idempotency_key": {"type": "string"},
         "requested_by": {"type": "string"},
         "source": {"type": "string"},
@@ -285,6 +649,10 @@ def _policy_gates(action_id: str) -> List[str]:
         gates.append("per app/environment lock")
     if action_id == "restore.apply":
         gates.append("destructive restore disabled by default")
+    if action_id == "app.traffic.apply":
+        gates.append("DNS/Caddy provider mutation requires dry-run token, provider_config, and execute_provider_mutation")
+    if action_id == "app.traffic.rollback.apply":
+        gates.append("traffic rollback requires dry-run token and restorable previous provider state")
     return gates
 
 
@@ -294,6 +662,10 @@ ACTION_DEFINITIONS.extend(
         _action("manifest.explain", "Explain one manifest.", "manifest", "read", ["manifest_path"]),
         _action("manifest.diff", "Diff desired rendered state against runtime.", "manifest", "read", ["manifest_path"]),
         _action("manifest.conflicts", "Scan manifests for platform conflicts.", "manifest", "read", []),
+        _action("pack.validate", "Validate one portable app pack.", "pack", "read", ["manifest_path"]),
+        _action("pack.explain", "Explain one portable app pack.", "pack", "read", ["manifest_path"]),
+        _action("pack.init.preview", "Preview app pack scaffolding.", "pack", "read", ["app"]),
+        _action("env.diff", "Compare redacted app env shape.", "portability", "read", ["app"]),
         _action("deploy.plan", "Plan a deploy.", "deploy", "read", ["manifest_path"]),
         _action("deploy.apply", "Apply a deploy.", "deploy", "mutating", ["manifest_path"], dry_run=True, confirm=True),
         _action("deploy.rollback.plan", "Plan a rollback.", "rollback", "read", ["app", "release_id"]),
@@ -302,11 +674,29 @@ ACTION_DEFINITIONS.extend(
         _action("runtime.doctor", "Run host readiness checks.", "runtime", "read", []),
         _action("runtime.drift", "Detect drift for one manifest.", "runtime", "read", ["manifest_path"]),
         _action("backup.plan", "Plan an app backup.", "backup", "read", ["app"]),
+        _action("backup.status", "Inspect backup freshness and coverage.", "backup", "read", ["app"]),
         _action("backup.create", "Create an app backup.", "backup", "mutating", ["app"], dry_run=True, confirm=True),
         _action("restore.plan", "Plan a restore preview.", "restore", "read", ["app", "backup_id"]),
         _action("restore.apply", "Create a restore preview.", "restore", "mutating", ["app", "backup_id"], dry_run=True, confirm=True),
         _action("release.list", "List app releases.", "release", "read", ["app"]),
         _action("release.show", "Show one release.", "release", "read", ["app", "release_id"]),
+        _action("app.readiness", "Inspect app move readiness.", "portability", "read", ["app"]),
+        _action("app.runbook", "Generate an app runbook payload.", "portability", "read", ["app"]),
+        _action("app.export.plan", "Plan an app export.", "portability", "read", ["app"]),
+        _action("app.export.create", "Create a metadata/runtime export bundle.", "portability", "mutating", ["app"], dry_run=True, confirm=True),
+        _action("app.import.plan", "Plan an app import.", "portability", "read", ["source_path"]),
+        _action("app.import.apply", "Create a rehearsal import preview.", "portability", "mutating", ["source_path"], dry_run=True, confirm=True),
+        _action("app.restore-drill.plan", "Plan a restore drill.", "portability", "read", ["app"]),
+        _action("app.restore-drill.apply", "Run an isolated restore drill check.", "portability", "mutating", ["app", "source_path"], dry_run=True, confirm=True),
+        _action("app.cutover.plan", "Plan an app cutover.", "portability", "read", ["app", "source_host", "target_host"]),
+        _action("app.cutover.apply", "Write a cutover checkpoint receipt.", "portability", "mutating", ["app", "source_host", "target_host"], dry_run=True, confirm=True),
+        _action("app.traffic.plan", "Plan production traffic automation.", "traffic", "read", ["app", "source_host", "target_host", "target_origin"]),
+        _action("app.traffic.apply", "Write a production traffic checkpoint receipt.", "traffic", "mutating", ["app", "source_host", "target_host", "target_origin"], dry_run=True, confirm=True),
+        _action("app.traffic.rollback.plan", "Plan traffic provider rollback from a receipt.", "traffic", "read", ["app", "receipt_id"]),
+        _action("app.traffic.rollback.apply", "Apply traffic provider rollback from a receipt.", "traffic", "mutating", ["app", "receipt_id"], dry_run=True, confirm=True),
+        _action("app.isolation.plan", "Plan per-app isolation compatibility.", "portability", "read", ["app"]),
+        _action("receipts.list", "List operation receipts.", "receipts", "read", []),
+        _action("receipts.show", "Show one operation receipt.", "receipts", "read", ["receipt_id"]),
     ]
 )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -47,6 +47,85 @@ class PrismConfig:
     admin_domain: Optional[str] = None
     console_asset_path: Optional[str] = None
     surface: str = "console"
+
+
+@dataclass
+class PackConfig:
+    portability: Optional[str] = None
+    owner: Optional[str] = None
+    description: Optional[str] = None
+    deploy_binding_file: Optional[str] = None
+
+
+@dataclass
+class HostRequirementsConfig:
+    arch: Optional[str] = None
+    min_memory: Optional[str] = None
+    min_disk_free: Optional[str] = None
+    requires_edge: Optional[bool] = None
+    requires_docker: Optional[bool] = None
+
+
+@dataclass
+class NetworkingConfig:
+    edge: str = "shared"
+    internal: str = "shared"
+
+
+@dataclass
+class DataServiceConfig:
+    mode: str
+    inferred_from_addon: bool = False
+    database: Optional[str] = None
+    service: Optional[str] = None
+    class_name: Optional[str] = None
+    durable: Optional[bool] = None
+    export: Dict[str, Any] = field(default_factory=dict)
+    import_config: Dict[str, Any] = field(default_factory=dict)
+    verify: Dict[str, Any] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DataVolumeConfig:
+    name: str
+    mount: Optional[str] = None
+    source: Optional[str] = None
+    class_name: Optional[str] = None
+    export: Any = None
+    import_config: Any = None
+    verify: Dict[str, Any] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DataBackupsConfig:
+    required: bool = False
+    restore_drill_required: bool = False
+    offsite_required: bool = False
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DataConfig:
+    postgres: Optional[DataServiceConfig] = None
+    redis: Optional[DataServiceConfig] = None
+    volumes: List[DataVolumeConfig] = field(default_factory=list)
+    object_storage: List[Dict[str, Any]] = field(default_factory=list)
+    static_assets: List[Dict[str, Any]] = field(default_factory=list)
+    external_services: List[Dict[str, Any]] = field(default_factory=list)
+    backups: Optional[DataBackupsConfig] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HooksConfig:
+    pre_export: Optional[str] = None
+    freeze: Optional[str] = None
+    unfreeze: Optional[str] = None
+    post_import: Optional[str] = None
+    post_cutover: Optional[str] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -125,6 +204,11 @@ class Manifest:
     verify: List[VerificationCheck] = field(default_factory=list)
     verify_policy: VerificationPolicy = field(default_factory=VerificationPolicy)
     prism: Optional[PrismConfig] = None
+    pack: PackConfig = field(default_factory=PackConfig)
+    host_requirements: HostRequirementsConfig = field(default_factory=HostRequirementsConfig)
+    networking: NetworkingConfig = field(default_factory=NetworkingConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    hooks: HooksConfig = field(default_factory=HooksConfig)
     depends_on: List[str] = field(default_factory=list)
     deployment_order: Optional[int] = None
     migration_before: List[str] = field(default_factory=list)
@@ -134,7 +218,7 @@ class Manifest:
         return f"{self.app}-{service_name}"
 
     def to_lock_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return _export_manifest_value(self)
 
 
 def load_manifest(path: Path) -> Manifest:
@@ -165,6 +249,11 @@ def load_manifest(path: Path) -> Manifest:
     verify = _parse_verifications(raw.get("verify", []))
     verify_policy = _parse_verification_policy(raw.get("verify_policy", {}))
     prism = _parse_prism(raw.get("prism"))
+    pack = _parse_pack(raw.get("pack"))
+    host_requirements = _parse_host_requirements(raw.get("host_requirements"))
+    networking = _parse_networking(raw.get("networking"))
+    data = _parse_data(raw.get("data"), addons)
+    hooks = _parse_hooks(raw.get("hooks"))
 
     manifest = Manifest(
         version=version,
@@ -187,6 +276,11 @@ def load_manifest(path: Path) -> Manifest:
         verify=verify,
         verify_policy=verify_policy,
         prism=prism,
+        pack=pack,
+        host_requirements=host_requirements,
+        networking=networking,
+        data=data,
+        hooks=hooks,
         depends_on=_string_list(raw.get("depends_on", []), "depends_on"),
         deployment_order=_optional_int(raw.get("deployment_order"), "deployment_order"),
         migration_before=_string_list(raw.get("migration_before", []), "migration_before"),
@@ -451,6 +545,222 @@ def _parse_prism(raw: Any) -> Optional[PrismConfig]:
         admin_domain=_optional_str(raw.get("admin_domain"), "prism.admin_domain"),
         console_asset_path=_optional_str(raw.get("console_asset_path"), "prism.console_asset_path"),
         surface=surface,
+    )
+
+
+def _parse_pack(raw: Any) -> PackConfig:
+    if raw is None:
+        return PackConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`pack` must be a mapping.")
+
+    portability = _optional_str(raw.get("portability"), "pack.portability")
+    if portability is not None and portability not in {"critical", "standard", "static"}:
+        raise ManifestError("`pack.portability` must be `critical`, `standard`, or `static`.")
+
+    return PackConfig(
+        portability=portability,
+        owner=_optional_str(raw.get("owner"), "pack.owner"),
+        description=_optional_str(raw.get("description"), "pack.description"),
+        deploy_binding_file=_optional_str(
+            raw.get("deploy_binding_file"), "pack.deploy_binding_file"
+        ),
+    )
+
+
+def _parse_host_requirements(raw: Any) -> HostRequirementsConfig:
+    if raw is None:
+        return HostRequirementsConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`host_requirements` must be a mapping.")
+
+    return HostRequirementsConfig(
+        arch=_optional_str(raw.get("arch"), "host_requirements.arch"),
+        min_memory=_optional_str(raw.get("min_memory"), "host_requirements.min_memory"),
+        min_disk_free=_optional_str(
+            raw.get("min_disk_free"), "host_requirements.min_disk_free"
+        ),
+        requires_edge=_optional_bool(raw.get("requires_edge"), "host_requirements.requires_edge"),
+        requires_docker=_optional_bool(
+            raw.get("requires_docker"), "host_requirements.requires_docker"
+        ),
+    )
+
+
+def _parse_networking(raw: Any) -> NetworkingConfig:
+    if raw is None:
+        return NetworkingConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`networking` must be a mapping.")
+
+    edge = _optional_str(raw.get("edge"), "networking.edge") or "shared"
+    internal = _optional_str(raw.get("internal"), "networking.internal") or "shared"
+    if edge != "shared":
+        raise ManifestError("`networking.edge` must be `shared`.")
+    if internal not in {"shared", "per-app"}:
+        raise ManifestError("`networking.internal` must be `shared` or `per-app`.")
+    return NetworkingConfig(edge=edge, internal=internal)
+
+
+def _parse_data(raw: Any, addons: Addons) -> DataConfig:
+    if raw is None:
+        data = DataConfig()
+    else:
+        if not isinstance(raw, dict):
+            raise ManifestError("`data` must be a mapping.")
+        known = {
+            "postgres",
+            "redis",
+            "volumes",
+            "object_storage",
+            "static_assets",
+            "external_services",
+            "backups",
+        }
+        data = DataConfig(
+            postgres=_parse_data_service(
+                raw.get("postgres"),
+                "data.postgres",
+                default_mode="shared-postgres-database",
+            ),
+            redis=_parse_data_service(
+                raw.get("redis"),
+                "data.redis",
+                default_mode="redis-logical-db",
+            ),
+            volumes=_parse_data_volumes(raw.get("volumes", [])),
+            object_storage=_parse_list_of_mappings(
+                raw.get("object_storage", []), "data.object_storage"
+            ),
+            static_assets=_parse_list_of_mappings(
+                raw.get("static_assets", []), "data.static_assets"
+            ),
+            external_services=_parse_list_of_mappings(
+                raw.get("external_services", []), "data.external_services"
+            ),
+            backups=_parse_data_backups(raw.get("backups")),
+            extra={key: _json_compatible(value, f"data.{key}") for key, value in raw.items() if key not in known},
+        )
+
+    if data.postgres is None and addons.postgres:
+        data.postgres = DataServiceConfig(
+            mode="shared-postgres-database",
+            inferred_from_addon=True,
+        )
+    if data.redis is None and addons.redis:
+        data.redis = DataServiceConfig(
+            mode="redis-logical-db",
+            inferred_from_addon=True,
+        )
+    return data
+
+
+def _parse_data_service(raw: Any, field_name: str, default_mode: str) -> Optional[DataServiceConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError(f"`{field_name}` must be a mapping.")
+
+    known = {
+        "mode",
+        "inferred_from_addon",
+        "database",
+        "service",
+        "class",
+        "durable",
+        "export",
+        "import",
+        "verify",
+    }
+    return DataServiceConfig(
+        mode=_optional_str(raw.get("mode"), f"{field_name}.mode") or default_mode,
+        inferred_from_addon=_as_bool(raw.get("inferred_from_addon", False), f"{field_name}.inferred_from_addon"),
+        database=_optional_str(raw.get("database"), f"{field_name}.database"),
+        service=_optional_str(raw.get("service"), f"{field_name}.service"),
+        class_name=_optional_str(raw.get("class"), f"{field_name}.class"),
+        durable=_optional_bool(raw.get("durable"), f"{field_name}.durable"),
+        export=_parse_optional_mapping(raw.get("export"), f"{field_name}.export"),
+        import_config=_parse_optional_mapping(raw.get("import"), f"{field_name}.import"),
+        verify=_parse_optional_mapping(raw.get("verify"), f"{field_name}.verify"),
+        extra={
+            key: _json_compatible(value, f"{field_name}.{key}")
+            for key, value in raw.items()
+            if key not in known
+        },
+    )
+
+
+def _parse_data_volumes(raw: Any) -> List[DataVolumeConfig]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError("`data.volumes` must be a list.")
+
+    volumes: List[DataVolumeConfig] = []
+    for index, item in enumerate(raw):
+        field_name = f"data.volumes[{index}]"
+        if not isinstance(item, dict):
+            raise ManifestError(f"`{field_name}` must be a mapping.")
+        known = {"name", "mount", "source", "class", "export", "import", "verify"}
+        volumes.append(
+            DataVolumeConfig(
+                name=_require_str(item, "name", prefix=field_name),
+                mount=_optional_str(item.get("mount"), f"{field_name}.mount"),
+                source=_optional_str(item.get("source"), f"{field_name}.source"),
+                class_name=_optional_str(item.get("class"), f"{field_name}.class"),
+                export=_parse_optional_data_action(item.get("export"), f"{field_name}.export"),
+                import_config=_parse_optional_data_action(item.get("import"), f"{field_name}.import"),
+                verify=_parse_optional_mapping(item.get("verify"), f"{field_name}.verify"),
+                extra={
+                    key: _json_compatible(value, f"{field_name}.{key}")
+                    for key, value in item.items()
+                    if key not in known
+                },
+            )
+        )
+    return volumes
+
+
+def _parse_data_backups(raw: Any) -> Optional[DataBackupsConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`data.backups` must be a mapping.")
+    known = {"required", "restore_drill_required", "offsite_required"}
+    return DataBackupsConfig(
+        required=_as_bool(raw.get("required", False), "data.backups.required"),
+        restore_drill_required=_as_bool(
+            raw.get("restore_drill_required", False), "data.backups.restore_drill_required"
+        ),
+        offsite_required=_as_bool(
+            raw.get("offsite_required", False), "data.backups.offsite_required"
+        ),
+        extra={
+            key: _json_compatible(value, f"data.backups.{key}")
+            for key, value in raw.items()
+            if key not in known
+        },
+    )
+
+
+def _parse_hooks(raw: Any) -> HooksConfig:
+    if raw is None:
+        return HooksConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`hooks` must be a mapping.")
+
+    known = {"pre_export", "freeze", "unfreeze", "post_import", "post_cutover"}
+    return HooksConfig(
+        pre_export=_optional_str(raw.get("pre_export"), "hooks.pre_export"),
+        freeze=_optional_str(raw.get("freeze"), "hooks.freeze"),
+        unfreeze=_optional_str(raw.get("unfreeze"), "hooks.unfreeze"),
+        post_import=_optional_str(raw.get("post_import"), "hooks.post_import"),
+        post_cutover=_optional_str(raw.get("post_cutover"), "hooks.post_cutover"),
+        extra={
+            key: _json_compatible(value, f"hooks.{key}")
+            for key, value in raw.items()
+            if key not in known
+        },
     )
 
 
@@ -738,7 +1048,94 @@ def _mapping_as_str_dict(value: Any, field_name: str) -> Dict[str, str]:
     return result
 
 
+def _parse_optional_mapping(value: Any, field_name: str) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ManifestError(f"`{field_name}` must be a mapping.")
+    return {
+        _mapping_key(key, field_name): _json_compatible(item, f"{field_name}.{key}")
+        for key, item in value.items()
+    }
+
+
+def _parse_optional_data_action(value: Any, field_name: str) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value.strip():
+            raise ManifestError(f"`{field_name}` must be a non-empty string or mapping.")
+        return value
+    if isinstance(value, dict):
+        return _parse_optional_mapping(value, field_name)
+    raise ManifestError(f"`{field_name}` must be a non-empty string or mapping.")
+
+
+def _parse_list_of_mappings(value: Any, field_name: str) -> List[Dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [_parse_optional_mapping(value, field_name)]
+    if not isinstance(value, list):
+        raise ManifestError(f"`{field_name}` must be a list.")
+
+    result: List[Dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ManifestError(f"`{field_name}[{index}]` must be a mapping.")
+        result.append(_parse_optional_mapping(item, f"{field_name}[{index}]"))
+    return result
+
+
+def _mapping_key(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ManifestError(f"`{field_name}` keys must be non-empty strings.")
+    return value
+
+
+def _json_compatible(value: Any, field_name: str) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_json_compatible(item, f"{field_name}[]") for item in value]
+    if isinstance(value, dict):
+        return {
+            _mapping_key(key, field_name): _json_compatible(item, f"{field_name}.{key}")
+            for key, item in value.items()
+        }
+    raise ManifestError(f"`{field_name}` must be JSON-compatible.")
+
+
+def _optional_bool(value: Any, field_name: str) -> Optional[bool]:
+    if value is None:
+        return None
+    return _as_bool(value, field_name)
+
+
 def _as_bool(value: Any, field_name: str) -> bool:
     if not isinstance(value, bool):
         raise ManifestError(f"`{field_name}` must be a boolean.")
+    return value
+
+
+def _export_manifest_value(value: Any) -> Any:
+    if is_dataclass(value):
+        result: Dict[str, Any] = {}
+        for item in fields(value):
+            exported = _export_manifest_value(getattr(value, item.name))
+            if item.name == "extra":
+                if isinstance(exported, dict):
+                    result.update(exported)
+                continue
+            key = item.name
+            if key == "import_config":
+                key = "import"
+            elif key == "class_name":
+                key = "class"
+            result[key] = exported
+        return result
+    if isinstance(value, dict):
+        return {key: _export_manifest_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_export_manifest_value(item) for item in value]
     return value

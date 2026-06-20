@@ -57,6 +57,115 @@ routes:
         with self.assertRaises(ManifestError):
             self._load(invalid)
 
+    def test_addons_infer_default_data_contracts(self) -> None:
+        manifest = """
+version: 1
+app: addon-data
+kind: service
+image: ghcr.io/example/addon-data:latest
+services:
+  web:
+    port: 3000
+routes:
+  - domain: addon-data.example.com
+    service: web
+addons:
+  postgres: true
+  redis: true
+"""
+        loaded = self._load(manifest)
+
+        self.assertIsNotNone(loaded.data.postgres)
+        self.assertIsNotNone(loaded.data.redis)
+        assert loaded.data.postgres is not None
+        assert loaded.data.redis is not None
+        self.assertEqual("shared-postgres-database", loaded.data.postgres.mode)
+        self.assertTrue(loaded.data.postgres.inferred_from_addon)
+        self.assertEqual("redis-logical-db", loaded.data.redis.mode)
+        self.assertTrue(loaded.data.redis.inferred_from_addon)
+
+    def test_portable_pack_sections_round_trip_to_lock_dict(self) -> None:
+        manifest = """
+version: 1
+app: portable
+environment: production
+kind: service
+image: ghcr.io/example/portable@sha256:aaaaaaaa
+pack:
+  portability: critical
+  owner: personal
+  description: Portable app
+  deploy_binding_file: ophelia/deploy.json
+host_requirements:
+  arch: amd64
+  min_memory: 1g
+  min_disk_free: 20g
+  requires_edge: true
+  requires_docker: true
+networking:
+  edge: shared
+  internal: per-app
+services:
+  web:
+    port: 3000
+routes:
+  - domain: portable.example.com
+    service: web
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: portable
+    export:
+      format: custom
+      command: pg_dump
+    import:
+      command: pg_restore
+    verify:
+      command: ophelia/checks/data-verify.sh
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+hooks:
+  freeze: ophelia/hooks/freeze.sh
+verify:
+  - name: health
+    url: https://portable.example.com/health
+"""
+        loaded = self._load(manifest)
+        lock = loaded.to_lock_dict()
+
+        self.assertEqual("critical", lock["pack"]["portability"])
+        self.assertEqual("amd64", lock["host_requirements"]["arch"])
+        self.assertEqual("per-app", lock["networking"]["internal"])
+        self.assertEqual("pg_restore", lock["data"]["postgres"]["import"]["command"])
+        self.assertEqual("critical", lock["data"]["volumes"][0]["class"])
+        self.assertEqual("ophelia/hooks/freeze.sh", lock["hooks"]["freeze"])
+
+    def test_rejects_unknown_networking_mode(self) -> None:
+        manifest = """
+version: 1
+app: invalid-networking
+kind: service
+image: ghcr.io/example/invalid-networking:latest
+networking:
+  internal: global
+services:
+  web:
+    port: 3000
+routes:
+  - domain: invalid-networking.example.com
+    service: web
+"""
+        with self.assertRaises(ManifestError):
+            self._load(manifest)
+
     def test_verify_policy_configures_retry_and_failure_mode(self) -> None:
         manifest = """
 version: 1
@@ -324,6 +433,56 @@ routes:
             "persistent/uploads:/app/public/uploads",
             compose,
         )
+
+    def test_render_compose_keeps_shared_internal_network_by_default(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: shared-network
+kind: service
+image: ghcr.io/example/shared-network:latest
+services:
+  web:
+    port: 3000
+routes:
+  - domain: shared-network.example.com
+    service: web
+"""
+        )
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertIn("      ophelia-internal:", compose)
+        self.assertIn("  ophelia-internal:\n    external: true", compose)
+
+    def test_render_compose_supports_per_app_internal_network(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: isolated-app
+environment: production
+kind: service
+image: ghcr.io/example/isolated-app:latest
+networking:
+  internal: per-app
+services:
+  web:
+    port: 3000
+routes:
+  - domain: isolated-app.example.com
+    service: web
+"""
+        )
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertIn("      isolated-app-production-internal:", compose)
+        self.assertIn("  isolated-app-production-internal:", compose)
+        self.assertIn('    name: "isolated-app-production-internal"', compose)
+        self.assertIn('          - "web"', compose)
+        self.assertNotIn("  ophelia-internal:\n    external: true", compose)
 
     def test_quark_surface_infers_root_host_verification_checks(self) -> None:
         manifest = """

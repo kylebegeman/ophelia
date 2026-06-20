@@ -32,6 +32,25 @@ Safety gates currently implemented:
 - restore apply writes a preview/report and does not overwrite active state
 - runtime GC never deletes current releases, env/secrets, backups, or the
   configured rollback window
+- traffic apply records provider intent and checkpoint receipts by default
+- target health verification is read-only, requires an explicit
+  `--target-health-url` and `--run-target-health`, rejects URLs with
+  credentials, query strings, or fragments, and is covered by the matching
+  confirmation token
+- provider-backed traffic writes require the matching plan token,
+  `--execute-provider-mutation`, `--provider-config`, non-manual providers, and
+  provider config entries with `allow_mutation: true`
+- implemented provider backends are file-backed DNS/Caddy staging and
+  Cloudflare DNS
+- Cloudflare DNS uses `api_token_env`; token values are not stored in plans or
+  receipts, apply never deletes DNS records, and TTL must be automatic `1` or
+  between `30` and `86400` seconds
+- live Caddy reload through the file provider requires `reload: true`,
+  `allow_reload: true`, `sites_dir` matching `<runtime_root>/caddy/sites.d`,
+  the matching plan token, and the normal provider execution gates
+- traffic rollback apply requires a rollback plan token and restores only
+  previous provider state captured by a traffic apply receipt; it blocks
+  rollback cases that would require deleting previously absent records/files
 - operation templates list deterministic steps and persist an artifact report,
   but do not run autonomous workflows
 - status and doctor report Docker warnings without mutating host state
@@ -39,5 +58,7 @@ Safety gates currently implemented:
 Known limitations:
 
 - live Postgres dump/restore execution is not enabled by default
-- rollback is file-level and not traffic-aware yet
+- rollback is file-level for releases and receipt-backed for traffic providers;
+  Cloudflare rollback restores previous records with PATCH and blocks
+  deletion-only rollback cases
 - callbacks are not enabled by default

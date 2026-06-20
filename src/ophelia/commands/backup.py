@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..backup import apply_restore, backup_plan, create_backup, restore_plan
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..portability import backup_status_report
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -16,6 +17,14 @@ def register(subparsers: _SubParsersAction) -> None:
     plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     plan_parser.set_defaults(handler=run_backup_plan)
+
+    status_parser = backup_subparsers.add_parser("status", help="Report backup freshness and coverage")
+    status_parser.add_argument("app", help="App id")
+    status_parser.add_argument("--environment", choices=["dev", "staging", "production"])
+    status_parser.add_argument("--manifest", type=Path, help="Path to app .ophelia manifest")
+    status_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    status_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    status_parser.set_defaults(handler=run_backup_status)
 
     create_parser = backup_subparsers.add_parser("create", help="Create an app backup")
     create_parser.add_argument("app", help="App id")
@@ -46,6 +55,26 @@ def run_backup_plan(args: Namespace) -> int:
     plan = backup_plan(args.runtime_root, args.app)
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0 if plan["can_apply"] else 1
+
+
+def run_backup_status(args: Namespace) -> int:
+    report = backup_status_report(
+        args.app,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+        manifest_path=args.manifest,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(report["summary"])
+        latest = report.get("latest_backup")
+        print(f"Latest backup: {latest.get('backup_id') if isinstance(latest, dict) else 'none'}")
+        if report["blockers"]:
+            print("Blockers:")
+            for blocker in report["blockers"]:
+                print(f"  - {blocker['message']}")
+    return 0 if not report["blockers"] else 1
 
 
 def run_backup_create(args: Namespace) -> int:

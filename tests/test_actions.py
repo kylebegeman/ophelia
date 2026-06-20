@@ -21,6 +21,20 @@ class ActionTests(unittest.TestCase):
         self.assertIn("runtime.status", ids)
         self.assertIn("restore.apply", ids)
         self.assertIn("release.show", ids)
+        self.assertIn("pack.validate", ids)
+        self.assertIn("env.diff", ids)
+        self.assertIn("backup.status", ids)
+        self.assertIn("app.readiness", ids)
+        self.assertIn("app.export.plan", ids)
+        self.assertIn("app.export.create", ids)
+        self.assertIn("app.import.apply", ids)
+        self.assertIn("app.restore-drill.apply", ids)
+        self.assertIn("app.cutover.apply", ids)
+        self.assertIn("app.traffic.plan", ids)
+        self.assertIn("app.traffic.apply", ids)
+        self.assertIn("app.traffic.rollback.plan", ids)
+        self.assertIn("app.traffic.rollback.apply", ids)
+        self.assertIn("receipts.list", ids)
 
     def test_invalid_action_inputs_are_rejected(self) -> None:
         with self.assertRaises(ActionError):
@@ -224,6 +238,81 @@ class ActionTests(unittest.TestCase):
 
             self.assertEqual("succeeded", result.job["state"])
             self.assertIn("callbacks are disabled", result.job["warnings"][0])
+
+    def test_pack_init_preview_action_does_not_write_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+
+            result = run_job(
+                "pack.init.preview",
+                {
+                    "app": "dragon-writer",
+                    "environment": "production",
+                    "critical": True,
+                    "postgres": True,
+                    "uploads": True,
+                    "directory": str(root / "app"),
+                    "runtime_root": str(runtime_root),
+                },
+                runtime_root,
+            )
+
+            self.assertEqual("succeeded", result.job["state"])
+            payload = result.job["result"]["payload"]
+            self.assertTrue(payload["dry_run"])
+            self.assertFalse((root / "app" / "ophelia" / "runbook.md").exists())
+
+    def test_export_create_action_is_dry_run_first(self) -> None:
+        from ophelia.manifest import load_manifest
+        from ophelia.runtime import deploy_bundle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "app.ophelia.yml"
+            runtime_root = root / "runtime"
+            manifest_path.write_text(_production_static_manifest(root / "static"))
+            (root / "static").mkdir()
+            deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
+            previous = os.environ.get("OPHELIA_SKIP_DOCKER_STATUS")
+            os.environ["OPHELIA_SKIP_DOCKER_STATUS"] = "1"
+            try:
+                dry_run = run_job(
+                    "app.export.create",
+                    {
+                        "app": "safe-static",
+                        "environment": "production",
+                        "manifest_path": str(manifest_path),
+                        "runtime_root": str(runtime_root),
+                        "dry_run": True,
+                    },
+                    runtime_root,
+                )
+                token = dry_run.job["result"]["payload"]["required_confirmation_token"]
+                applied = run_job(
+                    "app.export.create",
+                    {
+                        "app": "safe-static",
+                        "environment": "production",
+                        "manifest_path": str(manifest_path),
+                        "runtime_root": str(runtime_root),
+                        "dry_run": False,
+                        "confirm_token": token,
+                    },
+                    runtime_root,
+                )
+                receipt = applied.job["result"]["payload"]
+                bundle_exists = Path(receipt["bundle_path"]).exists()
+            finally:
+                if previous is None:
+                    os.environ.pop("OPHELIA_SKIP_DOCKER_STATUS", None)
+                else:
+                    os.environ["OPHELIA_SKIP_DOCKER_STATUS"] = previous
+
+        self.assertEqual("waiting_for_confirmation", dry_run.job["state"])
+        self.assertEqual("succeeded", applied.job["state"])
+        self.assertEqual("succeeded", receipt["status"])
+        self.assertTrue(bundle_exists)
 
 
 def _production_static_manifest(static_root: Path) -> str:

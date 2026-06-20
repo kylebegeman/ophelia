@@ -56,7 +56,9 @@ Rollback plans now include:
 - `post_apply_verification`: verification checks read from the target
   `manifest.lock.json`, plus the recommended `ship verify` command
 - `traffic_switching`: explicit metadata that rollback is a generated-file
-  restore, not a traffic-aware rollout
+  restore; file-backed traffic provider receipts capture previous DNS record
+  JSON and staged Caddy file state, and `ship app traffic rollback plan|apply`
+  restores those captured provider files outside release rollback
 - `changes`: generated files that will be restored and whether each currently
   differs
 

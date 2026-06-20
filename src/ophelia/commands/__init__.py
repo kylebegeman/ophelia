@@ -9,6 +9,7 @@ from .deploy import register as register_deploy
 from .diff import register as register_diff
 from .doctor import register as register_doctor
 from .drift import register as register_drift
+from .env import register as register_env
 from .explain import register as register_explain
 from .gc import register as register_gc
 from .host import register as register_host
@@ -17,7 +18,9 @@ from .jobs import register as register_jobs
 from .list_apps import register as register_list
 from .notes import register as register_notes
 from .operations import register as register_operations
+from .pack import register as register_pack
 from .preflight import register as register_preflight
+from .receipts import register as register_receipts
 from .release import register as register_release
 from .registry import register as register_registry
 from .render import register as register_render
@@ -46,6 +49,9 @@ def register_commands(subparsers):
     register_operations(subparsers)
     register_notes(subparsers)
     register_gc(subparsers)
+    register_pack(subparsers)
+    register_env(subparsers)
+    register_receipts(subparsers)
     register_validate(subparsers)
     register_explain(subparsers)
     register_verify(subparsers)

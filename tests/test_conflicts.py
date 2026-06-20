@@ -9,6 +9,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.conflicts import scan_conflicts
+from ophelia.manifest import load_manifest
+from ophelia.runtime import deploy_bundle
 
 
 class ConflictTests(unittest.TestCase):
@@ -38,6 +40,21 @@ class ConflictTests(unittest.TestCase):
             self.assertIn("duplicate_domain", conflict_types)
             self.assertIn("duplicate_host_port", conflict_types)
             self.assertIn("duplicate_docker_alias", conflict_types)
+
+    def test_runtime_lock_for_same_app_is_not_reported_as_route_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "one.ophelia.yml"
+            manifest_path.write_text(_manifest("one", "one.example.com", 3101))
+            manifest = load_manifest(manifest_path)
+            app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+            (app_root / "active_release.json").write_text((app_root / "release.json").read_text())
+
+            report = scan_conflicts(root, runtime_root=runtime_root)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual([], report["conflicts"])
 
     def test_current_manifests_have_verification_checks(self) -> None:
         manifest_dir = Path(__file__).resolve().parents[1] / "manifests"

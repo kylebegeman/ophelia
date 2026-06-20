@@ -546,12 +546,19 @@ It still contains scripts/logs/backup assumptions that are no longer the platfor
 
 `pokedex-dev-api-1` is restarting and the dev environment has not been migrated yet.
 
-### 5. Rollback is file-level, not traffic-aware yet
+### 5. Rollback is file-level; traffic intent is receipted
 
 Ophelia now records release history and can plan/apply rollback from rendered
 bundle snapshots. This restores generated Compose and Caddy files and writes a
-rollback report. It does not yet implement traffic-aware rollout or container
-health orchestration.
+rollback report. `ship app traffic` now records DNS/Caddy traffic intent and
+checkpoint receipts. File-backed traffic provider execution can stage local DNS
+record JSON and Caddy site files with previous-state snapshots in the receipt.
+`ship app traffic rollback plan|apply` can restore captured previous provider
+states. Traffic plans can run a read-only target health gate before apply.
+Cloudflare DNS provider execution updates exactly one matching record by
+default and does not store token values in receipts. File Caddy provider
+execution can validate and reload shared Caddy when `reload: true` and
+`allow_reload: true` are both present in the provider config.
 
 ### 6. Observability is still light
 
@@ -613,7 +620,7 @@ This is the order that still makes the most sense.
 
 ### Later
 
-7. Add traffic-aware rollback UX.
+7. Add provider-specific rollback polish.
 8. Add live database dump/restore execution behind stricter gates.
 9. Add Authelia if admin/auth protection is still wanted.
 10. Add monitoring/observability if the VPS footprint allows it.

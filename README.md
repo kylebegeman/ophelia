@@ -31,6 +31,10 @@ logs, and pulled images.
 - [Job/Action API Notes](docs/job-action-api.md)
 - [Host Contract](docs/host-contract.md)
 - [Migration Plan](docs/migration-plan.md)
+- [Ophelia Next Architecture](docs/ophelia-next-architecture.md)
+- [Portable App Pack Spec](docs/portable-app-pack-spec.md)
+- [Dragon Writer Migration Runbook](docs/dragon-writer-migration-runbook.md)
+- [Selected Portability Feature Roadmap](docs/selected-portability-feature-roadmap.md)
 
 ## Repository Layout
 
@@ -81,6 +85,30 @@ python3 -m venv .venv
 ./cli/ship deploy examples/dragonwriter.ophelia.yml --plan
 ./cli/ship diff examples/dragonwriter.ophelia.yml
 ./cli/ship explain examples/dragonwriter.ophelia.yml
+./cli/ship pack validate examples/dragonwriter.ophelia.yml
+./cli/ship pack explain examples/dragonwriter.ophelia.yml --json
+./cli/ship env diff dragon-writer --environment production --json
+./cli/ship backup status dragon-writer --environment production --json
+./cli/ship app readiness dragon-writer --environment production --json
+./cli/ship app runbook dragon-writer --environment production
+./cli/ship app export plan dragon-writer --environment production --json
+./cli/ship app export create dragon-writer --environment production --confirm <token> --json
+./cli/ship app import plan ./exports/dragon-writer.production.export/manifest.json --json
+./cli/ship app import apply ./exports/dragon-writer.production.export/manifest.json --confirm <token> --json
+./cli/ship app restore-drill plan dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --json
+./cli/ship app restore-drill apply dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --confirm <token> --json
+./cli/ship app cutover plan dragon-writer --from spaceship --to ovh --environment production --json
+./cli/ship app cutover apply dragon-writer --from spaceship --to ovh --environment production --confirm <token> --json
+./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
+./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --confirm <token> --json
+./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --dns-provider file --caddy-provider file --provider-config ./traffic-providers.json --execute-provider-mutation --json
+./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --dns-provider cloudflare --provider-config ./traffic-providers.json --execute-provider-mutation --json
+./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --json
+./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --confirm <token> --json
+./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
+./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship receipts list --app dragon-writer --json
+./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
 ./cli/ship inspect conflicts
 ./cli/ship status
 ./cli/ship doctor
@@ -155,6 +183,19 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 ### Operator command groups
 
 - `ship validate|render|explain|diff|deploy --plan` for manifest inspection.
+- `ship pack validate|explain` for portable app pack contracts, data declarations, host requirements, and movement readiness.
+- `ship env diff`, `ship backup status`, and `ship app readiness` for redacted movement readiness checks.
+- `ship app runbook` for generated per-app operator runbooks from the readiness model.
+- `ship app export plan` and `ship app import plan` for read-only app movement planning receipts.
+- `ship app export create --confirm <token>` for confirmed metadata/runtime export bundles with redacted env shape, a `.tar` fallback archive, optional `.tar.zst`, and receipts.
+- `ship app import apply --confirm <token>` for isolated rehearsal import previews that do not change active runtime.
+- `ship app restore-drill plan|apply` for isolated artifact/listability drill receipts.
+- `ship app cutover plan|apply` for confirmed cutover checkpoint receipts; Caddy and DNS are not mutated by the checkpoint.
+- `ship app traffic plan|apply` for production traffic automation intent, readiness gates, optional target health checks, checkpoint receipts, explicit file-backed provider execution, and gated Cloudflare DNS updates when `--provider-config` and `--execute-provider-mutation` are both supplied.
+- `ship app traffic rollback plan|apply` for receipt-backed rollback of file provider traffic changes when previous DNS/Caddy state was captured.
+- `ship app isolation plan` for per-app network compatibility planning; manifests can opt into `networking.internal: per-app`.
+- `ship receipts list|show` for local operation receipt browsing.
+- `ship pack init` for preview-first app pack scaffolding; pass `--write` before it creates files.
 - `ship deploy --apply --confirm <token>` for confirmed production apply.
 - `ship releases <app>` and `ship release show <app> <release-id>` for release history.
 - `ship rollback plan|apply` for file-level rollback from release bundle snapshots.

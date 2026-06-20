@@ -23,6 +23,11 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `redirect_status`: redirect status for redirect apps
 - `verify`: optional post-deploy HTTP verification checks
 - `prism`: Prism-specific config when `profile: prism`
+- `pack`: optional portable app pack metadata used by inventory, movement plans, and Lumen Ops receipts
+- `host_requirements`: optional target host capability requirements
+- `networking`: optional Compose network topology, defaulting to shared compatibility
+- `data`: optional data ownership, export, import, backup, and restore-drill contract
+- `hooks`: optional allowlisted app pack hook paths for export/import/cutover workflows
 - `depends_on`: optional app/service slugs that should be considered prerequisites
 - `deployment_order`: optional integer sort key for explicit multi-app plans
 - `migration_before`: optional migration step names that must run before apply
@@ -36,6 +41,76 @@ Dependency metadata is advisory. Ophelia reports it in `ship explain`,
 `ship preflight`, and operation templates, but it does not auto-run multi-app
 deploys unless an operator explicitly invokes a template and confirms each
 mutating step.
+
+## Portable Pack Fields
+
+The optional `pack`, `host_requirements`, `networking`, `data`, and `hooks`
+sections make app movement between hosts explicit while preserving old manifest
+behavior.
+
+`pack` fields:
+
+- `portability`: `critical`, `standard`, or `static`
+- `owner`: `personal`, `business`, `platform`, or another owner label
+- `description`: human-readable inventory summary
+- `deploy_binding_file`: optional committed app binding file path
+
+`host_requirements` fields:
+
+- `arch`: target CPU architecture such as `amd64` or `arm64`
+- `min_memory`: minimum target memory, for example `1g`
+- `min_disk_free`: minimum free disk before import, for example `20g`
+- `requires_edge`: whether Ophelia edge/Caddy must be ready
+- `requires_docker`: whether Docker and Compose must be ready
+
+`networking` fields:
+
+- `edge`: currently only `shared`, meaning services join the shared
+  `ophelia-edge` network for Caddy ingress
+- `internal`: `shared` or `per-app`; omitted manifests keep `shared`
+  compatibility with `ophelia-internal`
+
+When `networking.internal: per-app` is set, service Compose output joins
+`ophelia-edge` plus an app/environment private network named
+`<app>-<environment>-internal`. Compose creates that private network when the
+already-confirmed deploy apply flow runs. Ophelia does not migrate existing apps
+to private internals unless their manifest opts in.
+
+`data` supported sections:
+
+- `postgres`: app Postgres ownership, export, import, and verify behavior
+- `redis`: Redis ownership or cache contract
+- `volumes`: named volume or host path data that must survive movement
+- `object_storage`: bucket or prefix state
+- `static_assets`: static runtime asset state
+- `external_services`: external systems needed by the app
+- `backups`: backup, restore drill, and offsite requirements
+
+When old manifests set `addons.postgres: true` or `addons.redis: true` and omit
+`data`, Ophelia infers compatibility contracts:
+
+```yaml
+data:
+  postgres:
+    mode: shared-postgres-database
+    inferred_from_addon: true
+  redis:
+    mode: redis-logical-db
+    inferred_from_addon: true
+```
+
+Inferred contracts preserve deploy/status behavior, but critical app movement
+needs explicit export, import, and verification behavior before cutover.
+
+`hooks` fields:
+
+- `pre_export`
+- `freeze`
+- `unfreeze`
+- `post_import`
+- `post_cutover`
+
+Hook paths must be relative paths under `ophelia/hooks/` for pack validation.
 
 ## Service Fields
 
@@ -104,6 +179,21 @@ environment: production
 kind: service
 image: ghcr.io/mrbagels/dragon-writer:latest
 
+pack:
+  portability: critical
+  owner: personal
+  description: Dragon Writer production app
+
+host_requirements:
+  arch: amd64
+  min_memory: 1g
+  min_disk_free: 20g
+  requires_edge: true
+  requires_docker: true
+
+networking:
+  internal: per-app
+
 services:
   web:
     port: 3000
@@ -119,11 +209,45 @@ addons:
   postgres: true
   redis: false
 
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: dragon_writer
+    export:
+      format: custom
+      command: pg_dump
+    import:
+      command: pg_restore
+    verify:
+      command: ophelia/checks/data-verify.sh
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+
+hooks:
+  pre_export: ophelia/hooks/pre-export.sh
+  freeze: ophelia/hooks/freeze.sh
+  unfreeze: ophelia/hooks/unfreeze.sh
+  post_import: ophelia/hooks/post-import.sh
+
 resources:
   memory: 256m
 
 env:
   NODE_ENV: production
+
+verify:
+  - name: health
+    url: https://dragonwriter.begam.in/health
+  - name: home
+    url: https://dragonwriter.begam.in/
 ```
 
 ## Example: path-routed multi-service app
@@ -160,6 +284,60 @@ When `addons.postgres: true`, `ship deploy --apply` provisions a dedicated
 database and role in the shared Postgres container and writes `DATABASE_URL`
 into the app runtime env file. `addons.redis: true` writes `REDIS_URL` against
 the shared Redis instance and assigns the next free logical Redis database.
+
+Portable pack and readiness commands are read-only by default:
+
+```bash
+./cli/ship pack validate examples/dragonwriter.ophelia.yml
+./cli/ship pack explain examples/dragonwriter.ophelia.yml --json
+./cli/ship env diff dragon-writer --environment production --json
+./cli/ship backup status dragon-writer --environment production --json
+./cli/ship app readiness dragon-writer --environment production --json
+./cli/ship app runbook dragon-writer --environment production
+./cli/ship app export plan dragon-writer --environment production --json
+./cli/ship app export create dragon-writer --environment production --confirm <token> --json
+./cli/ship app import plan ./exports/dragon-writer.production.export/manifest.json --json
+./cli/ship app import apply ./exports/dragon-writer.production.export/manifest.json --confirm <token> --json
+./cli/ship app restore-drill plan dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --json
+./cli/ship app restore-drill apply dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --confirm <token> --json
+./cli/ship app cutover plan dragon-writer --from spaceship --to ovh --environment production --json
+./cli/ship app cutover apply dragon-writer --from spaceship --to ovh --environment production --confirm <token> --json
+./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
+./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --confirm <token> --json
+./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
+./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship receipts list --app dragon-writer --json
+./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+```
+
+`ship pack init` previews by default. It writes scaffold files only when
+`--write` is passed, and refuses to overwrite existing files without `--force`.
+`ship app export create` is confirmation-gated. By default it writes metadata,
+redacted runtime files, local static/volume archives for declared local sources,
+checksums, receipts, and a deterministic `.tar` archive of that bundle. Pass
+`--include-postgres` on both export plan and create to run the allowlisted
+read-only `pg_dump` path. If local `zstd` is available, export create also
+writes the planned `.tar.zst` archive. Production traffic mutation remains
+explicitly gated and must use confirmation tokens from matching plans.
+`ship app import apply` writes an isolated rehearsal preview only. Restore drill
+apply validates export artifact readability and writes receipts. Cutover apply
+writes a checkpoint receipt and does not mutate Caddy or DNS.
+Traffic apply writes a production traffic checkpoint receipt with DNS/Caddy
+provider intent by default. File-backed provider execution is available only
+when the matching plan and apply use `--execute-provider-mutation`,
+`--provider-config`, non-manual providers, and provider config
+`allow_mutation: true`. Cloudflare DNS execution uses `api_token_env`, updates
+one matching DNS record by default, and requires `allow_create: true` before it
+creates a missing record. Cloudflare TTL must be `1` for automatic TTL or
+between `30` and `86400` seconds. Live Caddy reload additionally requires
+provider config `reload: true`, `allow_reload: true`, and a Caddy `sites_dir`
+matching `<runtime_root>/caddy/sites.d`.
+Target health verification is read-only and available with
+`--target-health-url` plus `--run-target-health`; apply must use the same health
+inputs as the plan. Health URLs must be http(s) URLs without credentials, query
+strings, or fragments.
+Traffic rollback restores captured previous provider state from a traffic
+receipt and refuses deletion-only rollback cases.
 
 ## Prism Profile
 

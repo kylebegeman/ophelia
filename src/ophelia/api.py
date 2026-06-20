@@ -62,11 +62,11 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             job_id = parsed.path.split("/")[2]
             path = self.runtime_root_value / "jobs" / f"{job_id}.json"
             if not path.exists():
-                self._json({"error": "job not found"}, status=404)
+                self._error("job not found", status=404, code="job_not_found")
                 return
             self._json(json.loads(path.read_text()))
             return
-        self._json({"error": "not found"}, status=404)
+        self._error("not found", status=404, code="not_found")
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -82,7 +82,7 @@ class OpheliaHandler(BaseHTTPRequestHandler):
                     idempotency_key=body.get("idempotency_key"),
                 )
             except (ActionError, ValueError, TypeError) as exc:
-                self._json({"error": str(exc)}, status=400)
+                self._error(str(exc), status=400, code="invalid_job_request")
                 return
             self._json(result.job, status=201)
             return
@@ -91,7 +91,7 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             try:
                 self._json(cancel_job(self.runtime_root_value, job_id))
             except ActionError as exc:
-                self._json({"error": str(exc)}, status=404)
+                self._error(str(exc), status=404, code="job_cancel_failed")
             return
         if parsed.path == "/operations/run":
             try:
@@ -103,11 +103,11 @@ class OpheliaHandler(BaseHTTPRequestHandler):
                     self.runtime_root_value,
                 )
             except (TypeError, ValueError) as exc:
-                self._json({"error": str(exc)}, status=400)
+                self._error(str(exc), status=400, code="invalid_operation_request")
                 return
             self._json(result)
             return
-        self._json({"error": "not found"}, status=404)
+        self._error("not found", status=404, code="not_found")
 
     def _read_json(self):
         try:
@@ -132,10 +132,23 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _error(self, message: str, status: int, code: str) -> None:
+        self._json(
+            {
+                "schema_version": 1,
+                "kind": "ophelia.error",
+                "status": "failed",
+                "error": message,
+                "blockers": [{"code": code, "message": message}],
+                "warnings": [],
+            },
+            status=status,
+        )
+
     def _events(self, job_id: str) -> None:
         path = self.runtime_root_value / "jobs" / f"{job_id}.events.ndjson"
         if not path.exists():
-            self._json({"error": "events not found"}, status=404)
+            self._error("events not found", status=404, code="events_not_found")
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

@@ -1,7 +1,24 @@
 version: 1
 app: dragon-writer
+environment: production
 kind: service
 image: ghcr.io/mrbagels/dragon-writer:latest
+
+pack:
+  portability: critical
+  owner: personal
+  description: Dragon Writer production app
+  deploy_binding_file: ophelia/deploy.json
+
+host_requirements:
+  arch: amd64
+  min_memory: 1g
+  min_disk_free: 20g
+  requires_edge: true
+  requires_docker: true
+
+networking:
+  internal: per-app
 
 services:
   web:
@@ -18,8 +35,42 @@ addons:
   postgres: true
   redis: false
 
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: dragon_writer
+    export:
+      format: custom
+      command: pg_dump
+    import:
+      command: pg_restore
+    verify:
+      command: ophelia/checks/data-verify.sh
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+
+hooks:
+  pre_export: ophelia/hooks/pre-export.sh
+  freeze: ophelia/hooks/freeze.sh
+  unfreeze: ophelia/hooks/unfreeze.sh
+  post_import: ophelia/hooks/post-import.sh
+
 resources:
   memory: 256m
 
 env:
   NODE_ENV: production
+
+verify:
+  - name: health
+    url: https://dragonwriter.begam.in/health
+  - name: home
+    url: https://dragonwriter.begam.in/
