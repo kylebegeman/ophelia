@@ -1,0 +1,132 @@
+{
+  "host": {
+    "name": "bagel-hostinger",
+    "ip": "187.127.249.208",
+    "runtime_root": "/home/kyle/ophelia-runtime",
+    "public_docker_network": "ophelia-edge"
+  },
+  "apps": [
+    {
+      "name": "boop",
+      "environment": "production",
+      "compose_project": "boop",
+      "root_path": "/home/kyle/ophelia-runtime/apps/boop",
+      "domains": [
+        "boop.at",
+        "www.boop.at",
+        "app.boop.at",
+        "api.boop.at",
+        "admin.boop.at",
+        "docs.boop.at",
+        "go.boop.at"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/boop.caddy",
+      "container_names": [
+        "boop-web-1",
+        "boop-control-plane-1",
+        "boop-redirector-1"
+      ],
+      "health_urls": [
+        {
+          "name": "boop-health",
+          "url": "https://boop.at/health"
+        },
+        {
+          "name": "boop-api-health",
+          "url": "https://api.boop.at/health"
+        }
+      ],
+      "public_docker_network": "ophelia-edge",
+      "protected": true,
+      "notes": "Registered for visibility only. Do not mutate Boop through the Apollo transition."
+    },
+    {
+      "name": "boop-staging",
+      "environment": "staging",
+      "compose_project": "boop-staging",
+      "root_path": "/home/kyle/ophelia-runtime/apps/boop-staging",
+      "domains": [
+        "staging.boop.at",
+        "staging-app.boop.at",
+        "staging-api.boop.at",
+        "staging-admin.boop.at",
+        "staging-docs.boop.at",
+        "staging-go.boop.at",
+        "staging-redirect.boop.at"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/boop-staging.caddy",
+      "container_names": [
+        "boop-staging-web-1",
+        "boop-staging-control-plane-1",
+        "boop-staging-redirector-1"
+      ],
+      "health_urls": [
+        {
+          "name": "boop-staging-health",
+          "url": "https://staging.boop.at/health"
+        },
+        {
+          "name": "boop-staging-api-health",
+          "url": "https://staging-api.boop.at/health"
+        }
+      ],
+      "public_docker_network": "ophelia-edge",
+      "protected": true,
+      "notes": "Registered for visibility only. Do not mutate Boop staging through the Apollo transition."
+    },
+    {
+      "name": "apollo-staging",
+      "environment": "staging",
+      "compose_project": "apollo-staging",
+      "root_path": "/opt/apollo",
+      "domains": [
+        "ops-staging.begam.in",
+        "apollo-staging.begam.in"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/apollo-staging.caddy",
+      "container_names": [
+        "apollo-postgres-staging",
+        "apollo-host-staging",
+        "apollo-control-staging"
+      ],
+      "health_urls": [
+        {
+          "name": "operator",
+          "url": "https://ops-staging.begam.in/operator"
+        },
+        {
+          "name": "apollo-operator",
+          "url": "https://apollo-staging.begam.in/operator"
+        },
+        {
+          "name": "operator-api",
+          "url": "https://ops-staging.begam.in/api/operator/health",
+          "contains": "staging"
+        },
+        {
+          "name": "apollo-host-api",
+          "url": "https://ops-staging.begam.in/api/apollo/health",
+          "contains": "Apollo"
+        }
+      ],
+      "public_docker_network": "ophelia-edge",
+      "protected": false,
+      "notes": "Apollo replaces old Quark staging naming. Owns Apollo admin/control product runtime, not Ophelia platform policy."
+    },
+    {
+      "name": "apollo-production",
+      "environment": "production",
+      "compose_project": "apollo-production",
+      "root_path": "/opt/apollo",
+      "domains": [
+        "ops.begam.in"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/apollo-production.caddy",
+      "container_names": [],
+      "health_urls": [],
+      "public_docker_network": "ophelia-edge",
+      "protected": false,
+      "notes": "Reserved future registry entry. Do not activate until Apollo production is explicitly deployed."
+    }
+  ]
+}
