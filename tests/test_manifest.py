@@ -434,6 +434,91 @@ routes:
             compose,
         )
 
+    def test_render_compose_mounts_declared_data_volume(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: lumen-staging
+environment: staging
+kind: service
+image: ghcr.io/example/lumen:next
+services:
+  web:
+    port: 3773
+routes:
+  - domain: lumen-staging.example.com
+    service: web
+data:
+  volumes:
+    - name: lumen-home
+      mount: /data/lumen
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+"""
+        )
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertIn('"lumen-staging-staging-lumen-home:/data/lumen"', compose)
+        self.assertIn("volumes:\n  lumen-staging-staging-lumen-home:", compose)
+        self.assertIn('    name: "lumen-staging-staging-lumen-home"', compose)
+        self.assertIn('      ophelia.data.volume: "lumen-home"', compose)
+
+    def test_render_compose_mounts_data_volume_on_declared_service(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: workers-app
+environment: production
+kind: multi-service
+image: ghcr.io/example/workers-app:latest
+services:
+  web:
+    port: 3000
+  worker:
+    port: 3001
+routes:
+  - domain: workers.example.com
+    service: web
+data:
+  volumes:
+    - name: worker-cache
+      service: worker
+      mount: /data/cache
+"""
+        )
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertNotIn('"workers-app-production-worker-cache:/data/cache"', compose.split("  worker:")[0])
+        self.assertIn('"workers-app-production-worker-cache:/data/cache"', compose.split("  worker:")[1])
+
+    def test_mounted_data_volume_requires_service_in_multi_service_manifest(self) -> None:
+        manifest = """
+version: 1
+app: ambiguous-volumes
+kind: multi-service
+image: ghcr.io/example/ambiguous-volumes:latest
+services:
+  web:
+    port: 3000
+  worker:
+    port: 3001
+routes:
+  - domain: ambiguous.example.com
+    service: web
+data:
+  volumes:
+    - name: shared-data
+      mount: /data/shared
+"""
+
+        with self.assertRaisesRegex(ManifestError, "service.*required"):
+            self._load(manifest)
+
     def test_render_compose_keeps_shared_internal_network_by_default(self) -> None:
         manifest = self._load(
             """

@@ -80,7 +80,8 @@ to private internals unless their manifest opts in.
 
 - `postgres`: app Postgres ownership, export, import, and verify behavior
 - `redis`: Redis ownership or cache contract
-- `volumes`: named volume or host path data that must survive movement
+- `volumes`: named volume or host path data that must survive deploys and app
+  movement
 - `object_storage`: bucket or prefix state
 - `static_assets`: static runtime asset state
 - `external_services`: external systems needed by the app
@@ -412,6 +413,27 @@ Each service `mounts` item accepts:
 This is the primary way to ship Prism-hosted Console bundles or other static operator assets alongside an app image without baking them into the container first.
 
 Use `bind: true` for persistent host paths such as uploads or local backup directories that should survive deploys and accept writes at runtime.
+
+## Data Volumes
+
+Each `data.volumes` item declares durable runtime data and export/import
+behavior. When a volume declares `mount`, service Compose output mounts it into
+the target container:
+
+- `name`: logical volume id, required.
+- `mount`: absolute in-container path. When present, Ophelia renders a runtime
+  mount.
+- `service`: target service for the mount. Omit only when the manifest has one
+  service.
+- `source`: optional host path or Compose-relative path. When omitted, Ophelia
+  creates an app/environment-scoped Docker named volume.
+- `class`: optional data class such as `critical`.
+- `export`, `import`, `verify`: portability behavior for movement and restore
+  drills.
+
+Named Docker volume ids include the app and environment, for example
+`dragon-writer-production-uploads`, so staging and production apps on the same
+host do not share data accidentally.
 
 ## Example: Prism-backed Quark surface
 

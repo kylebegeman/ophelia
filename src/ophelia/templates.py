@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import TEMPLATES_DIR
-from .manifest import CatchAllEdgeConfig, Manifest, RouteConfig, ServiceConfig
+from .manifest import CatchAllEdgeConfig, DataVolumeConfig, Manifest, RouteConfig, ServiceConfig
 
 
 def render_compose(manifest: Manifest) -> Optional[str]:
@@ -18,10 +18,14 @@ def render_compose(manifest: Manifest) -> Optional[str]:
     template = _read_template("compose/app.compose.tpl")
     services_block = "\n".join(_render_service_block(manifest, service) for service in manifest.services.values())
     networks_block = _render_networks_block(manifest)
-    return (
+    rendered = (
         template.replace("{{SERVICES_BLOCK}}", services_block.rstrip())
         .replace("{{NETWORKS_BLOCK}}", networks_block.rstrip())
     )
+    volumes_block = _render_volumes_block(manifest)
+    if volumes_block:
+        rendered += "\n\nvolumes:\n" + volumes_block.rstrip()
+    return rendered
 
 
 def compose_network_summary(manifest: Manifest) -> Dict[str, Any]:
@@ -156,16 +160,10 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
             ]
         )
 
-    if service.mounts:
+    volume_lines = _render_service_volume_lines(manifest, service)
+    if volume_lines:
         service_lines.append("    volumes:")
-        for index, mount in enumerate(service.mounts):
-            bundle_source = (
-                mount.source
-                if mount.bind
-                else f"./{bundle_mount_path(service.name, mount.source, index)}"
-            )
-            suffix = ":ro" if mount.read_only else ""
-            service_lines.append(f"      - {_quote(f'{bundle_source}:{mount.target}{suffix}')}")
+        service_lines.extend(volume_lines)
 
     if service.command:
         service_lines.append("    command:")
@@ -189,6 +187,23 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
     if manifest.networking.internal == "per-app":
         service_lines.append(f"          - {_quote(service.name)}")
     return "\n".join(service_lines)
+
+
+def _render_service_volume_lines(manifest: Manifest, service: ServiceConfig) -> List[str]:
+    lines: List[str] = []
+    for index, mount in enumerate(service.mounts):
+        bundle_source = (
+            mount.source
+            if mount.bind
+            else f"./{bundle_mount_path(service.name, mount.source, index)}"
+        )
+        suffix = ":ro" if mount.read_only else ""
+        lines.append(f"      - {_quote(f'{bundle_source}:{mount.target}{suffix}')}")
+
+    for volume in _data_volumes_for_service(manifest, service):
+        source = volume.source or _data_volume_name(manifest, volume)
+        lines.append(f"      - {_quote(f'{source}:{volume.mount}')}")
+    return lines
 
 
 def _render_networks_block(manifest: Manifest) -> str:
@@ -215,6 +230,52 @@ def _render_networks_block(manifest: Manifest) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def _render_volumes_block(manifest: Manifest) -> str:
+    lines: List[str] = []
+    for volume in manifest.data.volumes:
+        if volume.mount is None or volume.source:
+            continue
+        name = _data_volume_name(manifest, volume)
+        lines.extend(
+            [
+                f"  {name}:",
+                f"    name: {_quote(name)}",
+                "    labels:",
+                f"      ophelia.app: {_quote(manifest.app)}",
+                f"      ophelia.environment: {_quote(manifest.environment or 'unknown')}",
+                f"      ophelia.data.volume: {_quote(volume.name)}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _data_volumes_for_service(manifest: Manifest, service: ServiceConfig) -> List[DataVolumeConfig]:
+    service_names = list(manifest.services)
+    default_service = service_names[0] if len(service_names) == 1 else None
+    volumes: List[DataVolumeConfig] = []
+    for volume in manifest.data.volumes:
+        if volume.mount is None:
+            continue
+        target_service = volume.service or default_service
+        if target_service == service.name:
+            volumes.append(volume)
+    return volumes
+
+
+def _data_volume_name(manifest: Manifest, volume: DataVolumeConfig) -> str:
+    environment = manifest.environment or "default"
+    return _safe_docker_name(f"{manifest.app}-{environment}-{volume.name}")
+
+
+def _safe_docker_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("._-")
+    if not cleaned:
+        return "volume"
+    if not re.match(r"^[A-Za-z0-9]", cleaned):
+        return f"v-{cleaned}"
+    return cleaned
 
 
 def _render_healthcheck_block(service: ServiceConfig) -> List[str]:

@@ -109,6 +109,13 @@ verify:
     expect_status: 200
 ```
 
+`data.volumes[].mount` is both a portability contract and a runtime contract.
+For single-service manifests, Ophelia mounts the volume into that service. For
+multi-service manifests, set `data.volumes[].service` so the runtime target is
+unambiguous. When `source` is omitted, Ophelia renders an app/environment-scoped
+Docker named volume; when `source` is present, it is rendered as the host or
+Compose-relative source path.
+
 ## Field Reference
 
 ### `pack`

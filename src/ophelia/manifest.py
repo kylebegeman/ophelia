@@ -91,6 +91,7 @@ class DataVolumeConfig:
     name: str
     mount: Optional[str] = None
     source: Optional[str] = None
+    service: Optional[str] = None
     class_name: Optional[str] = None
     export: Any = None
     import_config: Any = None
@@ -701,12 +702,13 @@ def _parse_data_volumes(raw: Any) -> List[DataVolumeConfig]:
         field_name = f"data.volumes[{index}]"
         if not isinstance(item, dict):
             raise ManifestError(f"`{field_name}` must be a mapping.")
-        known = {"name", "mount", "source", "class", "export", "import", "verify"}
+        known = {"name", "mount", "source", "service", "class", "export", "import", "verify"}
         volumes.append(
             DataVolumeConfig(
                 name=_require_str(item, "name", prefix=field_name),
                 mount=_optional_str(item.get("mount"), f"{field_name}.mount"),
                 source=_optional_str(item.get("source"), f"{field_name}.source"),
+                service=_optional_str(item.get("service"), f"{field_name}.service"),
                 class_name=_optional_str(item.get("class"), f"{field_name}.class"),
                 export=_parse_optional_data_action(item.get("export"), f"{field_name}.export"),
                 import_config=_parse_optional_data_action(item.get("import"), f"{field_name}.import"),
@@ -842,6 +844,39 @@ def _validate_manifest(manifest: Manifest) -> None:
         _validate_non_proxy_routes(manifest)
 
     _validate_edge(manifest)
+    _validate_data_volumes(manifest)
+
+
+def _validate_data_volumes(manifest: Manifest) -> None:
+    names: Dict[str, int] = {}
+    service_count = len(manifest.services)
+
+    for index, volume in enumerate(manifest.data.volumes):
+        field_name = f"data.volumes[{index}]"
+        previous = names.get(volume.name)
+        if previous is not None:
+            raise ManifestError(
+                f"`{field_name}.name` duplicates `data.volumes[{previous}].name`."
+            )
+        names[volume.name] = index
+
+        if volume.mount is not None and not volume.mount.startswith("/"):
+            raise ManifestError(f"`{field_name}.mount` must start with `/`.")
+
+        if volume.service is not None and volume.service not in manifest.services:
+            raise ManifestError(
+                f"`{field_name}.service` references unknown service `{volume.service}`."
+            )
+
+        if volume.mount is not None:
+            if manifest.kind not in {"service", "multi-service"}:
+                raise ManifestError(
+                    f"`{field_name}.mount` requires a service-based manifest."
+                )
+            if service_count > 1 and volume.service is None:
+                raise ManifestError(
+                    f"`{field_name}.service` is required when mounting a data volume in a multi-service manifest."
+                )
 
 
 def _validate_edge(manifest: Manifest) -> None:

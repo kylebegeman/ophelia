@@ -275,6 +275,10 @@ def apply_local_bundle(
         if manifest.kind in {"service", "multi-service"}:
             compose_path = app_root / "compose.yml"
             if compose_path.exists():
+                mark_phase("network_prepare", "running")
+                ensure_compose_networks(manifest)
+                mark_phase("network_prepare", "ok")
+
                 # Image pulls are release-critical. Continuing after a failed pull can
                 # leave a host serving a stale local tag while the deploy appears done.
                 mark_phase("image_pull", "running")
@@ -393,6 +397,28 @@ def apply_local_bundle(
             {"status": "failed", "ok": False, "applied": False, "phase": phase, "phases": phases, "error": str(exc)},
         )
         raise
+
+
+def ensure_compose_networks(manifest: Manifest) -> None:
+    if manifest.kind not in {"service", "multi-service"}:
+        return
+
+    required = ["ophelia-edge"]
+    if manifest.networking.internal == "shared":
+        required.append("ophelia-internal")
+
+    for network in required:
+        result = _run(
+            ["docker", "network", "inspect", network],
+            capture_output=True,
+            allow_failure=True,
+        )
+        if result is None:
+            _run_apply_phase(
+                ["docker", "network", "create", network],
+                "network_prepare",
+                capture_output=True,
+            )
 
 
 def sync_caddy_env(manifest: Manifest, app_root: Path, runtime_root: Path) -> bool:
