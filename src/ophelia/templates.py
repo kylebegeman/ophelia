@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import OrderedDict
+from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -460,7 +461,14 @@ def caddy_env_keys(manifest: Manifest) -> List[str]:
 
 
 def _read_template(relative_path: str) -> str:
-    return (TEMPLATES_DIR / relative_path).read_text()
+    resource_path = resources.files("ophelia.resources").joinpath(
+        "templates",
+        *Path(relative_path).parts,
+    )
+    try:
+        return resource_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError):
+        return (TEMPLATES_DIR / relative_path).read_text(encoding="utf-8")
 
 
 def _quote(value: str) -> str:
