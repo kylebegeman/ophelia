@@ -1,0 +1,15 @@
+version: 1
+app: pokedex-dev
+kind: tunnel
+
+routes:
+  - domain: dev.pokedex.begam.in
+    path_prefix: /api
+    strip_prefix: /api
+    upstream: host.docker.internal:3711
+  - domain: dev.pokedex.begam.in
+    upstream: host.docker.internal:3712
+
+verify:
+  - name: landing
+    url: https://dev.pokedex.begam.in/
