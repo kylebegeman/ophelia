@@ -16,3 +16,4 @@
 | [0012](0012-observability-layer.md) | 2026-06-21 | landed | Built-in observability and telemetry layer | cli, api, observability, manifest, schema, lumen, redaction, foundation, docs, changelog |
 | [0013](0013-backup-restore-verification.md) | 2026-06-21 | landed | Backup and restore verification platform | cli, api, backup, restore, verification, readiness, redaction, foundation, docs, changelog |
 | [0014](0014-traffic-controller-hardening.md) | 2026-06-21 | landed | Production traffic controller hardening | cli, traffic, policy, provider-config, redaction, portability, foundation, docs, changelog |
+| [0015](0015-codebase-audit-pass.md) | 2026-06-21 | landed | Codebase audit pass (safe inline fixes) | redaction, provider_config, secrets_audit, app_factory, portability, state_db, conflicts, commands |
