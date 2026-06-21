@@ -186,13 +186,23 @@ def _active_runtime_manifests(runtime_root: Path) -> List[Tuple[Path, Manifest, 
 
 
 def _owner(path: Path, manifest: Manifest, source: str, release_id: object = None) -> Dict[str, object]:
-    return {
+    owner: Dict[str, object] = {
         "app": manifest.app,
         "environment": manifest.environment,
         "manifest_path": str(path),
         "source": source,
+        # ``route_source`` mirrors ``source`` so route-conflict consumers (Lumen)
+        # can tell a declared manifest claim apart from an active runtime claim
+        # without re-deriving it.
+        "route_source": source,
         "release_id": release_id if isinstance(release_id, str) else None,
     }
+    # For an active runtime owner the lock path lives at
+    # ``<runtime_root>/apps/<app>/manifest.lock.json``; expose that app dir so a
+    # consumer can locate the live bundle without parsing Caddy text.
+    if source == "active_runtime":
+        owner["runtime_bundle_path"] = str(path.parent)
+    return owner
 
 
 def _normalize_domain(domain: str) -> str:

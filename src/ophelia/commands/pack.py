@@ -55,6 +55,7 @@ def run_validate(args: Namespace) -> int:
         print(report["summary"])
         _print_issues("Errors", report["errors"])
         _print_issues("Warnings", report["warnings"])
+        _print_score_details(report.get("score_details"))
     return 0 if report["ok"] else 1
 
 
@@ -110,6 +111,17 @@ def _print_error(message: str, emit_json: bool) -> int:
     else:
         print(f"Manifest invalid: {message}")
     return 1
+
+
+def _print_score_details(score_details: object) -> None:
+    if not isinstance(score_details, dict) or not score_details:
+        return
+    print("Score details:")
+    for category in sorted(score_details):
+        detail = score_details[category]
+        if not isinstance(detail, dict):
+            continue
+        print(f"  - {category}: {detail.get('points')}/{detail.get('max_points')} ({detail.get('reason')})")
 
 
 def _print_issues(label: str, issues: object) -> None:

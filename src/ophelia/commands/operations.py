@@ -5,6 +5,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from ..operation_schema import error_envelope
 from ..operations import list_operations, run_operation
 
 
@@ -39,7 +40,13 @@ def run_template(args: Namespace) -> int:
             args.runtime_root,
         )
     except ValueError as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"ok": False, **error_envelope(str(exc), "operation_failed")},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 1
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0

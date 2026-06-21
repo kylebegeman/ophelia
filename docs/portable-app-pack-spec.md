@@ -273,6 +273,89 @@ These commands are read-only. They report redacted env shape, backup freshness,
 route/domain ownership, portability score, generated runbook text, and existing
 operation receipts.
 
+#### Readiness Report Fields
+
+`./cli/ship app readiness <app> --json` returns the report envelope with the
+existing keys (`readiness_level`, `portability_score`, `blockers`, `warnings`,
+`checks`, `env_shape`, `backup_status`, `route_conflicts`, `release`,
+`restore_drill_receipts`, ...) plus these additive fields:
+
+- `blockers[]` / `warnings[]` entries are enriched with an optional
+  `remediation` object when the finding `code` is known. The remediation keeps
+  the original `code`, `message`, and `path`, and adds `summary`, typed
+  `commands` (always Ophelia `ship ...` commands, never raw shell),
+  `docs`, `requires_human_approval`, and an optional `manifest_patch_hint`.
+- `next_actions[]`: a priority-sorted list (blockers before warnings, then
+  aggregation order) of `{code, area, command, summary}` derived from the first
+  command of each finding's remediation. Findings without a remediation are
+  skipped.
+- `score_details`: a per-category roll-up of the portability score keyed by
+  factor category (`runtime`, `data`, `secrets`, `backup`, `restore`). Each
+  entry is `{points, max_points, ok_factors, total_factors, reason}`. The sum of
+  every category's `points` equals `portability_score.score`, and the sum of
+  every `max_points` equals 100.
+- `source_reports`: compact, redaction-safe pointers to the sub-reports the
+  aggregator consumed: `env_shape`, `backup_status`, `route_conflicts`,
+  `secrets_audit` (computed via the shared `secrets_audit` module, names only),
+  and `restore_drill`. Each pointer carries status and counts only; values stay
+  redacted.
+
+The readiness score never hides blockers: when any blocker exists,
+`readiness_level` is `blocked` regardless of how high the score is.
+
+`./cli/ship pack validate <manifest> --json` and `pack explain` also expose a
+manifest-only `score_details` roll-up. Because pack validation cannot see
+runtime env, backup, or restore state, it scores only the manifest-derived
+factors it can assess (pack metadata, explicit data contracts, image digests,
+and whether validation passed); it does not invent the runtime factors.
+
+##### Dragon Writer example (abbreviated)
+
+```json
+{
+  "readiness_level": "blocked",
+  "portability_score": {"score": 65, "level": "blocked", "factors": [/* ... */]},
+  "blockers": [
+    {
+      "code": "restore_drill_missing",
+      "message": "No restore drill receipt is recorded.",
+      "path": "restore-drills",
+      "remediation": {
+        "summary": "Plan a restore drill from the latest export bundle, then run it to record a receipt.",
+        "commands": [
+          "ship app restore-drill plan dragon-writer --environment production --json",
+          "ship app export plan dragon-writer --environment production --json"
+        ],
+        "docs": ["docs/portable-app-pack-spec.md"],
+        "requires_human_approval": true
+      }
+    }
+  ],
+  "next_actions": [
+    {
+      "code": "restore_drill_missing",
+      "area": "blocker",
+      "command": "ship app restore-drill plan dragon-writer --environment production --json",
+      "summary": "Plan a restore drill from the latest export bundle, then run it to record a receipt."
+    }
+  ],
+  "score_details": {
+    "runtime": {"points": 30, "max_points": 30, "reason": "runtime: 3/3 factor(s) ok, 30/30 point(s) earned."},
+    "data": {"points": 20, "max_points": 20, "reason": "data: 1/1 factor(s) ok, 20/20 point(s) earned."},
+    "secrets": {"points": 15, "max_points": 15, "reason": "secrets: 1/1 factor(s) ok, 15/15 point(s) earned."},
+    "backup": {"points": 0, "max_points": 20, "reason": "backup: 0/1 factor(s) ok, 0/20 point(s) earned."},
+    "restore": {"points": 0, "max_points": 15, "reason": "restore: 0/1 factor(s) ok, 0/15 point(s) earned."}
+  },
+  "source_reports": {
+    "env_shape": {"status": "ok", "key_count": 3, "required_missing": 0, "values_redacted": true},
+    "backup_status": {"status": "ok", "freshness": "fresh", "backup_count": 1},
+    "route_conflicts": {"status": "ok", "conflict_count": 0},
+    "secrets_audit": {"status": "ok", "key_count": 3, "missing_required": 0, "values_redacted": true},
+    "restore_drill": {"receipt_count": 0, "status": "missing"}
+  }
+}
+```
+
 ### Export Commands
 
 ```bash

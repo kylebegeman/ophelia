@@ -12,6 +12,9 @@ dependencies = [
   "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+test = ["jsonschema>=4"]
+
 [project.scripts]
 ship = "ophelia.main:main"
 ophelia = "ophelia.main:main"

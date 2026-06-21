@@ -6,6 +6,8 @@ jobs, job events, host inventory, and registries.
 
 Quark can call these read-only commands today:
 
+- `ship self-test --json` (first smoke command; confirms the install is healthy)
+- `ship schema manifest --json` (manifest JSON schema, draft 2020-12)
 - `ship validate <manifest> --json`
 - `ship explain <manifest> --json`
 - `ship diff <manifest> --json`
@@ -78,6 +80,8 @@ API endpoints:
 
 - `GET /health`
 - `GET /actions`
+- `GET /commands`
+- `GET /schema/manifest`
 - `POST /jobs`
 - `GET /jobs/<job_id>`
 - `GET /jobs/<job_id>/events`
@@ -104,3 +108,146 @@ Completion callbacks are disabled by default. When enabled in
 `config/ophelia-actions.json`, Ophelia posts the completed job JSON to
 `completion_callback_url` and signs the payload with `X-Ophelia-Signature:
 sha256=<hmac>` when `OPHELIA_CALLBACK_SECRET` is set.
+
+## Command Catalog Discovery
+
+`ship commands catalog --json` and `GET /commands` expose a single, sorted
+catalog of every agent-facing command. The catalog is derived from the same
+action registry that backs `GET /actions`, plus a small set of CLI-only
+commands (`commands catalog`, `validate`, `render`, `receipts list`,
+`receipts show`), so agents can discover risk and mutation metadata without
+parsing help text.
+
+CLI output is exactly:
+
+```json
+{"schema_version": 1, "kind": "ophelia.command_catalog", "commands": [ ... ]}
+```
+
+`GET /commands` returns `{"commands": [ ... ]}` with the same descriptor list.
+Use `ship commands catalog --human` for an aligned operator table; the default
+output is JSON.
+
+Each `CommandDescriptor` has these fields:
+
+- `command`: the CLI invocation, for example `ship app traffic plan`.
+- `operation`: the stable operation id, matching an action id when applicable
+  (for example `app.traffic.plan`).
+- `summary`: a one-line description.
+- `risk`: coarse risk tier (`low`, `medium`, `high`, `critical`). Read-only
+  commands are `low`; production-capable deploy/traffic mutations are
+  `critical`.
+- `mutates_state`: true for mutating actions.
+- `requires_confirmation`: true when a confirmation token is required.
+- `plan_command` / `apply_command`: the paired plan and apply invocations for
+  dry-run-first mutating flows; null when there is no pair.
+- `json_kind`: the envelope kind the command emits (`ophelia.plan`,
+  `ophelia.receipt`, `ophelia.report`, or `ophelia.command_catalog`).
+- `args_schema`: a JSON-schema-ish input shape. It only describes input shapes
+  and never carries secret values or raw-secret defaults.
+- `output_schema_ref`: a reference to the output envelope version.
+- `artifacts`: artifact kinds the command may produce.
+- `safety_notes`: human-readable safety notes plus policy gates.
+
+## Provider And Secret Validation (Phase 3)
+
+These are read-only validators. They never print secret values and never
+require a confirmation token.
+
+`ship providers validate --config <path> --json` checks a traffic provider
+config file (the same shape consumed by `app traffic plan/apply`). It emits
+`{"schema_version": 1, "kind": "ophelia.provider_config.validation", ...}`.
+It blocks raw inline token keys (a token value embedded in the config) and
+requires `api_token_env` for the Cloudflare DNS provider, so tokens are always
+resolved from a named environment variable rather than stored in the config.
+
+`ship providers explain --config <path> --json` describes the same config in
+structured form. It emits
+`{"schema_version": 1, "kind": "ophelia.provider_config.explanation", ...}`.
+It reports the resolved provider kinds, mutation/reload gates, and the
+`api_token_env` name only, never the token value.
+
+`ship secrets audit <manifest-or-app> --environment <env> --json` reports the
+presence of required secrets/env keys. It emits
+`{"schema_version": 1, "kind": "ophelia.secrets_audit", ...}`. The audit lists
+key names plus `present` booleans only. It never reads, echoes, or stores any
+secret value.
+
+## Receipt Timeline And Dry-Run Diffs (Phase 5)
+
+`ship receipts timeline --json` returns a chronological view of stored receipts
+with optional filters `--app`, `--environment`, `--operation`, `--status`,
+`--since`, and `--until`. It emits
+`{"schema_version": 1, "kind": "ophelia.receipt_timeline", ...}`. It is
+read-only and reads the same receipt store as `receipts list` / `receipts show`.
+
+Dry-run plans for diff-producing operations attach a redacted diff artifact:
+
+```json
+{
+  "kind": "ophelia.artifact.diff",
+  "redacted": true,
+  "path": "receipts/.../diff.json"
+}
+```
+
+Diff artifacts are `redacted: true` and referenced by path only inside plans.
+The plan carries the artifact reference, not inline diff content, so secret or
+bulky payloads never land in the plan envelope.
+
+## Runtime State Read-Model (Phase 6)
+
+`ship state status|rebuild|query receipts --json` exposes a local SQLite
+read-model of runtime state:
+
+- `ship state status --json` emits
+  `{"schema_version": 1, "kind": "ophelia.state_status", ...}`.
+- `ship state rebuild --json` emits
+  `{"schema_version": 1, "kind": "ophelia.state_rebuild", ...}`.
+- `ship state query receipts --json` emits
+  `{"schema_version": 1, "kind": "ophelia.state_query", ...}`.
+
+`state rebuild` writes ONLY the local SQLite index under the runtime root. It is
+local index creation, not a VPS mutation, so it does not require a production
+confirmation token.
+
+Read-only API endpoints back the same read-model:
+
+```text
+GET /state/status
+GET /state/apps
+GET /state/receipts
+GET /state/routes
+GET /state/backups
+```
+
+When the index is absent, these endpoints degrade gracefully: they return
+`available: false` / `needs_rebuild: true` rather than failing. They never
+return `500`.
+
+## Policy Engine (Phase 7)
+
+`ship policy validate|explain|evaluate --json` runs the policy engine:
+
+- `ship policy evaluate --json` emits
+  `{"schema_version": 1, "kind": "ophelia.policy_result", ...}`.
+- `ship policy validate --json` emits
+  `{"schema_version": 1, "kind": "ophelia.policy_validation", ...}`.
+- `ship policy explain --json` emits
+  `{"schema_version": 1, "kind": "ophelia.policy_explanation", ...}`.
+
+Evaluation is fail-closed on unknown required conditions (an unrecognized
+required condition becomes a blocker) and fail-open with warnings on unknown
+advisory keys (an unrecognized advisory key is surfaced as a warning, not a
+blocker).
+
+Policy resolution order:
+
+```text
+1. explicit --policy <path>
+2. <runtime_root>/policy/ophelia-policy.yml
+3. repo config/ophelia-policy.yml
+```
+
+Policy results ride under plan `checks`, so agents see policy blockers and
+warnings in the same `checks` array used for every other plan gate.

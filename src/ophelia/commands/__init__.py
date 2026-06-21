@@ -5,6 +5,7 @@ from .api import register as register_api
 from .backup import register as register_backup
 from .bootstrap_host import register as register_bootstrap_host
 from .caddy import register as register_caddy
+from .catalog import register as register_catalog
 from .deploy import register as register_deploy
 from .diff import register as register_diff
 from .doctor import register as register_doctor
@@ -19,14 +20,19 @@ from .list_apps import register as register_list
 from .notes import register as register_notes
 from .operations import register as register_operations
 from .pack import register as register_pack
+from .policy import register as register_policy
 from .preflight import register as register_preflight
+from .providers import register as register_providers
 from .receipts import register as register_receipts
 from .release import register as register_release
 from .registry import register as register_registry
 from .render import register as register_render
 from .rollback import register as register_rollback
 from .runtime import register as register_runtime
+from .schema import register as register_schema
 from .secrets import register as register_secrets
+from .self_test import register as register_self_test
+from .state import register as register_state
 from .status import register as register_status
 from .validate import register as register_validate
 from .verify import register as register_verify
@@ -38,18 +44,24 @@ def register_commands(subparsers):
     register_app(subparsers)
     register_caddy(subparsers)
     register_actions(subparsers)
+    register_catalog(subparsers)
     register_api(subparsers)
     register_jobs(subparsers)
     register_backup(subparsers)
     register_host(subparsers)
     register_registry(subparsers)
     register_preflight(subparsers)
+    register_providers(subparsers)
     register_secrets(subparsers)
+    register_schema(subparsers)
+    register_self_test(subparsers)
+    register_state(subparsers)
     register_runtime(subparsers)
     register_operations(subparsers)
     register_notes(subparsers)
     register_gc(subparsers)
     register_pack(subparsers)
+    register_policy(subparsers)
     register_env(subparsers)
     register_receipts(subparsers)
     register_validate(subparsers)

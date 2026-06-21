@@ -582,7 +582,9 @@ def list_releases(runtime_root: Path, app: str) -> List[Dict[str, object]]:
         for release_path in sorted(releases_root.glob("*.json")):
             try:
                 payload = json.loads(release_path.read_text())
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(payload, dict):
                 continue
             payload.setdefault("release_id", release_path.stem)
             records.append(payload)
@@ -592,9 +594,9 @@ def list_releases(runtime_root: Path, app: str) -> List[Dict[str, object]]:
         if legacy_path.exists():
             try:
                 payload = json.loads(legacy_path.read_text())
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, OSError):
                 payload = {}
-            if payload:
+            if isinstance(payload, dict) and payload:
                 payload.setdefault("release_id", "legacy-current")
                 records.append(payload)
 

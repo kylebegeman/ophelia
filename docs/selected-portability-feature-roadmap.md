@@ -34,6 +34,11 @@ The operator experience can later live in Lumen Ops, but Ophelia must expose the
 stable commands, JSON contracts, receipts, and safety gates that Lumen and LLM
 agents can rely on.
 
+Quark, Prism, and OpenClaw are not long-term foundations for this roadmap. They
+may exist on current hosts as legacy deployments, but Lumen replaces them. Agents
+should avoid designing new features around Quark, Prism, or OpenClaw except when
+reading legacy inventory or preparing a separately approved decommission plan.
+
 The product target:
 
 ```text
@@ -934,4 +939,5 @@ The following ideas remain useful but are not part of this selected scope:
 - full web UI
 - automatic DNS mutation
 - automatic cleanup of duplicate apps or old containers
+- automatic Quark, Prism, or OpenClaw decommissioning
 - Kubernetes or Nomad support

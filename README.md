@@ -35,6 +35,8 @@ logs, and pulled images.
 - [Portable App Pack Spec](docs/portable-app-pack-spec.md)
 - [Dragon Writer Migration Runbook](docs/dragon-writer-migration-runbook.md)
 - [Selected Portability Feature Roadmap](docs/selected-portability-feature-roadmap.md)
+- [Ophelia Improvement Execution Plan](docs/ophelia-improvement-execution-plan.md)
+- [Ophelia Change Records](docs/changelog/README.md)
 
 ## Repository Layout
 
@@ -79,6 +81,8 @@ python3 -m venv .venv
 .venv/bin/python -m ensurepip --upgrade
 .venv/bin/python -m pip install PyYAML
 
+./cli/ship self-test                 # first smoke command: confirm the install is healthy
+./cli/ship schema manifest --json    # export the manifest JSON schema (draft 2020-12)
 ./cli/ship validate examples/dragonwriter.ophelia.yml
 ./cli/ship render examples/dragonwriter.ophelia.yml --output-dir ./build/dragonwriter
 ./cli/ship deploy examples/dragonwriter.ophelia.yml

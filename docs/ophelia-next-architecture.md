@@ -31,6 +31,13 @@ safety primitives.
 This boundary keeps Ophelia useful now while allowing Lumen Ops to absorb the
 operator experience later.
 
+Quark, Prism, and OpenClaw are legacy platform/runtime components for the current
+OVH deployment. Lumen replaces them as the long-term product and control plane.
+New Ophelia architecture should not preserve Quark, Prism, or OpenClaw as target
+foundations. Treat their `/opt/...` deployments as inventory, migration context,
+or future decommission targets only. Deleting or modifying them remains a
+separate approved cleanup operation.
+
 ## Goals
 
 - Keep app source code in app repositories.

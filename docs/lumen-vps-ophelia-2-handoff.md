@@ -272,6 +272,110 @@ Receipts use:
 
 Use `--json` for machine-readable output.
 
+### Discovery Surfaces
+
+The first smoke command on any host is `ship self-test`: it confirms the
+install is healthy (CLI entrypoint imports, packaged runtime templates resolve
+via `importlib.resources`, PyYAML is importable, the runtime root resolves)
+without touching docker, the network, or any VPS. It emits
+`{"schema_version": 1, "kind": "ophelia.self_test", "status": "ok"|"warn"|"blocked", ...}`
+and exits non-zero only when `status` is `blocked`. Optional `--check-docker`,
+`--check-git`, and `--check-api` flags add non-blocking probes.
+
+```bash
+./cli/ship self-test --json        # first smoke command: confirm the install is healthy
+```
+
+Lumen can discover the full command surface without parsing help text:
+
+```bash
+./cli/ship actions --json          # typed action registry
+./cli/ship commands catalog --json # full command catalog with risk + mutation metadata
+./cli/ship schema manifest --json  # manifest JSON schema (draft 2020-12)
+```
+
+Over the API:
+
+```text
+GET /actions          # action registry
+GET /commands         # command catalog ({"commands": [...]})
+GET /schema/manifest  # manifest JSON schema (draft 2020-12)
+```
+
+`ship commands catalog --json` emits
+`{"schema_version": 1, "kind": "ophelia.command_catalog", "commands": [...]}`.
+Each descriptor reports `command`, `operation`, `risk`, `mutates_state`,
+`requires_confirmation`, `plan_command`, `apply_command`, `json_kind`,
+`args_schema`, `output_schema_ref`, `artifacts`, and `safety_notes`. The
+catalog is derived from the same action registry that backs `GET /actions`,
+so plan/apply pairs and confirmation requirements stay in sync.
+
+#### Lumen Consumption Pattern
+
+For every discovery and read surface below, prefer the HTTP API when
+`ship api serve` is up, and fall back to `ship ... --json` otherwise. Use the
+receipt timeline and the state read-model for history rather than re-running
+plans. Always show policy blockers to the operator before exposing any
+approval/confirmation control.
+
+Additional read-only surfaces shipped after the first smoke command:
+
+```bash
+# Phase 3: provider/secret validation (read-only, never prints secret values)
+./cli/ship providers validate --config ./traffic-providers.json --json
+./cli/ship providers explain --config ./traffic-providers.json --json
+./cli/ship secrets audit dragon-writer --environment production --json
+
+# Phase 5: receipt history and dry-run diffs
+./cli/ship receipts timeline --app dragon-writer --environment production --json
+
+# Phase 6: runtime state read-model (local SQLite index)
+./cli/ship state status --json
+./cli/ship state query receipts --json
+
+# Phase 7: policy engine (fail-closed on unknown required conditions)
+./cli/ship policy validate --json
+./cli/ship policy explain --json
+./cli/ship policy evaluate --json
+```
+
+Over the API (read-only, degrade to `available: false` / `needs_rebuild: true`
+when the state index is absent, never `500`):
+
+```text
+GET /state/status
+GET /state/apps
+GET /state/receipts
+GET /state/routes
+GET /state/backups
+```
+
+`providers validate` emits `ophelia.provider_config.validation` and
+`providers explain` emits `ophelia.provider_config.explanation`. They block raw
+inline token keys and require `api_token_env` for Cloudflare DNS, so Lumen never
+handles a literal token in config. `secrets audit` emits `ophelia.secrets_audit`
+with key names plus `present` booleans only, never values.
+
+`receipts timeline` emits `ophelia.receipt_timeline` and accepts `--app`,
+`--environment`, `--operation`, `--status`, `--since`, and `--until`. Dry-run
+plans attach a `kind: ophelia.artifact.diff`, `redacted: true` artifact
+referenced by path only, so Lumen reads diffs from the artifact path rather than
+from inline plan content.
+
+`state status|rebuild|query receipts --json` emit `ophelia.state_status`,
+`ophelia.state_rebuild`, and `ophelia.state_query`. `state rebuild` writes ONLY
+the local SQLite index under the runtime root. It is local index creation, not a
+VPS mutation, and needs no production confirmation token.
+
+`policy evaluate --json` emits `ophelia.policy_result`; `policy validate` and
+`policy explain` emit `ophelia.policy_validation` and
+`ophelia.policy_explanation`. Evaluation is fail-closed on unknown required
+conditions and fail-open with warnings on unknown advisory keys. Policy
+resolution order is explicit `--policy <path>`, then
+`<runtime_root>/policy/ophelia-policy.yml`, then repo
+`config/ophelia-policy.yml`. Policy results ride under plan `checks`, so Lumen
+should surface those policy blockers before showing approval controls.
+
 ### Pack
 
 Validate a pack:
@@ -697,6 +801,7 @@ Endpoints:
 ```text
 GET  /health
 GET  /actions
+GET  /commands
 POST /jobs
 GET  /jobs/<job_id>
 GET  /jobs/<job_id>/events

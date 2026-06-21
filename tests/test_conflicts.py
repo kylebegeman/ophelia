@@ -56,6 +56,38 @@ class ConflictTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual([], report["conflicts"])
 
+    def test_two_active_apps_same_host_path_is_blocker_with_route_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_dir = root / "manifests"
+            manifest_dir.mkdir()
+
+            for app in ("alpha", "beta"):
+                source = root / f"{app}.ophelia.yml"
+                # Distinct apps, distinct host ports, but the SAME host + route.
+                source.write_text(_manifest(app, "shared.example.com", 3201 if app == "alpha" else 3202))
+                manifest = load_manifest(source)
+                app_root = deploy_bundle(manifest, source, runtime_root)
+                (app_root / "active_release.json").write_text((app_root / "release.json").read_text())
+
+            # Scan an empty manifest dir so the two apps are only ACTIVE owners.
+            report = scan_conflicts(manifest_dir, runtime_root=runtime_root)
+
+        self.assertFalse(report["ok"])
+        route_conflicts = [item for item in report["conflicts"] if item["type"] in {"duplicate_route", "duplicate_domain"}]
+        self.assertTrue(route_conflicts, "expected a route/domain conflict for two active apps on the same host+path")
+        conflict = route_conflicts[0]
+        owners = conflict["owners"]
+        self.assertGreaterEqual(len(owners), 2)
+        for owner in owners:
+            self.assertEqual(owner["route_source"], "active_runtime")
+            self.assertIn("runtime_bundle_path", owner)
+        # The blocker list (Lumen reads this directly) must surface it.
+        self.assertTrue(report["blockers"], "active route collision must populate blockers")
+        blocker_codes = {item.get("code") for item in report["blockers"]}
+        self.assertTrue(blocker_codes & {"duplicate_route", "duplicate_domain"})
+
     def test_current_manifests_have_verification_checks(self) -> None:
         manifest_dir = Path(__file__).resolve().parents[1] / "manifests"
         report = scan_conflicts(manifest_dir)
