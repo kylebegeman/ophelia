@@ -237,6 +237,11 @@ def load_manifest(path: Path) -> Manifest:
         raw = yaml.safe_load(path.read_text())
     except FileNotFoundError as exc:
         raise ManifestError(f"Manifest not found: {path}") from exc
+    except yaml.YAMLError as exc:
+        # Surface malformed YAML as a ManifestError (path only, no file content)
+        # so per-file isolation in callers like manifest_registry works and a
+        # single bad file cannot blank an entire scan.
+        raise ManifestError(f"Manifest is not valid YAML: {path}") from exc
 
     if not isinstance(raw, dict):
         raise ManifestError("Manifest root must be a mapping.")
