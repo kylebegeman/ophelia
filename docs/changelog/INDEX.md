@@ -14,3 +14,5 @@
 | [0010](0010-lumen-ops-adapter.md) | 2026-06-21 | landed | Lumen ops adapter | cli, api, lumen, redaction, foundation, docs, changelog |
 | [0011](0011-app-factory-and-release-model.md) | 2026-06-21 | landed | App factory and default GitHub release/deploy model | cli, app-factory, scaffolding, github, release, foundation, docs, changelog |
 | [0012](0012-observability-layer.md) | 2026-06-21 | landed | Built-in observability and telemetry layer | cli, api, observability, manifest, schema, lumen, redaction, foundation, docs, changelog |
+| [0013](0013-backup-restore-verification.md) | 2026-06-21 | landed | Backup and restore verification platform | cli, api, backup, restore, verification, readiness, redaction, foundation, docs, changelog |
+| [0014](0014-traffic-controller-hardening.md) | 2026-06-21 | landed | Production traffic controller hardening | cli, traffic, policy, provider-config, redaction, portability, foundation, docs, changelog |

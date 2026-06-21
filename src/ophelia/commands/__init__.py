@@ -29,6 +29,7 @@ from .receipts import register as register_receipts
 from .release import register as register_release
 from .registry import register as register_registry
 from .render import register as register_render
+from .restore import register as register_restore_drills
 from .rollback import register as register_rollback
 from .runtime import register as register_runtime
 from .schema import register as register_schema
@@ -36,6 +37,7 @@ from .secrets import register as register_secrets
 from .self_test import register as register_self_test
 from .state import register as register_state
 from .status import register as register_status
+from .traffic import register as register_traffic
 from .validate import register as register_validate
 from .verify import register as register_verify
 from .workflows import register as register_workflows
@@ -76,10 +78,12 @@ def register_commands(subparsers):
     register_diff(subparsers)
     register_drift(subparsers)
     register_status(subparsers)
+    register_traffic(subparsers)
     register_doctor(subparsers)
     register_inspect(subparsers)
     register_list(subparsers)
     register_lumen(subparsers)
     register_release(subparsers)
+    register_restore_drills(subparsers)
     register_rollback(subparsers)
     register_workflows(subparsers)

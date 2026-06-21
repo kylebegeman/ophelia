@@ -260,9 +260,14 @@ def _validate_file_caddy(group: str, provider_type: str, index: int, section: Di
             issue("caddy_file_timeout_invalid", "`caddy.file.timeout` must be a positive integer.", f"providers[{index}].timeout")
         )
     reload_requested = bool(section.get("reload"))
-    allow_mutation = bool(section.get("allow_mutation"))
-    mutation_requested = reload_requested or allow_mutation
-    if mutation_requested and isinstance(sites_dir, str) and sites_dir.strip():
+    validate_requested = bool(section.get("validate")) or reload_requested
+    # The sites_dir-must-be-under-runtime-root constraint protects `caddy validate`
+    # / `reload`, which operate against `<runtime_root>/caddy/sites.d`. A plain
+    # local file write (allow_mutation without validate/reload) does not run those
+    # commands, so it is not constrained here. This mirrors the apply path in
+    # ``portability._plan_file_caddy_provider`` so the validator and the executor
+    # cannot disagree about when the constraint applies.
+    if validate_requested and isinstance(sites_dir, str) and sites_dir.strip():
         configured_root = section.get("runtime_root")
         root = Path(str(configured_root)).expanduser() if isinstance(configured_root, str) and configured_root.strip() else runtime_root
         expected = (root / "caddy" / "sites.d").expanduser().resolve(strict=False)
