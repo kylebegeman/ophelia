@@ -31,8 +31,8 @@ from .manifest import (
 )
 from .operation_schema import artifact, issue as schema_issue, plan_envelope, receipt_envelope, report_envelope
 from .operator_reports import host_inventory
-from .policy import policy_check_entry
-from .provider_config import validate_ttl
+from .policy import evaluate_policy, load_policy, policy_check_entry
+from .provider_config import validate_provider_config, validate_ttl
 from .remediation import remediation_for
 from .redaction import deep_redact, redact_mapping, redacted_cloudflare_record, redacted_compose_text
 from .runtime import active_release, active_release_id, image_references, latest_release_id
@@ -1123,6 +1123,12 @@ def app_readiness_report(
     route_report = scan_conflicts(resolution.manifest_path.parent, runtime_root=runtime_root)
     release = active_release(runtime_root, manifest.app)
     restore_drills = _restore_drill_receipts(runtime_root, manifest.app)
+    # A successful backup-verification receipt (Phase 12) is a stronger restore
+    # drill: it satisfies the restore_drill factor below. This is purely
+    # additive; apps without any verification receipt keep their exact prior
+    # restore_drills list and score.
+    latest_verification = _latest_successful_backup_verification(runtime_root, manifest.app, resolved_environment)
+    restore_drill_satisfied = bool(restore_drills) or latest_verification is not None
     blockers: List[Dict[str, str]] = []
     warnings: List[Dict[str, str]] = []
     blockers.extend(_as_issues(validation["errors"]))
@@ -1136,7 +1142,7 @@ def app_readiness_report(
     warnings.extend(_as_issues(route_report.get("warnings", [])))
     if not release:
         blockers.append(schema_issue("release_missing", "No active or latest release metadata is present.", "release.json"))
-    if manifest.data.backups and manifest.data.backups.restore_drill_required and not restore_drills:
+    if manifest.data.backups and manifest.data.backups.restore_drill_required and not restore_drill_satisfied:
         blockers.append(schema_issue("restore_drill_missing", "No restore drill receipt is recorded.", "restore-drills"))
 
     checks = [
@@ -1145,9 +1151,23 @@ def app_readiness_report(
         {"name": "backup_status", "ok": not backup_report["blockers"], "message": backup_report["freshness"]["status"]},
         {"name": "route_conflicts", "ok": not route_conflict_issues, "message": route_report["summary"]},
         {"name": "release_metadata", "ok": bool(release), "message": str(release.get("release_id") if release else "missing")},
-        {"name": "restore_drill", "ok": bool(restore_drills), "message": f"{len(restore_drills)} receipt(s)"},
+        {
+            "name": "restore_drill",
+            "ok": restore_drill_satisfied,
+            "message": f"{len(restore_drills)} drill receipt(s)"
+            + (f"; backup verification {latest_verification.get('verify_id') or latest_verification.get('receipt_id')}" if latest_verification else ""),
+        },
     ]
-    score = portability_score(manifest, blockers, warnings, checks, env_report, backup_report, restore_drills)
+    score = portability_score(
+        manifest,
+        blockers,
+        warnings,
+        checks,
+        env_report,
+        backup_report,
+        restore_drills,
+        restore_drill_satisfied=restore_drill_satisfied,
+    )
     # Score must never hide blockers: readiness stays blocked whenever any
     # blocker exists, regardless of how high the score is.
     level = "blocked" if blockers else "warning" if warnings else "ready"
@@ -1167,6 +1187,7 @@ def app_readiness_report(
         resolved_environment,
         runtime_root,
         resolution.manifest_path,
+        latest_verification=latest_verification,
     )
 
     return report_envelope(
@@ -1292,6 +1313,7 @@ def _readiness_source_reports(
     environment: str,
     runtime_root: Path,
     manifest_path: Optional[Path],
+    latest_verification: Optional[Dict[str, object]] = None,
 ) -> Dict[str, Dict[str, object]]:
     """Compact, redaction-safe pointers to the sub-reports readiness consumed.
 
@@ -1343,7 +1365,16 @@ def _readiness_source_reports(
         "secrets_audit": secrets_pointer,
         "restore_drill": {
             "receipt_count": len(restore_drills),
-            "status": "ok" if restore_drills else "missing",
+            "status": "ok" if (restore_drills or latest_verification) else "missing",
+        },
+        "backup_verification": {
+            "status": (latest_verification.get("status") if latest_verification else "missing"),
+            "verify_id": (
+                latest_verification.get("verify_id") or latest_verification.get("receipt_id")
+                if latest_verification
+                else None
+            ),
+            "backup_id": (latest_verification.get("backup_id") if latest_verification else None),
         },
     }
 
@@ -1356,7 +1387,14 @@ def portability_score(
     env_report: Dict[str, object],
     backup_report: Dict[str, object],
     restore_drills: List[Dict[str, object]],
+    restore_drill_satisfied: Optional[bool] = None,
 ) -> Dict[str, object]:
+    # ``restore_drill_satisfied`` lets a successful backup-verification receipt
+    # (Phase 12) satisfy the restore_drill factor. When omitted, behavior is
+    # exactly the legacy ``bool(restore_drills)`` so existing callers/scores are
+    # unchanged.
+    if restore_drill_satisfied is None:
+        restore_drill_satisfied = bool(restore_drills)
     score = 100
     factors: List[Dict[str, object]] = []
 
@@ -1371,7 +1409,7 @@ def portability_score(
     factor("explicit_data_contracts", "data", not _inferred_data_contracts(manifest), "Data contracts are explicit.")
     factor("env_ready", "secrets", not any(item["status"] in {"missing", "placeholder"} for item in env_report["entries"] if item["required"]), "Required env keys are present.")
     factor("backup_fresh", "backup", not backup_report["blockers"], "Backup status has no blockers.")
-    factor("restore_drill", "restore", bool(restore_drills) or not (manifest.data.backups and manifest.data.backups.restore_drill_required), "Restore drill receipt is recorded when required.")
+    factor("restore_drill", "restore", restore_drill_satisfied or not (manifest.data.backups and manifest.data.backups.restore_drill_required), "Restore drill or backup-verification receipt is recorded when required.")
     factor("image_digest", "runtime", all("@sha256:" in image for image in image_references(manifest).values()), "Images are digest-pinned.")
     factor("checks_pass", "runtime", all(bool(check.get("ok")) for check in checks if check.get("name") != "restore_drill"), "Readiness checks passed.")
     score = max(0, min(100, score))
@@ -1827,6 +1865,16 @@ def traffic_plan(
     blockers.extend(_as_issues(provider_execution.get("blockers", [])))
     warnings.extend(_as_issues(provider_execution.get("warnings", [])))
     _apply_traffic_provider_capabilities(traffic_changes, provider_execution)
+    # Phase 13: run the supplied provider config through the single canonical
+    # validator before an apply token can be produced. A blocked provider config
+    # surfaces its blockers here and (later) withholds the confirmation token.
+    provider_config_validation = _traffic_provider_config_validation(
+        provider_config,
+        execute_provider_mutation,
+        blockers,
+        warnings,
+    )
+    provider_config_digest = _traffic_provider_config_digest(provider_config)
     target_health = _traffic_target_health_plan(
         target_health_url,
         run_target_health,
@@ -1852,6 +1900,12 @@ def traffic_plan(
                 "Traffic apply writes a checkpoint receipt unless provider execution is explicitly planned with --execute-provider-mutation.",
             )
         )
+    # Phase 13: the canonical token input includes EVERY behavior-changing field
+    # so a stale or mismatched plan can never confirm a different apply. The
+    # provider config contributes only a digest (a hash of the validated config),
+    # never the raw secrets. `traffic_apply` recomputes this identical input by
+    # re-running `traffic_plan`, so a plan->apply round trip with the returned
+    # token still validates.
     token = _token(
         "app.traffic.apply",
         {
@@ -1864,6 +1918,7 @@ def traffic_plan(
             "caddy_provider": caddy_provider,
             "ttl": ttl,
             "provider_config": str(provider_config.expanduser()) if provider_config is not None else None,
+            "provider_config_digest": provider_config_digest,
             "execute_provider_mutation": execute_provider_mutation,
             "target_health_url": target_health_url,
             "run_target_health": run_target_health,
@@ -1907,14 +1962,15 @@ def traffic_plan(
     )
     exact_command = _shell_command(exact_parts)
     provider_changes = _traffic_provider_changes(traffic_changes, provider_execution, source_host, target_host)
-    # Additive policy evaluation under `checks` only. Context is built from the
-    # plan's own facts; the policy result never feeds top-level blockers/status.
-    target_health_present = bool(target_health_url) or bool(
-        target_health.get("checks") if isinstance(target_health.get("checks"), list) else []
-    )
+    # Phase 13: the policy context reflects whether a target health check and a
+    # rollback path are actually present. A configured-and-passing health check
+    # (or a configured URL when not gated) counts as a target health check; a
+    # configured URL that was executed and FAILED does not.
+    target_health_present = _traffic_target_health_present(target_health)
+    rollback_available = True
     policy_context = {
         "target_health_check": target_health_present,
-        "rollback_available": True,
+        "rollback_available": rollback_available,
         "confirmation_required": True,
         "readiness_clean": not blockers,
     }
@@ -1925,6 +1981,32 @@ def traffic_plan(
         policy_context,
         runtime_root=runtime_root,
     )
+    # Phase 13: for a PRODUCTION apply, the policy result is a real gate. A policy
+    # blocker (e.g. missing target health check) is surfaced as a plan blocker and
+    # withholds the apply token. For non-production environments the policy result
+    # stays additive (under `checks`) and never blocks, preserving prior behavior.
+    policy_result = policy_check.get("result") if isinstance(policy_check, dict) else None
+    if (
+        resolved_environment == "production"
+        and isinstance(policy_result, dict)
+        and policy_result.get("status") == "blocked"
+    ):
+        for finding in _as_issues(policy_result.get("blockers", [])):
+            blockers.append(
+                schema_issue(
+                    "traffic_policy_blocked",
+                    str(finding.get("message") or "Production traffic policy blocked this apply."),
+                    "policy",
+                )
+            )
+    # Phase 13: a blocked provider config must withhold the apply token. The
+    # config validation already appended its blockers above; recompute `blockers`
+    # membership here for clarity.
+    provider_config_blocked = bool(
+        isinstance(provider_config_validation, dict)
+        and provider_config_validation.get("status") == "blocked"
+    )
+    confirmation_token = None if blockers else token
     return plan_envelope(
         "app.traffic.plan",
         app,
@@ -1940,7 +2022,7 @@ def traffic_plan(
         artifacts=provider_execution.get("artifacts", []) if isinstance(provider_execution.get("artifacts"), list) else [],
         changes=provider_changes,
         confirmation_required=True,
-        confirmation_token=token,
+        confirmation_token=confirmation_token,
         exact_apply_input={"command": exact_command},
         risk="critical",
         source_host=source_host,
@@ -1950,8 +2032,12 @@ def traffic_plan(
         caddy_provider=caddy_provider,
         ttl=ttl,
         provider_config=str(provider_config.expanduser()) if provider_config is not None else None,
+        provider_config_digest=provider_config_digest,
+        provider_config_validation=provider_config_validation,
+        provider_config_blocked=provider_config_blocked,
         provider_execution=provider_execution,
         target_health=target_health,
+        target_health_present=target_health_present,
         readiness=readiness,
         traffic_changes=traffic_changes,
         preflight_gates=[
@@ -2125,6 +2211,7 @@ def traffic_rollback_plan(
     receipt_id: str,
     environment: Optional[str] = None,
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    approve_unsafe_delete: bool = False,
 ) -> Dict[str, object]:
     receipt_payload, receipt_path, receipt_blockers = _load_traffic_receipt(receipt_id, runtime_root, app)
     resolved_environment = str(environment or receipt_payload.get("environment") or "unknown")
@@ -2138,18 +2225,25 @@ def traffic_rollback_plan(
         if not receipt_payload.get("provider_mutation_performed"):
             blockers.append(schema_issue("traffic_receipt_no_provider_mutation", "Receipt did not perform provider mutation.", "receipt_id"))
 
-    rollback_changes = _traffic_rollback_changes(receipt_payload, blockers)
+    # Phase 13: rollback reads the prior provider state captured by the forward
+    # apply receipt. A rollback that would DELETE a record/file the forward apply
+    # CREATED (no prior state) is unsafe; it is refused with `rollback_unsafe_delete`
+    # unless `approve_unsafe_delete` is explicitly set.
+    rollback_changes = _traffic_rollback_changes(receipt_payload, blockers, approve_unsafe_delete)
     token = _token(
         "app.traffic.rollback.apply",
         {
             "app": app,
             "environment": resolved_environment,
             "receipt_id": receipt_id,
+            "approve_unsafe_delete": approve_unsafe_delete,
         },
     )
     exact_parts = ["ship", "app", "traffic", "rollback", "apply", app, "--receipt", receipt_id]
     if resolved_environment in {"dev", "staging", "production"}:
         exact_parts.extend(["--environment", resolved_environment])
+    if approve_unsafe_delete:
+        exact_parts.append("--approve-unsafe-delete")
     exact_parts.extend(["--confirm", token])
     exact_command = _shell_command(exact_parts)
     return plan_envelope(
@@ -2165,12 +2259,13 @@ def traffic_rollback_plan(
         ],
         artifacts=[artifact(str(receipt_path), "traffic-apply-receipt", present=True)] if receipt_path is not None else [],
         confirmation_required=True,
-        confirmation_token=token,
+        confirmation_token=None if blockers else token,
         exact_apply_input={"command": exact_command},
         risk="critical",
         receipt_id=receipt_id,
         receipt_path=str(receipt_path) if receipt_path is not None else None,
         rollback_changes=rollback_changes,
+        approve_unsafe_delete=approve_unsafe_delete,
         apply_supported=True,
         can_apply=not blockers,
     )
@@ -2182,9 +2277,10 @@ def traffic_rollback_apply(
     environment: Optional[str] = None,
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     confirm: Optional[str] = None,
+    approve_unsafe_delete: bool = False,
 ) -> Dict[str, object]:
     started_at = _utc_now()
-    plan = traffic_rollback_plan(app, receipt_id, environment, runtime_root)
+    plan = traffic_rollback_plan(app, receipt_id, environment, runtime_root, approve_unsafe_delete)
     blockers = _as_issues(plan.get("blockers", []))
     warnings = _as_issues(plan.get("warnings", []))
     expected = plan.get("confirmation_token")
@@ -2253,6 +2349,154 @@ def traffic_rollback_apply(
     return receipt
 
 
+def traffic_status(
+    app: str,
+    environment: Optional[str] = None,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifest_path: Optional[Path] = None,
+) -> Dict[str, object]:
+    """Read-only summary of an app's traffic state from receipts and files.
+
+    Phase 13: combines the latest traffic apply receipt, the latest traffic
+    rollback receipt, the route ownership inferred from the manifest/conflict
+    scan, the target health status captured on the latest apply receipt (no live
+    probe), and any active blockers carried by those receipts. Works WITHOUT any
+    provider credentials: it only reads receipts and local files, never the
+    network. All values pass through redaction so a credential can never leak.
+    """
+    runtime_root = Path(runtime_root)
+    records = _receipt_records(runtime_root, app=app, environment=environment)
+    apply_record = _latest_record_for(records, "app.traffic.apply")
+    rollback_record = _latest_record_for(records, "app.traffic.rollback.apply")
+    apply_receipt = _read_json(Path(str(apply_record["path"]))) if apply_record else {}
+    rollback_receipt = _read_json(Path(str(rollback_record["path"]))) if rollback_record else {}
+
+    resolved_environment = str(
+        environment
+        or apply_receipt.get("environment")
+        or rollback_receipt.get("environment")
+        or "unknown"
+    )
+
+    # Route ownership from the manifest / conflict scan (read-only, no network).
+    route_ownership: List[Dict[str, object]] = []
+    manifest_dir = manifest_path.expanduser().parent if manifest_path is not None else REPO_ROOT / "manifests"
+    try:
+        resolution = resolve_app_manifest(app, environment, manifest_path=manifest_path)
+        manifest = resolution.manifest
+        if manifest is not None:
+            for route in manifest.routes:
+                route_ownership.append(
+                    {
+                        "domain": route.domain,
+                        "path": route.path,
+                        "path_prefix": route.path_prefix,
+                        "app": manifest.app,
+                    }
+                )
+    except Exception:  # best-effort: a missing/invalid manifest must not break status
+        manifest = None
+    conflicts: Dict[str, object] = {}
+    try:
+        conflicts = scan_conflicts(manifest_dir, runtime_root=runtime_root)
+    except Exception:
+        conflicts = {}
+
+    # Target health status as captured on the latest apply receipt (no live probe).
+    target_health = apply_receipt.get("target_health") if isinstance(apply_receipt.get("target_health"), dict) else None
+
+    # Current provider plan, if the latest apply receipt embedded one.
+    provider_mutations = apply_receipt.get("provider_mutations") if isinstance(apply_receipt.get("provider_mutations"), list) else []
+    provider_summary: List[Dict[str, object]] = []
+    for mutation in provider_mutations:
+        if isinstance(mutation, dict):
+            provider_summary.append(
+                {
+                    "provider": mutation.get("provider"),
+                    "status": mutation.get("status"),
+                    "file_written": bool(mutation.get("file_written")),
+                    "reload_performed": bool(mutation.get("reload_performed")),
+                }
+            )
+
+    blockers: List[Dict[str, str]] = []
+    blockers.extend(_as_issues(apply_receipt.get("blockers", [])))
+    blockers.extend(_as_issues(rollback_receipt.get("blockers", [])))
+
+    latest_apply = (
+        {
+            "receipt_id": apply_record["receipt_id"],
+            "status": apply_receipt.get("status") or apply_record.get("status"),
+            "completed_at": apply_receipt.get("completed_at") or apply_record.get("completed_at"),
+            "source_host": apply_receipt.get("source_host"),
+            "target_host": apply_receipt.get("target_host"),
+            "target_origin": apply_receipt.get("target_origin"),
+            "dns_provider": apply_receipt.get("dns_provider"),
+            "caddy_provider": apply_receipt.get("caddy_provider"),
+            "provider_mutation_performed": bool(apply_receipt.get("provider_mutation_performed")),
+            "traffic_path": apply_receipt.get("traffic_path"),
+        }
+        if apply_record
+        else None
+    )
+    latest_rollback = (
+        {
+            "receipt_id": rollback_record["receipt_id"],
+            "status": rollback_receipt.get("status") or rollback_record.get("status"),
+            "completed_at": rollback_receipt.get("completed_at") or rollback_record.get("completed_at"),
+            "provider_rollback_performed": bool(rollback_receipt.get("provider_rollback_performed")),
+            "traffic_rollback_path": rollback_receipt.get("traffic_rollback_path"),
+        }
+        if rollback_record
+        else None
+    )
+
+    status = "blocked" if blockers else "ok"
+    summary = (
+        f"Traffic status for {app}"
+        + (f" ({resolved_environment})" if resolved_environment != "unknown" else "")
+        + ": "
+        + (
+            f"latest apply {latest_apply['status']}"
+            if latest_apply
+            else "no traffic apply receipts"
+        )
+        + (
+            f", latest rollback {latest_rollback['status']}"
+            if latest_rollback
+            else ""
+        )
+        + f", {len(blockers)} active blocker(s)."
+    )
+
+    payload: Dict[str, object] = {
+        "schema_version": 1,
+        "kind": "ophelia.traffic_status",
+        "status": status,
+        "app": app,
+        "environment": resolved_environment,
+        "summary": summary,
+        "latest_apply": latest_apply,
+        "latest_rollback": latest_rollback,
+        "provider_plan": provider_summary,
+        "route_ownership": route_ownership,
+        "route_conflicts": conflicts.get("conflicts") if isinstance(conflicts.get("conflicts"), list) else [],
+        "target_health": target_health,
+        "blockers": blockers,
+        "credentials_required": False,
+        "live_probe_performed": False,
+        "inputs_redacted": True,
+        "secrets_redacted": True,
+    }
+    return redact_mapping(payload)
+
+
+def _latest_record_for(records: List[Dict[str, object]], operation: str) -> Optional[Dict[str, object]]:
+    """Most recent receipt record for ``operation`` (records are time-sorted)."""
+    matching = [record for record in records if record.get("operation") == operation]
+    return matching[-1] if matching else None
+
+
 def isolation_plan(
     app: str,
     environment: Optional[str] = None,
@@ -2299,6 +2543,80 @@ def isolation_plan(
         manifest_networking=manifest.to_lock_dict().get("networking", {}) if manifest else {},
         apply_supported=False,
     )
+
+
+def _traffic_provider_config_validation(
+    provider_config: Optional[Path],
+    execute_provider_mutation: bool,
+    blockers: List[Dict[str, str]],
+    warnings: List[Dict[str, str]],
+) -> Optional[Dict[str, object]]:
+    """Run a supplied provider config through the single canonical validator.
+
+    Phase 13 gate: when a provider config is supplied for mutation, it must pass
+    :func:`provider_config.validate_provider_config` before an apply token can be
+    produced. Validation blockers are appended to ``blockers`` (which withholds
+    the token in the caller). Manual / no-mutation plans that omit a provider
+    config are unaffected. The returned validation payload never carries a secret
+    value (it is already redacted by the validator).
+    """
+    if provider_config is None:
+        return None
+    config_path = provider_config.expanduser()
+    if not config_path.exists():
+        # Missing-config handling already happens in the provider execution plan;
+        # do not double-block here. Validation is simply unavailable.
+        return None
+    validation = validate_provider_config(config_path)
+    status = validation.get("status") if isinstance(validation, dict) else None
+    if status == "blocked":
+        target_list = blockers if execute_provider_mutation else warnings
+        for finding in _as_issues(validation.get("blockers", []) if isinstance(validation, dict) else []):
+            target_list.append(
+                schema_issue(
+                    "provider_config_validation_blocked",
+                    str(finding.get("message") or "Provider config validation failed."),
+                    str(finding.get("field") or "provider_config"),
+                )
+            )
+    return validation
+
+
+def _traffic_provider_config_digest(provider_config: Optional[Path]) -> Optional[str]:
+    """Digest the provider config contents for the token input, never the secret.
+
+    Returns a sha256 hex digest (truncated) of the config file bytes so the
+    confirmation token is bound to the exact provider config that was planned. A
+    secret leaks only if it is a literal in the config, which the validator
+    blocks; the digest itself is one-way and never reversible to a token value.
+    Returns ``None`` when no config is supplied or the file is unreadable so the
+    token input stays stable across plan and apply.
+    """
+    if provider_config is None:
+        return None
+    config_path = provider_config.expanduser()
+    try:
+        raw = config_path.read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(raw).hexdigest()[:32]
+
+
+def _traffic_target_health_present(target_health: Dict[str, object]) -> bool:
+    """Whether the plan carries a usable target health check for policy context.
+
+    A health URL that was configured counts as present unless it was executed and
+    failed (``ok`` is explicitly ``False``). This keeps the production health
+    policy gate honest: a configured-but-failing probe must not satisfy the gate.
+    """
+    if not isinstance(target_health, dict):
+        return False
+    if not target_health.get("configured"):
+        return False
+    ok = target_health.get("ok")
+    if ok is False:
+        return False
+    return True
 
 
 def _target_origin_issue(target_origin: str) -> Optional[Dict[str, str]]:
@@ -3260,7 +3578,11 @@ def _load_traffic_receipt(receipt_id: str, runtime_root: Path, app: str) -> Tupl
     return {}, None, [f"Traffic receipt not found: {receipt_id}"]
 
 
-def _traffic_rollback_changes(receipt_payload: Dict[str, object], blockers: List[Dict[str, str]]) -> List[Dict[str, object]]:
+def _traffic_rollback_changes(
+    receipt_payload: Dict[str, object],
+    blockers: List[Dict[str, str]],
+    approve_unsafe_delete: bool = False,
+) -> List[Dict[str, object]]:
     mutations = receipt_payload.get("provider_mutations")
     if not isinstance(mutations, list):
         return []
@@ -3270,17 +3592,40 @@ def _traffic_rollback_changes(receipt_payload: Dict[str, object], blockers: List
             continue
         provider = mutation.get("provider")
         if provider == "dns.file":
-            rollback_changes.append(_dns_file_rollback_change(mutation, blockers))
+            rollback_changes.append(_dns_file_rollback_change(mutation, blockers, approve_unsafe_delete))
         elif provider == "dns.cloudflare":
-            rollback_changes.append(_cloudflare_dns_rollback_change(mutation, blockers))
+            rollback_changes.append(_cloudflare_dns_rollback_change(mutation, blockers, approve_unsafe_delete))
         elif provider == "caddy.file":
-            rollback_changes.append(_caddy_file_rollback_change(mutation, blockers))
+            rollback_changes.append(_caddy_file_rollback_change(mutation, blockers, approve_unsafe_delete))
         elif isinstance(provider, str):
             blockers.append(schema_issue("traffic_rollback_provider_unsupported", f"Unsupported traffic rollback provider: {provider}"))
     return [item for item in rollback_changes if item]
 
 
-def _dns_file_rollback_change(mutation: Dict[str, object], blockers: List[Dict[str, str]]) -> Dict[str, object]:
+def _rollback_unsafe_delete_issue(target: str) -> Dict[str, str]:
+    """Refuse a rollback that would delete a record/file the forward apply created.
+
+    Phase 13: a forward apply that created a previously-absent DNS record or Caddy
+    site file leaves no prior state to restore; rolling it back means deleting it.
+    That delete is refused with `rollback_unsafe_delete` unless the operator passes
+    an explicit approval flag.
+    """
+    return schema_issue(
+        "rollback_unsafe_delete",
+        (
+            f"Traffic rollback for {target} would DELETE a record/file that did not exist before the "
+            "forward apply (it was created by the apply). Automatic deletion is refused; re-run with "
+            "`--approve-unsafe-delete` to explicitly authorize the delete."
+        ),
+        "provider_mutations",
+    )
+
+
+def _dns_file_rollback_change(
+    mutation: Dict[str, object],
+    blockers: List[Dict[str, str]],
+    approve_unsafe_delete: bool = False,
+) -> Dict[str, object]:
     path = mutation.get("path")
     actions: List[Dict[str, object]] = []
     if not isinstance(path, str):
@@ -3294,13 +3639,10 @@ def _dns_file_rollback_change(mutation: Dict[str, object], blockers: List[Dict[s
         if not isinstance(domain, str):
             continue
         if previous is None:
-            blockers.append(
-                schema_issue(
-                    "dns_file_rollback_previous_missing",
-                    f"DNS file rollback for `{domain}` would require deleting a record; automatic deletion is blocked.",
-                    "provider_mutations",
-                )
-            )
+            if approve_unsafe_delete:
+                actions.append({"domain": domain, "delete_record": True})
+                continue
+            blockers.append(_rollback_unsafe_delete_issue(f"DNS record `{domain}`"))
             continue
         if not isinstance(previous, dict):
             blockers.append(schema_issue("dns_file_rollback_previous_invalid", f"Previous DNS record for `{domain}` is not an object."))
@@ -3309,20 +3651,20 @@ def _dns_file_rollback_change(mutation: Dict[str, object], blockers: List[Dict[s
     return {"provider": "dns.file", "path": path, "actions": actions}
 
 
-def _caddy_file_rollback_change(mutation: Dict[str, object], blockers: List[Dict[str, str]]) -> Dict[str, object]:
+def _caddy_file_rollback_change(
+    mutation: Dict[str, object],
+    blockers: List[Dict[str, str]],
+    approve_unsafe_delete: bool = False,
+) -> Dict[str, object]:
     path = mutation.get("path")
     snapshot = mutation.get("previous_snapshot_path")
     if not isinstance(path, str):
         blockers.append(schema_issue("caddy_file_rollback_path_missing", "Caddy file rollback is missing site file path."))
         return {}
     if not mutation.get("previous_present"):
-        blockers.append(
-            schema_issue(
-                "caddy_file_rollback_previous_missing",
-                "Caddy file rollback would require deleting a file that did not previously exist; automatic deletion is blocked.",
-                "provider_mutations",
-            )
-        )
+        if approve_unsafe_delete:
+            return {"provider": "caddy.file", "path": path, "previous_snapshot_path": snapshot, "actions": [{"delete_file": True}]}
+        blockers.append(_rollback_unsafe_delete_issue(f"Caddy site file `{Path(path).name}`"))
         return {"provider": "caddy.file", "path": path, "previous_snapshot_path": snapshot, "actions": []}
     if not isinstance(snapshot, str) or not Path(snapshot).exists():
         blockers.append(schema_issue("caddy_file_rollback_snapshot_missing", "Previous Caddy file snapshot is missing.", "previous_snapshot_path"))
@@ -3335,7 +3677,11 @@ def _caddy_file_rollback_change(mutation: Dict[str, object], blockers: List[Dict
     }
 
 
-def _cloudflare_dns_rollback_change(mutation: Dict[str, object], blockers: List[Dict[str, str]]) -> Dict[str, object]:
+def _cloudflare_dns_rollback_change(
+    mutation: Dict[str, object],
+    blockers: List[Dict[str, str]],
+    approve_unsafe_delete: bool = False,
+) -> Dict[str, object]:
     zone_id = mutation.get("zone_id")
     api_token_env = mutation.get("api_token_env")
     base_url = mutation.get("base_url")
@@ -3351,13 +3697,12 @@ def _cloudflare_dns_rollback_change(mutation: Dict[str, object], blockers: List[
         domain = raw_change.get("domain")
         previous = raw_change.get("previous")
         if previous is None:
-            blockers.append(
-                schema_issue(
-                    "cloudflare_rollback_previous_missing",
-                    f"Cloudflare rollback for `{domain}` would require deleting a DNS record; automatic deletion is blocked.",
-                    "provider_mutations",
-                )
-            )
+            if approve_unsafe_delete:
+                next_record = raw_change.get("next") if isinstance(raw_change.get("next"), dict) else {}
+                record_id = raw_change.get("record_id") or next_record.get("id")
+                actions.append({"domain": domain, "delete_record": True, "record_id": record_id})
+                continue
+            blockers.append(_rollback_unsafe_delete_issue(f"Cloudflare DNS record `{domain}`"))
             continue
         if not isinstance(previous, dict) or not previous.get("id"):
             blockers.append(schema_issue("cloudflare_rollback_previous_invalid", f"Previous Cloudflare record for `{domain}` is missing an id."))
@@ -3405,6 +3750,10 @@ def _rollback_file_dns_provider(change: Dict[str, object]) -> Dict[str, object]:
             if isinstance(domain, str) and isinstance(restore_record, dict):
                 next_records[domain] = restore_record
                 actions.append({"domain": domain, "restored": True})
+            elif isinstance(domain, str) and action.get("delete_record"):
+                # Approved unsafe delete: remove the record the forward apply created.
+                next_records.pop(domain, None)
+                actions.append({"domain": domain, "deleted": True})
         _atomic_write_json(
             record_path,
             {
@@ -3422,7 +3771,20 @@ def _rollback_file_dns_provider(change: Dict[str, object]) -> Dict[str, object]:
 def _rollback_file_caddy_provider(change: Dict[str, object]) -> Dict[str, object]:
     path = change.get("path")
     snapshot = change.get("previous_snapshot_path")
-    if not isinstance(path, str) or not isinstance(snapshot, str):
+    if not isinstance(path, str):
+        return {"provider": "caddy.file", "status": "failed", "reason": "path_missing"}
+    actions = change.get("actions") if isinstance(change.get("actions"), list) else []
+    delete_requested = any(isinstance(item, dict) and item.get("delete_file") for item in actions)
+    if delete_requested:
+        # Approved unsafe delete: remove the site file the forward apply created.
+        site_path = Path(path).expanduser()
+        try:
+            if site_path.exists():
+                site_path.unlink()
+        except OSError as exc:
+            return {"provider": "caddy.file", "status": "failed", "path": str(site_path), "reason": str(exc)}
+        return {"provider": "caddy.file", "status": "succeeded", "path": str(site_path), "deleted": True}
+    if not isinstance(snapshot, str):
         return {"provider": "caddy.file", "status": "failed", "reason": "path_or_snapshot_missing"}
     site_path = Path(path).expanduser()
     snapshot_path = Path(snapshot).expanduser()
@@ -3450,9 +3812,25 @@ def _rollback_cloudflare_dns_provider(change: Dict[str, object]) -> Dict[str, ob
     if not api_token:
         return {"provider": "dns.cloudflare", "status": "failed", "reason": "api_token_env_missing", "api_token_env": api_token_env}
     actions: List[Dict[str, object]] = []
+    skipped: List[Dict[str, object]] = []
     try:
         for action in change.get("actions") if isinstance(change.get("actions"), list) else []:
             if not isinstance(action, dict):
+                continue
+            # A delete of a forward-created Cloudflare record is intentionally
+            # NOT executed (the Cloudflare provider never issues a live DELETE).
+            # Record it as skipped so the receipt does not imply a deletion that
+            # did not happen; the operator must remove it via an approved path.
+            delete_record = action.get("delete_record")
+            if isinstance(delete_record, dict):
+                delete_id = delete_record.get("id")
+                skipped.append(
+                    {
+                        "record_id": delete_id if isinstance(delete_id, str) else None,
+                        "skipped": True,
+                        "reason": "cloudflare_delete_not_supported",
+                    }
+                )
                 continue
             restore_record = action.get("restore_record")
             if not isinstance(restore_record, dict):
@@ -3483,13 +3861,20 @@ def _rollback_cloudflare_dns_provider(change: Dict[str, object]) -> Dict[str, ob
             actions.append({"record_id": record_id, "restored": True, "result": _redacted_cloudflare_record(result)})
     except (OSError, URLError) as exc:
         return {"provider": "dns.cloudflare", "status": "failed", "reason": str(exc), "actions": actions}
-    return {
+    result = {
         "provider": "dns.cloudflare",
         "status": "succeeded",
         "zone_id": zone_id,
         "api_token_env": api_token_env,
         "actions": actions,
     }
+    if skipped:
+        result["skipped_actions"] = skipped
+        result["warnings"] = [
+            "Cloudflare-created records are not auto-deleted on rollback; "
+            f"{len(skipped)} record(s) were left live and must be removed via an approved path."
+        ]
+    return result
 
 
 def _safe_artifact_slug(value: str) -> str:
@@ -3707,6 +4092,50 @@ def _restore_drill_receipts(runtime_root: Path, app: str) -> List[Dict[str, obje
                     }
                 )
     return receipts
+
+
+def _latest_successful_backup_verification(
+    runtime_root: Path, app: str, environment: Optional[str]
+) -> Optional[Dict[str, object]]:
+    """Return the latest *succeeded* ``backup.verify.apply`` receipt for an app.
+
+    Scans the same roots restore-drill receipts live in and reuses
+    :func:`_read_json` so a malformed receipt is skipped rather than crashing.
+    Only names/ids and the status are surfaced (never secret values). Returns
+    ``None`` when no successful verification receipt exists, which keeps readiness
+    additive: apps without verification keep their prior behavior and score.
+    """
+    roots = [
+        runtime_root / "apps" / app / "restore-drills",
+        runtime_root / "apps" / app / "receipts",
+    ]
+    candidates: List[Dict[str, object]] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*.json")):
+            payload = _read_json(path)
+            if str(payload.get("operation") or "") != "backup.verify.apply":
+                continue
+            if str(payload.get("status") or "") != "succeeded":
+                continue
+            if environment and payload.get("environment") not in (None, environment):
+                continue
+            candidates.append(
+                {
+                    "verify_id": payload.get("verify_id"),
+                    "receipt_id": payload.get("operation_id") or path.stem,
+                    "operation": payload.get("operation"),
+                    "status": payload.get("status"),
+                    "backup_id": payload.get("backup_id"),
+                    "completed_at": payload.get("completed_at") or payload.get("started_at"),
+                    "path": str(path),
+                }
+            )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (str(item.get("completed_at") or ""), str(item.get("receipt_id") or "")))
+    return candidates[-1]
 
 
 def _route_conflict_issues(report: Dict[str, object], manifest: Manifest) -> List[Dict[str, str]]:

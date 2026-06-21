@@ -199,6 +199,11 @@ def register(subparsers: _SubParsersAction) -> None:
     traffic_rollback_plan_parser.add_argument("--receipt", required=True, help="Traffic apply receipt id or path")
     traffic_rollback_plan_parser.add_argument("--environment", choices=["dev", "staging", "production"])
     traffic_rollback_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    traffic_rollback_plan_parser.add_argument(
+        "--approve-unsafe-delete",
+        action="store_true",
+        help="Authorize deleting DNS records/Caddy files the forward apply created (they had no prior state to restore)",
+    )
     traffic_rollback_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     traffic_rollback_plan_parser.set_defaults(handler=run_traffic_rollback_plan)
     traffic_rollback_apply_parser = traffic_rollback_subparsers.add_parser("apply", help="Apply traffic provider rollback from a receipt")
@@ -207,6 +212,11 @@ def register(subparsers: _SubParsersAction) -> None:
     traffic_rollback_apply_parser.add_argument("--environment", choices=["dev", "staging", "production"])
     traffic_rollback_apply_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     traffic_rollback_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from traffic rollback plan")
+    traffic_rollback_apply_parser.add_argument(
+        "--approve-unsafe-delete",
+        action="store_true",
+        help="Authorize deleting DNS records/Caddy files the forward apply created (they had no prior state to restore)",
+    )
     traffic_rollback_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     traffic_rollback_apply_parser.set_defaults(handler=run_traffic_rollback_apply)
 
@@ -527,6 +537,7 @@ def run_traffic_rollback_plan(args: Namespace) -> int:
         receipt_id=args.receipt,
         environment=args.environment,
         runtime_root=args.runtime_root,
+        approve_unsafe_delete=getattr(args, "approve_unsafe_delete", False),
     )
     if args.json:
         print(json.dumps(plan, indent=2, sort_keys=True))
@@ -542,6 +553,7 @@ def run_traffic_rollback_apply(args: Namespace) -> int:
         environment=args.environment,
         runtime_root=args.runtime_root,
         confirm=args.confirm,
+        approve_unsafe_delete=getattr(args, "approve_unsafe_delete", False),
     )
     if args.json:
         print(json.dumps(receipt, indent=2, sort_keys=True))
