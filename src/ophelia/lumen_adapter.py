@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 from . import command_catalog
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .conflicts import scan_conflicts
+from .observability import compact_observability_summary, observability_status
 from .operation_schema import SCHEMA_VERSION, issue
 from .operator_reports import manifest_registry
 from .portability import app_readiness_report, backup_status_report
@@ -305,6 +306,22 @@ def _dashboard_app_entry(
         freshness = backup.get("freshness")
         if isinstance(freshness, dict):
             entry["backup_freshness"] = freshness.get("status")
+
+    # Default observability status (no HTTP/Docker probe) reduced to a compact
+    # summary. Best-effort: a failure becomes a warning, never a crash.
+    observability = _safe_call(
+        lambda: observability_status(
+            app,
+            environment=environment,
+            runtime_root=runtime_root,
+            manifest_path=Path(manifest_path) if manifest_path else None,
+        ),
+        warnings,
+        "observability_unavailable",
+        app,
+    )
+    if isinstance(observability, dict):
+        entry["observability"] = compact_observability_summary(observability)
 
     return entry
 

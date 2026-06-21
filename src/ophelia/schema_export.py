@@ -48,6 +48,8 @@ _ENUM_BY_PATH: Dict[str, List[Any]] = {
     "edge.tls.mode": ["auto", "internal", "custom"],
     "prism.surface": ["console", "quark"],
     "verify_policy.failure_mode": ["hard", "warn"],
+    "observability.metrics.format": ["prometheus", "json", "none"],
+    "observability.metrics.auth": ["none", "bearer_env", "basic_env"],
 }
 
 # A few dataclass field names are exported under a different YAML key by the

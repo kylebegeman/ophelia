@@ -130,6 +130,33 @@ class HooksConfig:
 
 
 @dataclass
+class ObservabilityHealth:
+    url: Optional[str] = None
+    expect_status: int = 200
+
+
+@dataclass
+class ObservabilityMetrics:
+    url: Optional[str] = None
+    format: str = "prometheus"
+    auth: str = "none"
+
+
+@dataclass
+class ObservabilityLogs:
+    containers: bool = True
+    retain_days: int = 14
+
+
+@dataclass
+class ObservabilityConfig:
+    health: Optional[ObservabilityHealth] = None
+    metrics: Optional[ObservabilityMetrics] = None
+    logs: Optional[ObservabilityLogs] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ServiceConfig:
     name: str
     port: int
@@ -218,6 +245,7 @@ class Manifest:
     networking: NetworkingConfig = field(default_factory=NetworkingConfig)
     data: DataConfig = field(default_factory=DataConfig)
     hooks: HooksConfig = field(default_factory=HooksConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     depends_on: List[str] = field(default_factory=list)
     deployment_order: Optional[int] = None
     migration_before: List[str] = field(default_factory=list)
@@ -268,6 +296,7 @@ def load_manifest(path: Path) -> Manifest:
     networking = _parse_networking(raw.get("networking"))
     data = _parse_data(raw.get("data"), addons)
     hooks = _parse_hooks(raw.get("hooks"))
+    observability = _parse_observability(raw.get("observability"))
 
     manifest = Manifest(
         version=version,
@@ -295,6 +324,7 @@ def load_manifest(path: Path) -> Manifest:
         networking=networking,
         data=data,
         hooks=hooks,
+        observability=observability,
         depends_on=_string_list(raw.get("depends_on", []), "depends_on"),
         deployment_order=_optional_int(raw.get("deployment_order"), "deployment_order"),
         migration_before=_string_list(raw.get("migration_before", []), "migration_before"),
@@ -804,6 +834,83 @@ def _parse_hooks(raw: Any) -> HooksConfig:
             if key not in known
         },
     )
+
+
+def _parse_observability(raw: Any) -> ObservabilityConfig:
+    if raw is None:
+        return ObservabilityConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`observability` must be a mapping.")
+
+    known = {"health", "metrics", "logs"}
+    return ObservabilityConfig(
+        health=_parse_observability_health(raw.get("health")),
+        metrics=_parse_observability_metrics(raw.get("metrics")),
+        logs=_parse_observability_logs(raw.get("logs")),
+        extra={
+            key: _json_compatible(value, f"observability.{key}")
+            for key, value in raw.items()
+            if key not in known
+        },
+    )
+
+
+def _parse_observability_health(raw: Any) -> Optional[ObservabilityHealth]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`observability.health` must be a mapping.")
+
+    url = _optional_str(raw.get("url"), "observability.health.url")
+    if url is not None:
+        # Reuse the shared health-URL validator so the rule cannot drift.
+        from .observability import validate_health_url
+
+        error = validate_health_url(url)
+        if error is not None:
+            raise ManifestError(f"`observability.health.url` {error}")
+
+    expect_status = raw.get("expect_status", 200)
+    if not isinstance(expect_status, int) or isinstance(expect_status, bool) or not 100 <= expect_status <= 599:
+        raise ManifestError("`observability.health.expect_status` must be a valid HTTP status code.")
+    return ObservabilityHealth(url=url, expect_status=expect_status)
+
+
+def _parse_observability_metrics(raw: Any) -> Optional[ObservabilityMetrics]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`observability.metrics` must be a mapping.")
+
+    url = _optional_str(raw.get("url"), "observability.metrics.url")
+    if url is not None:
+        from .observability import validate_health_url
+
+        error = validate_health_url(url)
+        if error is not None:
+            raise ManifestError(f"`observability.metrics.url` {error}")
+
+    fmt = _optional_str(raw.get("format"), "observability.metrics.format") or "prometheus"
+    if fmt not in {"prometheus", "json", "none"}:
+        raise ManifestError("`observability.metrics.format` must be one of `prometheus`, `json`, or `none`.")
+
+    auth = _optional_str(raw.get("auth"), "observability.metrics.auth") or "none"
+    if auth not in {"none", "bearer_env", "basic_env"}:
+        raise ManifestError("`observability.metrics.auth` must be one of `none`, `bearer_env`, or `basic_env`.")
+    return ObservabilityMetrics(url=url, format=fmt, auth=auth)
+
+
+def _parse_observability_logs(raw: Any) -> Optional[ObservabilityLogs]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`observability.logs` must be a mapping.")
+
+    containers = _as_bool(raw.get("containers", True), "observability.logs.containers")
+    retain_days = raw.get("retain_days", 14)
+    if not isinstance(retain_days, int) or isinstance(retain_days, bool) or retain_days < 1:
+        raise ManifestError("`observability.logs.retain_days` must be a positive integer.")
+    return ObservabilityLogs(containers=containers, retain_days=retain_days)
 
 
 def _parse_healthcheck(raw: Any, service_name: str) -> HealthCheck:
