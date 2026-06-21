@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .manifest import Manifest
+from .operation_schema import diff_artifact, operation_id
+from .policy import policy_check_entry
+from .redaction import redacted_compose_text
 from .runtime import bundle_hash, image_digests, image_references, render_bundle
 from .verify import verification_checks
 
 
-def deploy_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> Dict[str, object]:
+def deploy_plan(
+    manifest: Manifest,
+    manifest_path: Path,
+    runtime_root: Path,
+    artifacts_dir: Optional[Path] = None,
+) -> Dict[str, object]:
     bundle = render_bundle(manifest)
     diff = bundle_diff(manifest, runtime_root)
     env_requirements = _env_requirements(bundle.get(Path("env.example"), ""))
@@ -67,11 +76,121 @@ def deploy_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> 
             "failure_mode": verify_policy.failure_mode,
         },
         "risk_notes": risk_notes,
+        "changes": _deploy_changes(diff),
+        "artifacts": [],
         "summary": _summary(manifest, images, diff, env_requirements, checks),
     }
     plan["confirmation_required"] = plan["environment"] == "production"
     plan["confirmation_token"] = deploy_confirmation_token(plan) if plan["confirmation_required"] else None
+
+    # Additive, best-effort policy evaluation surfaced under `checks` only. The
+    # deploy plan does not otherwise carry a `checks` list, so this seeds it; the
+    # policy result never feeds the plan's top-level blockers/status.
+    image_digest_pinned = bool(images) and all("@sha256:" in image for image in images.values())
+    policy_context = {
+        "confirmation_required": bool(plan["confirmation_required"]),
+        "plan_exists": True,
+        "image_digest_pinned": image_digest_pinned,
+        "json_receipts": True,
+    }
+    plan["checks"] = [
+        policy_check_entry(
+            "deploy.apply",
+            plan["app"],
+            plan["environment"],
+            policy_context,
+            runtime_root=runtime_root,
+        )
+    ]
+
+    if diff["compose_changes"]:
+        artifact_entry = _write_compose_diff_artifact(
+            manifest,
+            bundle,
+            runtime_root,
+            artifacts_dir,
+        )
+        if artifact_entry is not None:
+            plan["artifacts"] = [artifact_entry]
     return plan
+
+
+def _classify_target(path: str) -> str:
+    if path == "compose.yml":
+        return "compose"
+    if path.startswith("caddy/"):
+        return "caddy"
+    if path == "env.example":
+        return "env"
+    if path == "manifest.lock.json":
+        return "manifest"
+    return "other"
+
+
+def _deploy_changes(diff: Dict[str, object]) -> List[Dict[str, object]]:
+    """Structured, redaction-safe before/after summaries from ``bundle_diff``.
+
+    Only paths and change types are surfaced, never file content, so the list is
+    always safe to serialize alongside the plan.
+    """
+    changes: List[Dict[str, object]] = []
+    for item in [*diff["changed_files"], *diff["removed_files"]]:
+        path = str(item["path"])
+        changes.append(
+            {
+                "path": path,
+                "change": item["change"],
+                "target": _classify_target(path),
+            }
+        )
+    return changes
+
+
+def _write_compose_diff_artifact(
+    manifest: Manifest,
+    bundle: Dict[Path, str],
+    runtime_root: Path,
+    artifacts_dir: Optional[Path],
+) -> Optional[Dict[str, object]]:
+    """Write a redacted unified diff of current vs desired ``compose.yml``.
+
+    Both sides are routed through :func:`redacted_compose_text` *before* the diff
+    is computed, so the artifact file can never contain a secret value. Writing
+    is best-effort: any OSError skips the artifact rather than failing the plan.
+    """
+    desired_compose = bundle.get(Path("compose.yml"))
+    if desired_compose is None:
+        return None
+    current_path = runtime_root / "apps" / manifest.app / "compose.yml"
+    try:
+        current_compose = current_path.read_text() if current_path.exists() else ""
+    except OSError:
+        current_compose = ""
+
+    desired_redacted = redacted_compose_text(desired_compose)
+    current_redacted = redacted_compose_text(current_compose) if current_compose else ""
+    diff_lines = difflib.unified_diff(
+        current_redacted.splitlines(keepends=True),
+        desired_redacted.splitlines(keepends=True),
+        fromfile="current/compose.yml",
+        tofile="desired/compose.yml",
+    )
+    diff_text = "".join(diff_lines)
+
+    target_dir = artifacts_dir or (
+        runtime_root / "plans" / operation_id("deploy.plan", manifest.app, getattr(manifest, "environment", None))
+    )
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        diff_path = target_dir / "compose-diff.diff"
+        diff_path.write_text(diff_text)
+    except OSError:
+        return None
+    return diff_artifact(
+        "compose-diff",
+        diff_path,
+        "Rendered Compose diff with env values redacted.",
+    )
 
 
 def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:

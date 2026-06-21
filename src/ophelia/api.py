@@ -7,9 +7,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .actions import ActionError, action_catalog, cancel_job, run_job
+from .command_catalog import catalog as command_catalog
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .operator_reports import host_inventory, manifest_registry, release_registry
 from .operations import list_operations, run_operation
+from .schema_export import manifest_json_schema
+from .state_db import SQLITE_AVAILABLE, query_receipts, state_db_path, state_status
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> None:
@@ -42,6 +45,12 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         if parsed.path == "/actions":
             self._json({"actions": action_catalog()})
             return
+        if parsed.path == "/commands":
+            self._json({"commands": command_catalog()})
+            return
+        if parsed.path == "/schema/manifest":
+            self._json(manifest_json_schema())
+            return
         if parsed.path == "/host/inventory":
             self._json(host_inventory(self.runtime_root_value, REPO_ROOT))
             return
@@ -53,6 +62,21 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/operations":
             self._json(list_operations())
+            return
+        if parsed.path == "/state/status":
+            self._json(state_status(self.runtime_root_value))
+            return
+        if parsed.path == "/state/apps":
+            self._json(self._state_table("apps", "app"))
+            return
+        if parsed.path == "/state/receipts":
+            self._json(query_receipts(self.runtime_root_value))
+            return
+        if parsed.path == "/state/routes":
+            self._json(self._state_table("routes", "domain"))
+            return
+        if parsed.path == "/state/backups":
+            self._json(self._state_table("backups", "backup_id"))
             return
         if parsed.path.startswith("/jobs/") and parsed.path.endswith("/events"):
             job_id = parsed.path.split("/")[2]
@@ -155,6 +179,50 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         self.end_headers()
         for line in path.read_text().splitlines():
             self.wfile.write(f"data: {line}\n\n".encode("utf-8"))
+
+    def _state_table(self, table: str, order_by: str) -> dict:
+        """Read one indexed table read-only.
+
+        Returns ``available:false``/``needs_rebuild:true`` (HTTP 200) when the
+        local index is missing or unavailable, never a 500. Never rebuilds on a
+        GET. Stored ``payload_json`` is already redacted at index time.
+        """
+        db_path = state_db_path(self.runtime_root_value)
+        base = {
+            "schema_version": 1,
+            "kind": "ophelia.state_query",
+            "query": table,
+            "available": SQLITE_AVAILABLE,
+            "db_path": str(db_path),
+            "needs_rebuild": True,
+            table: [],
+        }
+        if not SQLITE_AVAILABLE:
+            base["status"] = "unavailable"
+            base["summary"] = "sqlite3 is unavailable; cannot query the local state index."
+            return base
+        if not db_path.exists():
+            base["status"] = "missing"
+            base["summary"] = "No local state index. Run `ship state rebuild` to create it."
+            return base
+        import sqlite3
+
+        connection = sqlite3.connect(str(db_path))
+        connection.row_factory = sqlite3.Row
+        try:
+            cursor = connection.execute(f"SELECT payload_json FROM {table} ORDER BY {order_by}")
+            rows = [json.loads(row["payload_json"]) for row in cursor.fetchall() if row["payload_json"]]
+        except sqlite3.Error as exc:
+            base["status"] = "error"
+            base["summary"] = f"Local state index is unreadable: {exc}. Run `ship state rebuild`."
+            return base
+        finally:
+            connection.close()
+        base["needs_rebuild"] = False
+        base["status"] = "ok"
+        base[table] = rows
+        base["summary"] = f"{len(rows)} {table} record(s) from the local state index."
+        return base
 
     def log_message(self, format, *args):  # noqa: A003
         return

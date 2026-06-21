@@ -39,6 +39,31 @@ def artifact(path: str, kind: str, description: Optional[str] = None, present: O
     return payload
 
 
+def diff_artifact(
+    name: str,
+    path: object,
+    description: Optional[str] = None,
+    redacted: bool = True,
+    media_type: str = "text/x-diff",
+) -> Dict[str, Any]:
+    """Describe a redacted diff written to disk (e.g. a rendered Compose diff).
+
+    The artifact carries only the *path* to the diff file, never inline diff
+    content, so a plan/report that embeds it stays secret-free in JSON. The diff
+    file itself must already have been redacted before being written.
+    """
+    payload: Dict[str, Any] = {
+        "name": name,
+        "kind": "ophelia.artifact.diff",
+        "media_type": media_type,
+        "path": str(path),
+        "redacted": redacted,
+    }
+    if description is not None:
+        payload["description"] = description
+    return payload
+
+
 def plan_envelope(
     operation: str,
     app: Optional[str],
@@ -139,6 +164,34 @@ def receipt_envelope(
         "checks": checks or [],
         "rollback": rollback or {"available": False, "note": "No mutation was performed."},
     }
+    payload.update(extra)
+    return payload
+
+
+def error_envelope(
+    message: str,
+    code: str,
+    blockers: Optional[List[Any]] = None,
+    warnings: Optional[List[Any]] = None,
+    next_actions: Optional[List[Any]] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Standard error payload (`kind: "ophelia.error"`).
+
+    Matches the shape already emitted by ``api.py:_error`` so CLI and HTTP error
+    bodies are identical. ``blockers`` defaults to a single entry derived from
+    ``code``/``message``; callers may pass a richer list.
+    """
+    payload: Dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "ophelia.error",
+        "status": "failed",
+        "error": message,
+        "blockers": blockers if blockers is not None else [{"code": code, "message": message}],
+        "warnings": warnings or [],
+    }
+    if next_actions is not None:
+        payload["next_actions"] = next_actions
     payload.update(extra)
     return payload
 

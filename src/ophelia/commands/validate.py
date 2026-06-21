@@ -3,6 +3,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..manifest import ManifestError, load_manifest
+from ..operation_schema import error_envelope
 from ..verify import verification_checks
 
 
@@ -18,7 +19,13 @@ def run(args: Namespace) -> int:
         manifest = load_manifest(args.manifest)
     except ManifestError as exc:
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
+            print(
+                json.dumps(
+                    {"ok": False, **error_envelope(str(exc), "manifest_invalid")},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 1
         print(f"Manifest invalid: {exc}")
         return 1

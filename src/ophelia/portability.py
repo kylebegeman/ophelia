@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlencode, unquote, urlparse
 from .caddy_manager import reload_caddy, validate_caddy
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .conflicts import scan_conflicts
+from .findings import attach_remediation
 from .manifest import (
     DataServiceConfig,
     DataVolumeConfig,
@@ -30,6 +31,10 @@ from .manifest import (
 )
 from .operation_schema import artifact, issue as schema_issue, plan_envelope, receipt_envelope, report_envelope
 from .operator_reports import host_inventory
+from .policy import policy_check_entry
+from .provider_config import validate_ttl
+from .remediation import remediation_for
+from .redaction import deep_redact, redact_mapping, redacted_cloudflare_record, redacted_compose_text
 from .runtime import active_release, active_release_id, image_references, latest_release_id
 from .templates import compose_network_summary, render_env_example
 from .verify import verification_checks
@@ -64,6 +69,21 @@ EXPORT_RECEIPT_TYPES = {
     "export_create": "app.export.create",
     "import_plan": "app.import.plan",
     "import_apply": "app.import.apply",
+}
+
+# Readiness score weights (factor name -> weight). Summing to 100, the
+# portability score starts at 100 and subtracts the weight of each failed
+# factor. Kept as a module constant so the weights are inspectable and the
+# per-category roll-up in ``app_readiness_report`` stays in sync with
+# ``portability_score``.
+READINESS_SCORE_WEIGHTS: Dict[str, int] = {
+    "pack_metadata": 10,
+    "explicit_data_contracts": 20,
+    "env_ready": 15,
+    "backup_fresh": 20,
+    "restore_drill": 15,
+    "image_digest": 10,
+    "checks_pass": 10,
 }
 
 
@@ -254,7 +274,46 @@ def pack_validation_report(
     )
     report["ok"] = not errors
     report["errors"] = errors
+    report["score_details"] = _pack_quality_score_details(manifest, ok=not errors)
     return report
+
+
+def _pack_quality_score_details(manifest: Manifest, *, ok: bool) -> Dict[str, Dict[str, object]]:
+    """Manifest-only category roll-up of the readiness score factors.
+
+    Pack validation cannot see runtime env/backup/restore state, so it scores
+    only the manifest-derived factors it can actually assess (pack metadata,
+    explicit data contracts, image digests, and whether validation checks pass).
+    Weights come from :data:`READINESS_SCORE_WEIGHTS` so the categories match the
+    full readiness roll-up. The omitted runtime factors are not invented here.
+    """
+    images = image_references(manifest)
+    factor_assessments = [
+        ("pack_metadata", "runtime", bool(manifest.pack.portability)),
+        ("explicit_data_contracts", "data", not _inferred_data_contracts(manifest)),
+        ("image_digest", "runtime", bool(images) and all("@sha256:" in image for image in images.values())),
+        ("checks_pass", "runtime", ok),
+    ]
+    details: Dict[str, Dict[str, object]] = {}
+    for name, category, passed in factor_assessments:
+        weight = READINESS_SCORE_WEIGHTS[name]
+        bucket = details.setdefault(
+            category,
+            {"points": 0, "max_points": 0, "ok_factors": 0, "total_factors": 0},
+        )
+        bucket["points"] = int(bucket["points"]) + (weight if passed else 0)
+        bucket["max_points"] = int(bucket["max_points"]) + weight
+        bucket["total_factors"] = int(bucket["total_factors"]) + 1
+        if passed:
+            bucket["ok_factors"] = int(bucket["ok_factors"]) + 1
+    for category, bucket in details.items():
+        total = int(bucket["total_factors"])
+        ok_count = int(bucket["ok_factors"])
+        bucket["reason"] = (
+            f"{category}: {ok_count}/{total} manifest factor(s) ok, "
+            f"{bucket['points']}/{bucket['max_points']} point(s) earned."
+        )
+    return details
 
 
 def pack_explain_report(manifest: Manifest, manifest_path: Path) -> Dict[str, object]:
@@ -297,6 +356,7 @@ def pack_explain_report(manifest: Manifest, manifest_path: Path) -> Dict[str, ob
             "errors": validation["errors"],
             "warnings": validation["warnings"],
         },
+        "score_details": validation.get("score_details", {}),
         "summary": (
             f"{manifest.app} portability={manifest.pack.portability or 'unspecified'} "
             f"with {len(data_contracts)} data section(s), {len(checks)} verification check(s), "
@@ -542,6 +602,26 @@ def export_plan(
         "summary": f"Export plan for {manifest.app} {resolved_environment}: {len(blockers)} blocker(s), {len(warnings)} warning(s).",
     }
     plan["confirmation_token"] = export_plan_token(plan)
+    # Additive policy evaluation under `checks` only (never top-level status).
+    restore_drills = _restore_drill_receipts(runtime_root, manifest.app)
+    image_digest_pinned = bool(plan.get("images")) and all(
+        "@sha256:" in image for image in (plan.get("images") or {}).values()
+    )
+    plan["checks"] = [
+        policy_check_entry(
+            "app.export.create",
+            manifest.app,
+            resolved_environment,
+            {
+                "confirmation_required": True,
+                "restore_drill_present": bool(restore_drills),
+                "provider_config_validated": False,
+                "image_digest_pinned": image_digest_pinned,
+                "json_receipts": True,
+            },
+            runtime_root=runtime_root,
+        )
+    ]
     _merge_plan_envelope(
         plan,
         "app.export.plan",
@@ -741,6 +821,21 @@ def import_plan(
         "summary": f"Import plan for {app or 'unknown app'} {environment}: {len(blockers)} blocker(s), {len(warnings)} warning(s).",
     }
     plan["confirmation_token"] = import_plan_token(plan)
+    # Additive policy evaluation under `checks` only (never top-level status).
+    plan["checks"] = [
+        policy_check_entry(
+            "app.import.apply",
+            app,
+            environment,
+            {
+                "confirmation_required": True,
+                "rollback_available": mode == "rehearsal",
+                "readiness_clean": not blockers,
+                "json_receipts": True,
+            },
+            runtime_root=runtime_root,
+        )
+    ]
     _merge_plan_envelope(
         plan,
         "app.import.plan",
@@ -1053,7 +1148,27 @@ def app_readiness_report(
         {"name": "restore_drill", "ok": bool(restore_drills), "message": f"{len(restore_drills)} receipt(s)"},
     ]
     score = portability_score(manifest, blockers, warnings, checks, env_report, backup_report, restore_drills)
+    # Score must never hide blockers: readiness stays blocked whenever any
+    # blocker exists, regardless of how high the score is.
     level = "blocked" if blockers else "warning" if warnings else "ready"
+
+    # Additive enrichment: attach a typed remediation to every blocker/warning
+    # whose code is known, preserving the existing code/message/path keys.
+    blockers = _enrich_findings(blockers, manifest.app, resolved_environment)
+    warnings = _enrich_findings(warnings, manifest.app, resolved_environment)
+    next_actions = _readiness_next_actions(blockers, warnings)
+    score_details = _readiness_score_details(score)
+    source_reports = _readiness_source_reports(
+        env_report,
+        backup_report,
+        route_report,
+        restore_drills,
+        manifest.app,
+        resolved_environment,
+        runtime_root,
+        resolution.manifest_path,
+    )
+
     return report_envelope(
         "app.readiness",
         manifest.app,
@@ -1075,7 +1190,162 @@ def app_readiness_report(
         compose_networks=compose_network_summary(manifest),
         release={"present": bool(release), "release_id": release.get("release_id") if release else None},
         restore_drill_receipts=restore_drills,
+        next_actions=next_actions,
+        score_details=score_details,
+        source_reports=source_reports,
     )
+
+
+def _enrich_findings(
+    findings: List[Dict[str, str]],
+    app: str,
+    environment: str,
+) -> List[Dict[str, str]]:
+    """Return enriched copies of findings with a remediation when one is known.
+
+    Existing keys (``code``/``message``/``path``) are preserved; only an extra
+    ``remediation`` key is added when :func:`remediation_for` returns one.
+    """
+    enriched: List[Dict[str, str]] = []
+    for finding in findings:
+        code = str(finding.get("code", "")) if isinstance(finding, dict) else ""
+        remediation = remediation_for(code, app=app, environment=environment)
+        if remediation is None:
+            enriched.append(dict(finding) if isinstance(finding, dict) else finding)
+        else:
+            enriched.append(attach_remediation(finding, remediation))
+    return enriched
+
+
+def _readiness_next_actions(
+    blockers: List[Dict[str, str]],
+    warnings: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    """Priority-sorted, deterministic next actions from enriched findings.
+
+    Blockers come before warnings; within each group findings keep their
+    aggregation order. Only findings that carry a remediation with at least one
+    command contribute an action, derived from that remediation's first command.
+    """
+    actions: List[Dict[str, str]] = []
+    for area, group in (("blocker", blockers), ("warning", warnings)):
+        for finding in group:
+            if not isinstance(finding, dict):
+                continue
+            remediation = finding.get("remediation")
+            if not isinstance(remediation, dict):
+                continue
+            commands = remediation.get("commands")
+            if not isinstance(commands, list) or not commands:
+                continue
+            actions.append(
+                {
+                    "code": str(finding.get("code", "")),
+                    "area": area,
+                    "command": str(commands[0]),
+                    "summary": str(remediation.get("summary", "")),
+                }
+            )
+    return actions
+
+
+def _readiness_score_details(score: Dict[str, object]) -> Dict[str, Dict[str, object]]:
+    """Roll the score factors up by category.
+
+    For each category present in ``factors`` the sum of earned points and the
+    sum of weights are reported. By construction the sum of all ``points`` equals
+    the top-level score and the sum of all ``max_points`` equals 100.
+    """
+    factors = score.get("factors") if isinstance(score.get("factors"), list) else []
+    details: Dict[str, Dict[str, object]] = {}
+    for factor in factors:
+        if not isinstance(factor, dict):
+            continue
+        category = str(factor.get("category", "uncategorized"))
+        weight = int(factor.get("points", 0) or 0)
+        earned = weight if bool(factor.get("ok")) else 0
+        bucket = details.setdefault(
+            category,
+            {"points": 0, "max_points": 0, "ok_factors": 0, "total_factors": 0},
+        )
+        bucket["points"] = int(bucket["points"]) + earned
+        bucket["max_points"] = int(bucket["max_points"]) + weight
+        bucket["total_factors"] = int(bucket["total_factors"]) + 1
+        if bool(factor.get("ok")):
+            bucket["ok_factors"] = int(bucket["ok_factors"]) + 1
+    for category, bucket in details.items():
+        total = int(bucket["total_factors"])
+        ok = int(bucket["ok_factors"])
+        bucket["reason"] = (
+            f"{category}: {ok}/{total} factor(s) ok, "
+            f"{bucket['points']}/{bucket['max_points']} point(s) earned."
+        )
+    return details
+
+
+def _readiness_source_reports(
+    env_report: Dict[str, object],
+    backup_report: Dict[str, object],
+    route_report: Dict[str, object],
+    restore_drills: List[Dict[str, object]],
+    app: str,
+    environment: str,
+    runtime_root: Path,
+    manifest_path: Optional[Path],
+) -> Dict[str, Dict[str, object]]:
+    """Compact, redaction-safe pointers to the sub-reports readiness consumed.
+
+    The secrets audit is computed by calling :func:`ophelia.secrets_audit.secrets_audit`
+    (imported lazily to avoid an import cycle) so there is no duplicate env-scan
+    logic. Only status/counts and names are surfaced; values stay redacted.
+    """
+    from .secrets_audit import secrets_audit  # local import avoids a cycle
+
+    env_entries = env_report.get("entries") if isinstance(env_report.get("entries"), list) else []
+    required_missing = [
+        entry
+        for entry in env_entries
+        if isinstance(entry, dict) and entry.get("required") and entry.get("status") in {"missing", "placeholder"}
+    ]
+    freshness = backup_report.get("freshness") if isinstance(backup_report.get("freshness"), dict) else {}
+    conflicts = route_report.get("conflicts") if isinstance(route_report.get("conflicts"), list) else []
+
+    try:
+        audit = secrets_audit(app, environment=environment, runtime_root=runtime_root)
+        audit_keys = audit.get("keys") if isinstance(audit.get("keys"), list) else []
+        secrets_pointer: Dict[str, object] = {
+            "status": audit.get("status"),
+            "key_count": len(audit_keys),
+            "missing_required": sum(
+                1 for key in audit_keys if isinstance(key, dict) and key.get("required") and not key.get("present")
+            ),
+            "values_redacted": True,
+        }
+    except Exception:  # secrets audit is best-effort; never block readiness on it
+        secrets_pointer = {"status": "unavailable", "values_redacted": True}
+
+    return {
+        "env_shape": {
+            "status": env_report.get("status"),
+            "key_count": len(env_entries),
+            "required_missing": len(required_missing),
+            "values_redacted": True,
+        },
+        "backup_status": {
+            "status": backup_report.get("status"),
+            "freshness": freshness.get("status"),
+            "backup_count": backup_report.get("backup_count"),
+        },
+        "route_conflicts": {
+            "status": route_report.get("status"),
+            "conflict_count": len(conflicts),
+        },
+        "secrets_audit": secrets_pointer,
+        "restore_drill": {
+            "receipt_count": len(restore_drills),
+            "status": "ok" if restore_drills else "missing",
+        },
+    }
 
 
 def portability_score(
@@ -1090,19 +1360,20 @@ def portability_score(
     score = 100
     factors: List[Dict[str, object]] = []
 
-    def factor(name: str, category: str, points: int, ok: bool, message: str) -> None:
+    def factor(name: str, category: str, ok: bool, message: str) -> None:
         nonlocal score
+        points = READINESS_SCORE_WEIGHTS[name]
         if not ok:
             score -= points
         factors.append({"name": name, "category": category, "points": points, "ok": ok, "message": message})
 
-    factor("pack_metadata", "runtime", 10, bool(manifest.pack.portability), "Pack portability is declared.")
-    factor("explicit_data_contracts", "data", 20, not _inferred_data_contracts(manifest), "Data contracts are explicit.")
-    factor("env_ready", "secrets", 15, not any(item["status"] in {"missing", "placeholder"} for item in env_report["entries"] if item["required"]), "Required env keys are present.")
-    factor("backup_fresh", "backup", 20, not backup_report["blockers"], "Backup status has no blockers.")
-    factor("restore_drill", "restore", 15, bool(restore_drills) or not (manifest.data.backups and manifest.data.backups.restore_drill_required), "Restore drill receipt is recorded when required.")
-    factor("image_digest", "runtime", 10, all("@sha256:" in image for image in image_references(manifest).values()), "Images are digest-pinned.")
-    factor("checks_pass", "runtime", 10, all(bool(check.get("ok")) for check in checks if check.get("name") != "restore_drill"), "Readiness checks passed.")
+    factor("pack_metadata", "runtime", bool(manifest.pack.portability), "Pack portability is declared.")
+    factor("explicit_data_contracts", "data", not _inferred_data_contracts(manifest), "Data contracts are explicit.")
+    factor("env_ready", "secrets", not any(item["status"] in {"missing", "placeholder"} for item in env_report["entries"] if item["required"]), "Required env keys are present.")
+    factor("backup_fresh", "backup", not backup_report["blockers"], "Backup status has no blockers.")
+    factor("restore_drill", "restore", bool(restore_drills) or not (manifest.data.backups and manifest.data.backups.restore_drill_required), "Restore drill receipt is recorded when required.")
+    factor("image_digest", "runtime", all("@sha256:" in image for image in image_references(manifest).values()), "Images are digest-pinned.")
+    factor("checks_pass", "runtime", all(bool(check.get("ok")) for check in checks if check.get("name") != "restore_drill"), "Readiness checks passed.")
     score = max(0, min(100, score))
     if blockers:
         level = "blocked"
@@ -1534,7 +1805,7 @@ def traffic_plan(
     ttl, ttl_valid = _strict_positive_int(ttl, default=300)
     if not ttl_valid:
         blockers.append(schema_issue("ttl_invalid", "`ttl` must be greater than zero.", "ttl"))
-    if dns_provider == "cloudflare" and ttl != 1 and not 30 <= ttl <= 86400:
+    if dns_provider == "cloudflare" and not validate_ttl(ttl)[1]:
         blockers.append(
             schema_issue(
                 "cloudflare_ttl_invalid",
@@ -1635,6 +1906,25 @@ def traffic_plan(
         ]
     )
     exact_command = _shell_command(exact_parts)
+    provider_changes = _traffic_provider_changes(traffic_changes, provider_execution, source_host, target_host)
+    # Additive policy evaluation under `checks` only. Context is built from the
+    # plan's own facts; the policy result never feeds top-level blockers/status.
+    target_health_present = bool(target_health_url) or bool(
+        target_health.get("checks") if isinstance(target_health.get("checks"), list) else []
+    )
+    policy_context = {
+        "target_health_check": target_health_present,
+        "rollback_available": True,
+        "confirmation_required": True,
+        "readiness_clean": not blockers,
+    }
+    policy_check = policy_check_entry(
+        "app.traffic.apply",
+        app,
+        resolved_environment,
+        policy_context,
+        runtime_root=runtime_root,
+    )
     return plan_envelope(
         "app.traffic.plan",
         app,
@@ -1645,8 +1935,10 @@ def traffic_plan(
         checks=[
             *_traffic_checks(readiness, traffic_changes, provider_execution),
             *(target_health.get("checks", []) if isinstance(target_health.get("checks"), list) else []),
+            policy_check,
         ],
         artifacts=provider_execution.get("artifacts", []) if isinstance(provider_execution.get("artifacts"), list) else [],
+        changes=provider_changes,
         confirmation_required=True,
         confirmation_token=token,
         exact_apply_input={"command": exact_command},
@@ -2065,6 +2357,68 @@ def _traffic_changes(
                 },
             }
         )
+    return changes
+
+
+def _traffic_provider_changes(
+    traffic_changes: List[Dict[str, object]],
+    provider_execution: Dict[str, object],
+    source_host: str,
+    target_host: str,
+) -> List[Dict[str, object]]:
+    """Structured, redaction-safe before/after provider + DNS + Caddy changes.
+
+    Every value here is a name, host, or target (never a credential). Cloudflare
+    credentials are reduced to the env-ref *name* via :func:`redact_mapping`, so a
+    token value can never appear. This is the contract artifact the traffic plan
+    attaches under ``changes`` even when no provider file is written.
+    """
+    changes: List[Dict[str, object]] = []
+    providers = provider_execution.get("providers")
+    providers = providers if isinstance(providers, dict) else {}
+    dns_provider = providers.get("dns") if isinstance(providers.get("dns"), dict) else {}
+    caddy_provider = providers.get("caddy") if isinstance(providers.get("caddy"), dict) else {}
+
+    for change in traffic_changes:
+        dns = change.get("dns") if isinstance(change.get("dns"), dict) else {}
+        caddy = change.get("caddy") if isinstance(change.get("caddy"), dict) else {}
+        domain = change.get("domain")
+        changes.append(
+            {
+                "kind": "dns_record",
+                "target": "dns",
+                "domain": domain,
+                "provider": dns.get("provider"),
+                "record_type": dns.get("record_type"),
+                "before": {"owner": source_host},
+                "after": {"owner": target_host, "value": dns.get("target"), "ttl": dns.get("ttl")},
+                "mutation_supported": bool(dns.get("mutation_supported")),
+                "mutation_requested": bool(dns.get("mutation_requested")),
+            }
+        )
+        changes.append(
+            {
+                "kind": "caddy_site",
+                "target": "caddy",
+                "domain": domain,
+                "provider": caddy.get("provider"),
+                "site_file": caddy.get("site_file"),
+                "before": {"owner": source_host},
+                "after": {"owner": target_host},
+                "mutation_supported": bool(caddy.get("mutation_supported")),
+                "mutation_requested": bool(caddy.get("mutation_requested")),
+            }
+        )
+
+    provider_summary = {
+        "kind": "provider_execution",
+        "target": "provider",
+        "dns": redact_mapping(dns_provider) if dns_provider else {},
+        "caddy": redact_mapping(caddy_provider) if caddy_provider else {},
+        "mutation_supported": bool(provider_execution.get("mutation_supported")),
+        "mutation_requested": bool(provider_execution.get("mutation_requested")),
+    }
+    changes.append(provider_summary)
     return changes
 
 
@@ -2759,11 +3113,7 @@ def _cloudflare_errors(response: Dict[str, object]) -> List[Dict[str, object]]:
 
 
 def _redacted_cloudflare_record(record: Dict[str, object]) -> Dict[str, object]:
-    return {
-        key: record.get(key)
-        for key in ("id", "type", "name", "content", "ttl", "proxied", "comment", "created_on", "modified_on")
-        if key in record
-    }
+    return redacted_cloudflare_record(record)
 
 
 def _apply_file_caddy_provider(
@@ -3252,9 +3602,9 @@ def _backup_records(backups_root: Path) -> List[Dict[str, object]]:
                 "created_at": created_at or None,
                 "path": str(manifest_path.parent),
                 "manifest_path": str(manifest_path),
-                "coverage": payload.get("coverage", {}),
-                "database": payload.get("database", {}),
-                "warnings": payload.get("warnings", []),
+                "coverage": deep_redact(payload.get("coverage", {})),
+                "database": deep_redact(payload.get("database", {})),
+                "warnings": deep_redact(payload.get("warnings", [])),
                 "secrets_redacted_in_report": True,
             }
         )
@@ -4250,23 +4600,15 @@ def _redact_manifest_lock(payload: Dict[str, object]) -> Dict[str, object]:
         for service in services.values():
             if isinstance(service, dict) and isinstance(service.get("env"), dict):
                 service["env"] = {key: "<redacted>" for key in service["env"]}
+    # Defense-in-depth: mask any secret-shaped value nested elsewhere in the
+    # lock, not just the two known env locations above.
+    redacted = deep_redact(redacted)
     redacted["secret_values_redacted"] = True
     return redacted
 
 
 def _redacted_compose_text(content: str) -> str:
-    safe_keys = {"OPHELIA_APP", "OPHELIA_SERVICE", "PORT"}
-    lines = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if ":" in stripped:
-            key, _value = stripped.split(":", 1)
-            if key and key.replace("_", "").isalnum() and key not in safe_keys and line.startswith("      "):
-                indent = line[: len(line) - len(line.lstrip())]
-                lines.append(f"{indent}{key}: \"<redacted>\"")
-                continue
-        lines.append(line)
-    return "\n".join(lines) + "\n"
+    return redacted_compose_text(content)
 
 
 def _redacted_export_plan_receipt(plan: Dict[str, object]) -> Dict[str, object]:

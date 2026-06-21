@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..manifest import ManifestError, load_manifest
+from ..operation_schema import error_envelope
 from ..planning import deploy_plan, deploy_confirmation_token
 from ..remote import RemoteError, stage_remote_bundle
 from ..runtime import ApplyPhaseError, apply_local_bundle, current_release_id, deploy_bundle, update_current_release_verification
@@ -47,6 +48,12 @@ def register(subparsers: _SubParsersAction) -> None:
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON for --plan")
     parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=None,
+        help="Directory to write redacted plan diff artifacts into (defaults under the runtime root)",
+    )
+    parser.add_argument(
         "--confirm",
         help="Confirmation token required for production apply",
     )
@@ -82,7 +89,8 @@ def run(args: Namespace) -> int:
         print("`--plan` cannot be combined with `--apply`.")
         return 1
     if args.json and not args.plan:
-        print("`--json` is currently supported for `deploy --plan`.")
+        message = "`--json` is currently supported for `deploy --plan`."
+        print(json.dumps(error_envelope(message, "json_requires_plan"), indent=2, sort_keys=True))
         return 1
     if args.verify_attempts is not None and args.verify_attempts < 1:
         print("verification attempts must be at least 1.")
@@ -95,7 +103,7 @@ def run(args: Namespace) -> int:
         return 1
 
     if args.plan:
-        plan = deploy_plan(manifest, args.manifest, args.runtime_root)
+        plan = deploy_plan(manifest, args.manifest, args.runtime_root, artifacts_dir=args.artifacts_dir)
         if args.json:
             print(json.dumps(plan, indent=2, sort_keys=True))
         else:
