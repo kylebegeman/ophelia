@@ -19,6 +19,7 @@ from .jobs import register as register_jobs
 from .list_apps import register as register_list
 from .lumen import register as register_lumen
 from .notes import register as register_notes
+from .observability import register as register_observability
 from .operations import register as register_operations
 from .pack import register as register_pack
 from .policy import register as register_policy
@@ -60,6 +61,7 @@ def register_commands(subparsers):
     register_state(subparsers)
     register_runtime(subparsers)
     register_operations(subparsers)
+    register_observability(subparsers)
     register_notes(subparsers)
     register_gc(subparsers)
     register_pack(subparsers)

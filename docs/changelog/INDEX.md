@@ -13,3 +13,4 @@
 | [0009](0009-operation-graph.md) | 2026-06-21 | landed | Agent-native operation graph | cli, api, workflows, planning, foundation, docs, changelog |
 | [0010](0010-lumen-ops-adapter.md) | 2026-06-21 | landed | Lumen ops adapter | cli, api, lumen, redaction, foundation, docs, changelog |
 | [0011](0011-app-factory-and-release-model.md) | 2026-06-21 | landed | App factory and default GitHub release/deploy model | cli, app-factory, scaffolding, github, release, foundation, docs, changelog |
+| [0012](0012-observability-layer.md) | 2026-06-21 | landed | Built-in observability and telemetry layer | cli, api, observability, manifest, schema, lumen, redaction, foundation, docs, changelog |
