@@ -86,28 +86,6 @@ def receipt_timeline(
     }
 
 
-def receipt_timeline_for_state(
-    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
-    *,
-    app: Optional[str] = None,
-    environment: Optional[str] = None,
-    operation: Optional[str] = None,
-    status: Optional[str] = None,
-    since: Optional[str] = None,
-    until: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Return only the receipt entries (no envelope), for downstream read-models."""
-    return receipt_timeline(
-        runtime_root,
-        app=app,
-        environment=environment,
-        operation=operation,
-        status=status,
-        since=since,
-        until=until,
-    )["receipts"]
-
-
 def _within_bounds(started_at: object, since: Optional[str], until: Optional[str]) -> bool:
     if since is None and until is None:
         return True
@@ -159,9 +137,9 @@ def _receipt_facets(path: Path, warnings: List[Dict[str, str]]) -> Dict[str, Any
     if isinstance(artifacts, list):
         for item in artifacts:
             if isinstance(item, dict):
-                name = item.get("path") or item.get("name")
-                if isinstance(name, str) and name:
-                    facets["artifact_paths"].append(name)
+                path_value = item.get("path")
+                if isinstance(path_value, str) and path_value:
+                    facets["artifact_paths"].append(path_value)
             elif isinstance(item, str) and item:
                 facets["artifact_paths"].append(item)
 

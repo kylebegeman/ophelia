@@ -29,11 +29,13 @@ class CloudflareRollbackHonestyTests(unittest.TestCase):
         portability._cloudflare_request = _fake_request  # type: ignore[assignment]
         os.environ["CF_ROLLBACK_TEST_TOKEN"] = "tok-not-a-secret-in-test"
         try:
+            # Producer shape: delete_record is a bool flag with record_id on the
+            # action (see the traffic rollback-change builder), NOT a nested dict.
             change = {
                 "zone_id": "z1",
                 "api_token_env": "CF_ROLLBACK_TEST_TOKEN",
                 "actions": [
-                    {"delete_record": {"id": "created-1"}},
+                    {"domain": "x.example.com", "delete_record": True, "record_id": "created-1"},
                     {"restore_record": {"id": "r1", "type": "A", "name": "x", "content": "1.2.3.4"}},
                 ],
             }
@@ -48,6 +50,8 @@ class CloudflareRollbackHonestyTests(unittest.TestCase):
         # The delete was recorded as skipped, with a warning — not silently dropped.
         self.assertIn("skipped_actions", result)
         self.assertEqual("cloudflare_delete_not_supported", result["skipped_actions"][0]["reason"])
+        # record_id is derived from the action (producer shape), not a nested dict.
+        self.assertEqual("created-1", result["skipped_actions"][0]["record_id"])
         self.assertTrue(result.get("warnings"))
 
 

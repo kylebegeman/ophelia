@@ -28,6 +28,7 @@ Every public function returns a JSON-serializable dict carrying
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -240,6 +241,11 @@ def _domain_for(app: str) -> str:
     return f"{app}.begam.in"
 
 
+def _internal_domain_for(app: str) -> str:
+    """Internal-only route domain for services with no public route (e.g. workers)."""
+    return f"{app}-internal.begam.in"
+
+
 def _manifest_text(app: str, template: Template, environment: str, owner: str) -> str:
     """Render a `.ophelia.yml` for the template as YAML text.
 
@@ -284,7 +290,7 @@ def _manifest_text(app: str, template: Template, environment: str, owner: str) -
     if template.is_worker:
         # Workers have no public route; a placeholder internal route keeps the
         # manifest valid (routes are required) while signalling internal-only.
-        lines.append(f"  - domain: {app}-internal.begam.in")
+        lines.append(f"  - domain: {_internal_domain_for(app)}")
         lines.append("    service: web")
     else:
         lines.append(f"  - domain: {_domain_for(app)}")
@@ -783,6 +789,17 @@ def create_plan(
             issue("invalid_environment", "`environment` must be dev, staging, or production.")
         )
 
+    # The app id flows into generated domains, image tags, and (hyphen->underscore)
+    # database names, so it must be a DNS-safe label. This also rejects `/`/`..`.
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", app or ""):
+        blockers.append(
+            issue(
+                "invalid_app_name",
+                "`app` must be a DNS-safe label: lowercase letters, digits, and hyphens, "
+                "not starting or ending with a hyphen.",
+            )
+        )
+
     release_label_policy = _release_label_policy()
     deployment_environments = _deployment_environments()
 
@@ -975,6 +992,10 @@ def create_apply(
     if blockers:
         return _blocked_receipt(app, environment, started_at, blockers)
 
+    # Everything written must come from the token-bound apply input, so a tampered
+    # top-level plan `app`/`environment` cannot change the files that get generated.
+    app = str(apply_input.get("app") or app)
+    environment = str(apply_input.get("environment") or environment)
     template_name = str(apply_input.get("template"))
     owner = str(apply_input.get("owner") or "personal")
     template_obj = TEMPLATES.get(template_name)

@@ -23,6 +23,7 @@ mode for metrics is referenced by *name* only (``none``/``bearer_env``/
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -109,7 +110,7 @@ def observability_status(
     logs = _logs_summary(manifest)
     routes = _route_summary(manifest)
 
-    release = _release_summary(runtime_root, app, manifest)
+    release = _release_summary(runtime_root, app)
     backups = _backup_summary(app, resolved_environment, runtime_root, resolution.manifest_path)
     restore_drill = _restore_drill_summary(runtime_root, app)
     receipts_failures = _receipt_failure_summary(runtime_root, app, environment)
@@ -338,7 +339,7 @@ def _route_summary(manifest: Any) -> Dict[str, Any]:
     return {"count": len(routes), "domains": domains}
 
 
-def _release_summary(runtime_root: Path, app: str, manifest: Any) -> Dict[str, Any]:
+def _release_summary(runtime_root: Path, app: str) -> Dict[str, Any]:
     try:
         release = active_release(runtime_root, app)
     except Exception:  # noqa: BLE001 - release metadata is best-effort
@@ -470,6 +471,8 @@ def _apply_http_probe(health: Dict[str, Any], http_timeout: float, warnings: Lis
 def _container_summary(check_docker: bool, app: str, warnings: List[Dict[str, str]]) -> Dict[str, Any]:
     if not check_docker:
         return {"checked": False, "available": None, "containers": []}
+    if os.environ.get("OPHELIA_SKIP_DOCKER_STATUS") == "1":
+        return {"checked": True, "available": False, "containers": []}
     docker_bin = shutil.which("docker")
     if not docker_bin:
         warnings.append(

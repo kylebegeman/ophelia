@@ -195,7 +195,14 @@ def secrets_audit(
 
     keys.sort(key=lambda item: item["name"])
 
-    missing_required = [item for item in keys if item["required"] and not item["present"]]
+    # A placeholder value (e.g. "replace-me") does not satisfy a required key, so
+    # it counts as missing for the required_secrets_present check — keeping that
+    # check consistent with the env-diff's placeholder blocker and the status.
+    missing_required = [
+        item
+        for item in keys
+        if item["required"] and (not item["present"] or item.get("status") == "placeholder")
+    ]
     extra_keys = [item for item in keys if item["status"] == "extra"]
 
     # The manifest env diff already blocks on missing manifest-required keys.

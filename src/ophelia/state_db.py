@@ -50,7 +50,6 @@ from .operation_schema import SCHEMA_VERSION, issue
 from .operator_reports import manifest_registry, release_registry
 from .portability import (
     _backup_records,
-    _receipt_records,
     _redact_manifest_lock,
     _restore_drill_receipts,
 )
@@ -261,27 +260,31 @@ def _populate(
 ) -> Dict[str, int]:
     apps_by_environments: Dict[str, set] = {}
 
-    manifest_count = _index_manifests(connection, runtime_root, apps_by_environments, warnings)
-    route_count = _index_routes(connection, runtime_root, warnings)
-    release_count = _index_releases(connection, runtime_root, apps_by_environments)
-    receipt_count, artifact_count, check_count = _index_receipts(connection, runtime_root, warnings)
-    backup_count = _index_backups(connection, runtime_root, warnings)
-    drill_count = _index_restore_drills(connection, runtime_root, apps_by_environments)
+    _index_manifests(connection, runtime_root, apps_by_environments, warnings)
+    _index_routes(connection, runtime_root, warnings)
+    _index_releases(connection, runtime_root, apps_by_environments)
+    _index_receipts(connection, runtime_root, warnings)
+    _index_backups(connection, runtime_root, warnings)
+    _index_restore_drills(connection, runtime_root, apps_by_environments)
     _index_manifest_registry(connection, manifests_dir, runtime_root, apps_by_environments, warnings)
+    _index_apps(connection, apps_by_environments)
 
-    app_count = _index_apps(connection, apps_by_environments)
-
+    # Report counts from actual row counts rather than running insert counters,
+    # so idempotent re-inserts and id collisions can never inflate the totals.
     return {
-        "apps": app_count,
-        "environments": _count_rows(connection, "environments"),
-        "manifests": manifest_count,
-        "routes": route_count,
-        "releases": release_count,
-        "receipts": receipt_count,
-        "artifacts": artifact_count,
-        "checks": check_count,
-        "backups": backup_count,
-        "restore_drills": drill_count,
+        table: _count_rows(connection, table)
+        for table in (
+            "apps",
+            "environments",
+            "manifests",
+            "routes",
+            "releases",
+            "receipts",
+            "artifacts",
+            "checks",
+            "backups",
+            "restore_drills",
+        )
     }
 
 
@@ -701,7 +704,6 @@ def state_status(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
         schema_version_db = _read_schema_version(connection)
         counts = _counts_from_db(connection)
     except sqlite3.Error as exc:
-        connection.close()
         base["summary"] = f"Local state index is unreadable: {exc}"
         return base
     finally:
@@ -812,20 +814,20 @@ def query_receipts(
             "completed_at, path, rollback_available FROM receipts" + where
             + " ORDER BY COALESCE(started_at, '') DESC, receipt_id DESC"
         )
-        if isinstance(limit, int) and limit >= 0:
+        # limit > 0 applies a cap; limit <= 0 (or None) means "no limit",
+        # matching receipt_timeline which has no limit concept.
+        if isinstance(limit, int) and limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         cursor = connection.execute(sql, params)
         rows = cursor.fetchall()
     except sqlite3.Error as exc:
-        connection.close()
         base["needs_rebuild"] = True
         base["status"] = "error"
         base["summary"] = f"Local state index is unreadable: {exc}. Run `ship state rebuild`."
         return base
     finally:
-        if connection:
-            connection.close()
+        connection.close()
 
     receipts = [
         {

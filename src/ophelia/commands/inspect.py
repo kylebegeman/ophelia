@@ -29,9 +29,27 @@ def run_conflicts(args: Namespace) -> int:
         if report["conflicts"]:
             print("Conflicts:")
             for conflict in report["conflicts"]:
-                print(f"  - {conflict['type']}: {conflict}")
+                print(f"  - {_describe_conflict(conflict)}")
         if report["warnings"]:
             print("Warnings:")
             for warning in report["warnings"]:
-                print(f"  - {warning['type']}: {warning}")
+                print(f"  - {_describe_conflict(warning)}")
     return 0 if report["ok"] else 1
+
+
+def _describe_conflict(item: dict) -> str:
+    """Human one-liner for a conflict/warning item (never a raw dict repr)."""
+    kind = item.get("type")
+    identity = (
+        item.get("domain")
+        or item.get("app")
+        or item.get("alias")
+        or item.get("host_port")
+        or item.get("path")
+        or ""
+    )
+    owners = sorted({str(o.get("app")) for o in item.get("owners", []) if isinstance(o, dict) and o.get("app")})
+    line = f"{kind}: {identity}".rstrip(": ")
+    if owners:
+        line = f"{line} claimed by {', '.join(owners)}"
+    return line

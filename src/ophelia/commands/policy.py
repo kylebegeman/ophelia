@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..operation_schema import error_envelope
 from ..policy import (
     PolicyError,
     evaluate_policy,
@@ -123,7 +124,7 @@ def run_evaluate(args: Namespace) -> int:
 
 def _print_policy_error(exc: PolicyError, as_json: bool) -> int:
     if as_json:
-        print(json.dumps({"error": str(exc), "kind": "ophelia.error"}, indent=2, sort_keys=True))
+        print(json.dumps(error_envelope(str(exc), "policy_error"), indent=2, sort_keys=True))
     else:
         print(f"policy error: {exc}")
     return 1

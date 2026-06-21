@@ -79,7 +79,10 @@ def run(args: Namespace) -> int:
     try:
         manifest = load_manifest(args.manifest)
     except ManifestError as exc:
-        print(f"Manifest invalid: {exc}")
+        if getattr(args, "json", False):
+            print(json.dumps(error_envelope(f"Manifest invalid: {exc}", "manifest_invalid"), indent=2, sort_keys=True))
+        else:
+            print(f"Manifest invalid: {exc}")
         return 1
 
     if args.verify and not args.apply:

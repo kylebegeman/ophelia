@@ -5,6 +5,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..manifest import ManifestError, load_manifest
+from ..operation_schema import error_envelope
 from ..portability import pack_explain_report, pack_init_report, pack_validation_report
 
 
@@ -107,7 +108,7 @@ def run_init(args: Namespace) -> int:
 
 def _print_error(message: str, emit_json: bool) -> int:
     if emit_json:
-        print(json.dumps({"ok": False, "error": message}, indent=2, sort_keys=True))
+        print(json.dumps({"ok": False, **error_envelope(message, "pack_invalid")}, indent=2, sort_keys=True))
     else:
         print(f"Manifest invalid: {message}")
     return 1

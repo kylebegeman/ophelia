@@ -178,7 +178,7 @@ register_cli_descriptor(
         risk="low",
         mutates_state=False,
         requires_confirmation=False,
-        plan_command=None,
+        plan_command="ship backup verify plan",
         apply_command="ship backup verify apply",
         json_kind="ophelia.plan",
         args_schema={

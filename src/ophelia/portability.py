@@ -31,7 +31,7 @@ from .manifest import (
 )
 from .operation_schema import artifact, issue as schema_issue, plan_envelope, receipt_envelope, report_envelope
 from .operator_reports import host_inventory
-from .policy import evaluate_policy, load_policy, policy_check_entry
+from .policy import policy_check_entry
 from .provider_config import validate_provider_config, validate_ttl
 from .remediation import remediation_for
 from .redaction import deep_redact, redact_mapping, redacted_cloudflare_record, redacted_compose_text
@@ -1457,7 +1457,7 @@ def render_app_runbook(readiness: Dict[str, object]) -> str:
         "",
         "## Commands",
         "",
-        f"- Validate pack: `./cli/ship pack validate <manifest> --json`",
+        "- Validate pack: `./cli/ship pack validate <manifest> --json`",
         f"- Check readiness: `./cli/ship app readiness {app} --environment {environment} --json`",
         f"- Plan export: `./cli/ship app export plan {app} --environment {environment} --json`",
         f"- Check backups: `./cli/ship backup status {app} --environment {environment} --json`",
@@ -2488,7 +2488,10 @@ def traffic_status(
         "inputs_redacted": True,
         "secrets_redacted": True,
     }
-    return redact_mapping(payload)
+    # deep_redact recursively masks any nested credential-shaped scalar; the two
+    # status-flag booleans are safe-keyed so they stay True rather than being
+    # masked by their sensitive-looking key names.
+    return deep_redact(payload, safe_keys={"secrets_redacted", "inputs_redacted"})
 
 
 def _latest_record_for(records: List[Dict[str, object]], operation: str) -> Optional[Dict[str, object]]:
@@ -3821,9 +3824,13 @@ def _rollback_cloudflare_dns_provider(change: Dict[str, object]) -> Dict[str, ob
             # NOT executed (the Cloudflare provider never issues a live DELETE).
             # Record it as skipped so the receipt does not imply a deletion that
             # did not happen; the operator must remove it via an approved path.
+            # The producer emits ``delete_record: True`` (bool) with ``record_id``
+            # on the action; tolerate a dict shape too for safety.
             delete_record = action.get("delete_record")
-            if isinstance(delete_record, dict):
-                delete_id = delete_record.get("id")
+            if delete_record:
+                delete_id = action.get("record_id")
+                if delete_id is None and isinstance(delete_record, dict):
+                    delete_id = delete_record.get("id")
                 skipped.append(
                     {
                         "record_id": delete_id if isinstance(delete_id, str) else None,
@@ -3993,7 +4000,10 @@ def _backup_records(backups_root: Path) -> List[Dict[str, object]]:
                 "secrets_redacted_in_report": True,
             }
         )
-    return sorted(records, key=lambda item: str(item.get("created_at") or item["backup_id"]))
+    # created_at is already normalized to a timestamp (or "") at construction;
+    # break ties / empty-timestamp sets deterministically by backup_id so a mixed
+    # set is never ordered by inconsistent keys.
+    return sorted(records, key=lambda item: (str(item.get("created_at") or ""), str(item["backup_id"])))
 
 
 def _backup_threshold_hours(manifest: Optional[Manifest]) -> Optional[float]:

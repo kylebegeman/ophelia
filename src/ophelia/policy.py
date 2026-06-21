@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from .findings import SEVERITIES as KNOWN_SEVERITIES
 from .operation_schema import SCHEMA_VERSION, issue
 
 POLICY_VALIDATION_KIND = "ophelia.policy_validation"
@@ -38,8 +39,8 @@ POLICY_EXPLANATION_KIND = "ophelia.policy_explanation"
 POLICY_FILENAME = "ophelia-policy.yml"
 
 #: Severities a rule may declare. ``blocker`` fails the operation, ``warning``
-#: surfaces a non-blocking concern, ``info`` is advisory only.
-KNOWN_SEVERITIES = ("blocker", "warning", "info")
+#: surfaces a non-blocking concern, ``info`` is advisory only. Imported from
+#: :mod:`ophelia.findings` so the canonical severity vocabulary lives in one place.
 
 #: Top-level keys the engine understands. Anything else is an advisory key and
 #: produces a validation warning (fail open).
@@ -260,7 +261,11 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
         else:
             if rule_id in seen_ids:
                 warnings.append(
-                    issue("policy_rule_duplicate_id", f"Duplicate rule id `{rule_id}` overrides an earlier rule.", f"{path}.id")
+                    issue(
+                        "policy_rule_duplicate_id",
+                        f"Duplicate rule id `{rule_id}`; both rules are evaluated and emit findings with the same code.",
+                        f"{path}.id",
+                    )
                 )
             seen_ids[rule_id] = index
 
@@ -379,6 +384,9 @@ def evaluate_policy(
     always fails closed), ``warn`` when only warnings remain, otherwise ``ok``.
     An operation with no matching rules is ``ok`` with an empty ``rules`` list:
     the policy intentionally does not assert anything about unlisted operations.
+
+    ``app`` is recorded for traceability only and does not participate in rule
+    matching; rules match on operation + environment.
     """
     if policy is None:
         policy = load_policy()

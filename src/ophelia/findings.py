@@ -94,7 +94,7 @@ def finding_from_issue(
         severity=severity,
         area=area,
         message=str(issue.get("message", "")),
-        path=str(path) if path is not None else None,
+        path=str(path) if path else None,
         remediation=remediation,
     )
 
