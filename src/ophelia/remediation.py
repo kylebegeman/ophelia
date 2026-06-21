@@ -272,8 +272,3 @@ def remediation_for(
     resolved_app = app or "<app>"
     resolved_environment = environment or "<environment>"
     return builder(resolved_app, resolved_environment)
-
-
-def known_remediation_codes() -> "tuple[str, ...]":
-    """Return the set of finding codes that have a remediation, sorted."""
-    return tuple(sorted(_REMEDIATIONS))

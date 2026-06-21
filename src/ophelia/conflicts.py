@@ -51,11 +51,11 @@ def scan_conflicts(manifest_dir: Path, runtime_root: Optional[Path] = None) -> D
             None,
             str(report["summary"]),
             blockers=[
-                {"code": str(item.get("type")), "message": str(item), "path": str(item.get("domain") or item.get("path") or "")}
+                {"code": str(item.get("type")), "message": _conflict_message(item), "path": _conflict_path(item)}
                 for item in conflicts
             ],
             warnings=[
-                {"code": str(item.get("type")), "message": str(item)}
+                {"code": str(item.get("type")), "message": _conflict_message(item), "path": _conflict_path(item)}
                 for item in warnings
             ],
             checks=[{"name": "manifest_scan", "ok": not errors, "message": f"{len(manifests)} manifest(s) checked."}],
@@ -66,6 +66,54 @@ def scan_conflicts(manifest_dir: Path, runtime_root: Optional[Path] = None) -> D
     report["conflicts"] = conflicts
     report["warnings"] = warnings
     return report
+
+
+def _conflict_identity(item: Dict[str, object]) -> str:
+    """The most specific identifying field of a conflict/warning, as a string."""
+    for key in ("domain", "route", "app", "alias", "host_port", "path"):
+        value = item.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _conflict_owner_apps(item: Dict[str, object]) -> str:
+    owners = item.get("owners")
+    if isinstance(owners, list):
+        apps = sorted({str(o.get("app")) for o in owners if isinstance(o, dict) and o.get("app")})
+        if apps:
+            return ", ".join(apps)
+    return ""
+
+
+def _conflict_message(item: Dict[str, object]) -> str:
+    """Compose a human-readable message instead of a raw dict repr.
+
+    The structured `conflicts`/`warnings` lists keep the full machine-readable
+    item; this only shapes the envelope `message` so Lumen/operators do not have
+    to parse a Python dict string.
+    """
+    kind = str(item.get("type"))
+    if item.get("error"):
+        target = item.get("path") or _conflict_identity(item)
+        return f"{kind}: {target}: {item.get('error')}".strip(": ")
+    identity = _conflict_identity(item)
+    message = f"{kind}: {identity}" if identity else kind
+    owners = _conflict_owner_apps(item)
+    if owners:
+        message = f"{message} claimed by {owners}"
+    return message
+
+
+def _conflict_path(item: Dict[str, object]) -> str:
+    return str(
+        item.get("domain")
+        or item.get("app")
+        or item.get("alias")
+        or item.get("host_port")
+        or item.get("path")
+        or ""
+    )
 
 
 def _duplicate_app_ids(manifests: List[Tuple[Path, Manifest, Dict[str, object]]], conflicts: List[Dict[str, object]]) -> None:

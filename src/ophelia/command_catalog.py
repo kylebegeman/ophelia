@@ -292,7 +292,7 @@ def _ensure_cli_descriptors_loaded() -> None:
     """
     try:
         import ophelia.commands  # noqa: F401  (import side effects register CLI descriptors)
-    except Exception:
+    except ImportError:
         pass
 
 

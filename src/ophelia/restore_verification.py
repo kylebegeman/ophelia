@@ -44,10 +44,8 @@ from .portability import (
     _backup_threshold_hours,
     _freshness_status,
     _read_json,
-    _receipt_records,
     _restore_drill_receipts,
     _utc_now,
-    backup_status_report,
     resolve_app_manifest,
 )
 from .redaction import deep_redact
@@ -87,8 +85,7 @@ def backup_verify_plan(
 
     critical = bool(manifest and manifest.pack.portability == "critical")
     data_contracts = _expected_data_contracts(manifest)
-    backup_status = backup_status_report(app, resolved_environment, runtime_root, resolution.manifest_path)
-    freshness = backup_status.get("freshness") if isinstance(backup_status.get("freshness"), dict) else {}
+    freshness = _freshness_status(backups[-1] if backups else None, _backup_threshold_hours(manifest))
 
     selected_id = str(selected["backup_id"]) if selected else None
     selected_path = str(selected["path"]) if selected else None
@@ -454,7 +451,7 @@ def _planned_verification_commands(
         {"name": "backup_exists", "type": "filesystem", "executed_by_apply": True, "description": "Confirm the backup file/dir exists."},
         {"name": "checksum_match", "type": "checksum", "executed_by_apply": True, "description": "Verify checksums.sha256 if present."},
         {"name": "archive_listing", "type": "tarfile", "executed_by_apply": True, "description": "List archive members without extracting over production."},
-        {"name": "metadata_match", "type": "metadata", "executed_by_apply": True, "description": "Confirm backup manifest app/environment match."},
+        {"name": "metadata_match", "type": "metadata", "executed_by_apply": True, "description": "Confirm backup manifest app matches."},
     ]
     restore_command = _restore_rehearsal_command(manifest, rehearsal_target)
     commands.append(
@@ -542,7 +539,7 @@ def _run_verification_checks(
     # (3) archive listing succeeds (list only, never extract over production).
     checks.append(_archive_listing_check(backup_path))
 
-    # (4) metadata matches app/environment.
+    # (4) metadata matches app.
     checks.append(_metadata_match_check(backup_path, app, environment, warnings))
 
     # (5) restore-command rehearsal: described, not executed by default.

@@ -168,8 +168,9 @@ def dashboard_data(
     status + portability score, open blocker counts/codes (codes only, never the
     full secret-bearing finding payloads), recent receipts (capped at
     :data:`_DASHBOARD_RECEIPT_LIMIT`), route-conflict counts, and backup
-    freshness. ``traffic_status`` and ``observability`` are reserved placeholder
-    keys (``None``) that later phases fill in.
+    freshness. Each per-app entry's ``observability`` is populated with a compact
+    summary; the top-level ``observability`` and ``traffic_status`` remain
+    reserved placeholder keys (``None``) that later phases fill in.
 
     Resilient by construction: a failing per-app sub-report becomes a structured
     ``warnings`` entry, never a crash. The whole assembled payload is run through
@@ -219,6 +220,8 @@ def dashboard_data(
             "warning": sum(1 for entry in entries if entry.get("readiness_level") == "warning"),
         },
         # Reserved for later phases; explicitly null so the shape is stable now.
+        # Per-app entries carry a populated ``observability`` summary; these
+        # top-level aggregates are not yet computed.
         "traffic_status": None,
         "observability": None,
         "summary": (
@@ -248,7 +251,8 @@ def _dashboard_app_entry(
         "recent_receipts": [],
         "route_conflicts": {"count": 0, "ok": None},
         "backup_freshness": None,
-        # Reserved per-app placeholders for later phases.
+        # ``traffic_status`` is a reserved per-app placeholder for later phases;
+        # ``observability`` is populated below with a compact summary.
         "traffic_status": None,
         "observability": None,
     }

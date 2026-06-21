@@ -440,7 +440,6 @@ def plan_workflow(
 
     plan = dict(plan_without_artifact)
     plan["artifacts"] = artifacts
-    plan["warnings"] = warnings
     return plan
 
 

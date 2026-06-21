@@ -105,6 +105,8 @@ def _object_properties(
     required: List[str] = []
     hints = typing.get_type_hints(dataclass_type)
     for f in dataclasses.fields(dataclass_type):
+        if f.name == "extra":
+            continue
         field_path = f"{prefix}.{f.name}" if prefix else f.name
         key = _FIELD_KEY_ALIASES.get(f.name, f.name)
         properties[key] = _schema_for_type(hints.get(f.name, f.type), field_path)

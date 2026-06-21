@@ -133,13 +133,21 @@ def redact_mapping(
 def deep_redact(obj: Any, *, marker: str = REDACTED, safe_keys: Iterable[str] = ()) -> Any:
     """Recursively mask secret-bearing scalars in nested dicts/lists.
 
-    A scalar is masked when its enclosing key is sensitive
-    (:func:`is_sensitive_key`) or its value shape looks like a credential
-    (:func:`looks_like_secret_value`). Structure (keys, list order, non-secret
-    scalars such as booleans, ports, and plain strings) is preserved so the
-    result stays useful as metadata. Use this for defense-in-depth on payloads
-    whose nested shape is not fully known (manifest locks, backup manifests)
-    before they reach a report, the state DB, or an API response.
+    A scalar is masked when its immediately-enclosing key is sensitive
+    (:func:`is_sensitive_key`) or its own value shape looks like a credential
+    (:func:`looks_like_secret_value`), recursing through dicts and lists at any
+    depth. Structure (keys, list order, and non-secret scalars such as booleans,
+    ports, and plain strings) is preserved so the result stays useful as metadata.
+    Use this on payloads whose nested shape is not fully known (manifest locks,
+    backup manifests, provider configs) before they reach a report, the state DB,
+    or an API response.
+
+    Note: sensitivity is decided per-key, not propagated into a whole subtree
+    under a sensitive key, so a secret scalar held under a sensitive-named
+    *container* with a benign inner key (``{"secret": {"x": "v"}}``) is not
+    masked. Propagation was considered but over-redacts legitimate metadata
+    payloads (e.g. JSON-schema descriptors keyed by names like ``confirm_token``);
+    see the deferred audit item.
     """
     safe = set(safe_keys)
 

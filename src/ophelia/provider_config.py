@@ -18,7 +18,7 @@ Two invariants this module exists to enforce:
 The validator and explainer mirror :func:`ophelia.operation_schema.report_envelope`
 structure (``schema_version``, ``kind``, ``status``, ``blockers``, ``warnings``,
 ``checks``) but carry their own ``kind`` strings. Every output is routed through
-:func:`ophelia.redaction.redact_mapping` before return so no value can leak.
+:func:`ophelia.redaction.deep_redact` before return so no nested value can leak.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .config import DEFAULT_RUNTIME_ROOT
 from .operation_schema import SCHEMA_VERSION, error_envelope, issue
-from .redaction import redact_mapping
+from .redaction import deep_redact, is_sensitive_key
 
 # Provider groups and the types we understand within each.
 KNOWN_PROVIDER_TYPES: Dict[str, Tuple[str, ...]] = {
@@ -37,9 +37,21 @@ KNOWN_PROVIDER_TYPES: Dict[str, Tuple[str, ...]] = {
     "caddy": ("file",),
 }
 
-# Keys that, when carrying a literal value on a provider object, are a secret
-# leak. The accepted pattern is an ``*_env`` reference that names an env var.
-RAW_SECRET_KEYS = ("api_token", "token", "secret", "password", "private_key")
+# Example secret-bearing key names shown in the remediation message. The actual
+# detection uses :func:`is_sensitive_key` (so api_key/access_token/client_secret/
+# etc. are all caught), while any ``*_env`` reference is permitted.
+RAW_SECRET_KEYS = ("api_token", "token", "secret", "password", "private_key", "api_key")
+
+
+def _is_raw_secret_key(key: str) -> bool:
+    """True for a key that should carry an ``*_env`` reference, not a literal.
+
+    Reuses the central sensitivity definition so the set stays in sync with
+    :data:`ophelia.redaction.SENSITIVE_KEY_PATTERNS`; ``*_env`` names are the
+    accepted reference form and are never treated as raw secrets.
+    """
+    lowered = key.lower()
+    return is_sensitive_key(key) and not lowered.endswith("_env")
 
 VALIDATION_KIND = "ophelia.provider_config.validation"
 EXPLANATION_KIND = "ophelia.provider_config.explanation"
@@ -179,11 +191,10 @@ def _raw_secret_findings(group: str, provider_type: str, index: int, section: Di
     for key in section:
         if not isinstance(key, str):
             continue
-        lowered = key.lower()
-        if lowered in RAW_SECRET_KEYS:
-            value = section.get(key)
-            # An empty value is still wrong shape (should be an *_env ref) but we
-            # block on presence of the literal key regardless to keep it simple.
+        if _is_raw_secret_key(key):
+            # We block on presence of the literal key regardless of its value
+            # (an empty literal is still the wrong shape: it should be an *_env
+            # ref). The value itself is never read or echoed.
             findings.append(
                 issue(
                     "provider_token_must_be_env_ref",
@@ -306,7 +317,7 @@ def validate_provider_config(config_path: Path) -> Dict[str, Any]:
     config, error = _load_config(config_path)
     if error is not None:
         error["config_path"] = str(config_path)
-        return redact_mapping(error)
+        return deep_redact(error)
 
     assert config is not None
     declared = _declared_providers(config)
@@ -380,7 +391,7 @@ def validate_provider_config(config_path: Path) -> Dict[str, Any]:
         ],
         "values_redacted": True,
     }
-    return redact_mapping(payload)
+    return deep_redact(payload)
 
 
 def explain_provider_config(config_path: Path) -> Dict[str, Any]:
@@ -389,7 +400,7 @@ def explain_provider_config(config_path: Path) -> Dict[str, Any]:
     config, error = _load_config(config_path)
     if error is not None:
         error["config_path"] = str(config_path)
-        return redact_mapping(error)
+        return deep_redact(error)
 
     assert config is not None
     declared = _declared_providers(config)
@@ -458,4 +469,4 @@ def explain_provider_config(config_path: Path) -> Dict[str, Any]:
         "warnings": [],
         "values_redacted": True,
     }
-    return redact_mapping(payload)
+    return deep_redact(payload)

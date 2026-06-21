@@ -8,6 +8,7 @@ from ..app_factory import create_apply, create_plan, templates_explain, template
 from ..app_registry import app_health, app_logs, find_app
 from ..command_catalog import RECEIPT_SCHEMA_REF, CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from ..operation_schema import error_envelope
 from ..portability import (
     app_readiness_report,
     app_runbook_report,
@@ -251,7 +252,7 @@ def register(subparsers: _SubParsersAction) -> None:
     create_apply_group.add_argument("--plan", type=Path, help="Path to a saved plan JSON")
     create_apply_group.add_argument(
         "--plan-id",
-        help="App id + template + owner + environment to re-derive the plan, as `app:template:owner:environment`",
+        help="App id + template (+ optional owner + environment) to re-derive the plan, as `app:template[:owner[:environment]]`",
     )
     create_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from app create plan")
     create_apply_parser.add_argument(
@@ -638,7 +639,7 @@ def run_create_apply(args: Namespace) -> int:
             return _print_error("Plan JSON must be an object.", args.json)
     else:
         parts = str(args.plan_id).split(":")
-        if len(parts) < 2:
+        if len(parts) < 2 or len(parts) > 4:
             return _print_error(
                 "--plan-id must be `app:template[:owner[:environment]]`.", args.json
             )
@@ -675,7 +676,7 @@ def run_create_apply(args: Namespace) -> int:
 
 def _print_error(message: str, emit_json: bool) -> int:
     if emit_json:
-        print(json.dumps({"ok": False, "error": message}, indent=2, sort_keys=True))
+        print(json.dumps({"ok": False, **error_envelope(message, "app_command_error")}, indent=2, sort_keys=True))
     else:
         print(message)
     return 1
