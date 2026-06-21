@@ -4,7 +4,9 @@ import json
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
+from ..app_factory import create_apply, create_plan, templates_explain, templates_list
 from ..app_registry import app_health, app_logs, find_app
+from ..command_catalog import RECEIPT_SCHEMA_REF, CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..portability import (
     app_readiness_report,
@@ -217,6 +219,47 @@ def register(subparsers: _SubParsersAction) -> None:
     isolation_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     isolation_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     isolation_plan_parser.set_defaults(handler=run_isolation_plan)
+
+    create = app_subparsers.add_parser("create", help="Scaffold a new app from a template")
+    create_subparsers = create.add_subparsers(dest="app_create_command")
+    create_plan_parser = create_subparsers.add_parser(
+        "plan", help="Plan an app scaffold without writing anything"
+    )
+    create_plan_parser.add_argument("--app", required=True, help="App id (used for the manifest and domains)")
+    create_plan_parser.add_argument("--template", required=True, help="Template name (see `app templates list`)")
+    create_plan_parser.add_argument("--owner", default="personal", help="Owner label for the manifest pack")
+    create_plan_parser.add_argument(
+        "--environment", choices=["dev", "staging", "production"], default="production"
+    )
+    create_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    create_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    create_plan_parser.set_defaults(handler=run_create_plan)
+    create_apply_parser = create_subparsers.add_parser(
+        "apply", help="Write scaffold files only under --target-dir, gated by a confirmation token"
+    )
+    create_apply_group = create_apply_parser.add_mutually_exclusive_group(required=True)
+    create_apply_group.add_argument("--plan", type=Path, help="Path to a saved plan JSON")
+    create_apply_group.add_argument(
+        "--plan-id",
+        help="App id + template + owner + environment to re-derive the plan, as `app:template:owner:environment`",
+    )
+    create_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from app create plan")
+    create_apply_parser.add_argument(
+        "--target-dir", type=Path, required=True, help="Workdir to scaffold into (outside runtime root and repo)"
+    )
+    create_apply_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    create_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    create_apply_parser.set_defaults(handler=run_create_apply)
+
+    templates = app_subparsers.add_parser("templates", help="List and explain app scaffold templates")
+    templates_subparsers = templates.add_subparsers(dest="app_templates_command")
+    templates_list_parser = templates_subparsers.add_parser("list", help="List available templates")
+    templates_list_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    templates_list_parser.set_defaults(handler=run_templates_list)
+    templates_explain_parser = templates_subparsers.add_parser("explain", help="Explain one template")
+    templates_explain_parser.add_argument("template", help="Template name")
+    templates_explain_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    templates_explain_parser.set_defaults(handler=run_templates_explain)
 
 
 def run_health(args: Namespace) -> int:
@@ -520,6 +563,104 @@ def run_isolation_plan(args: Namespace) -> int:
     return 0 if not plan["blockers"] else 1
 
 
+def run_templates_list(args: Namespace) -> int:
+    report = templates_list()
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(f"{len(report['templates'])} app template(s):")
+        for template in report["templates"]:
+            print(f"  {template['name']}\t{template['kind']}\t{template['summary']}")
+    return 0
+
+
+def run_templates_explain(args: Namespace) -> int:
+    report = templates_explain(args.template)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        if report.get("kind") == "ophelia.error":
+            print(report.get("error", "Unknown template."))
+            return 1
+        print(f"{report['name']}: {report['summary']}")
+        print(f"  manifest kind: {report['manifest_kind']} (portability {report['portability']})")
+        print("  required secrets: " + ", ".join(report["requires_secrets"]))
+        print("  files:")
+        for path in report["files"]:
+            print(f"    - {path}")
+    return 0 if report.get("kind") != "ophelia.error" else 1
+
+
+def run_create_plan(args: Namespace) -> int:
+    plan = create_plan(
+        app=args.app,
+        template=args.template,
+        owner=args.owner,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+    )
+    if args.json:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    else:
+        print(plan["summary"])
+        print(f"App: {plan['app']}")
+        print(f"Template: {plan.get('template')}")
+        print(f"Environment: {plan['environment']}")
+        _print_string_items("Blockers", plan.get("blockers", []))
+        _print_string_items("Warnings", plan.get("warnings", []))
+        if plan.get("files"):
+            print("Files to create (only under your --target-dir):")
+            for entry in plan["files"]:
+                print(f"  - {entry['path']}")
+        print(f"Confirmation token: {plan.get('confirmation_token')}")
+    return 0 if not plan["blockers"] else 1
+
+
+def run_create_apply(args: Namespace) -> int:
+    if args.plan is not None:
+        try:
+            plan = json.loads(Path(args.plan).read_text())
+        except (OSError, ValueError) as exc:
+            return _print_error(f"Could not read plan JSON: {exc}", args.json)
+        if not isinstance(plan, dict):
+            return _print_error("Plan JSON must be an object.", args.json)
+    else:
+        parts = str(args.plan_id).split(":")
+        if len(parts) < 2:
+            return _print_error(
+                "--plan-id must be `app:template[:owner[:environment]]`.", args.json
+            )
+        app = parts[0]
+        template = parts[1]
+        owner = parts[2] if len(parts) > 2 and parts[2] else "personal"
+        environment = parts[3] if len(parts) > 3 and parts[3] else "production"
+        plan = create_plan(
+            app=app,
+            template=template,
+            owner=owner,
+            environment=environment,
+            runtime_root=args.runtime_root,
+        )
+
+    receipt = create_apply(
+        plan,
+        confirm=args.confirm,
+        target_dir=args.target_dir,
+        runtime_root=args.runtime_root,
+    )
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        print(f"App create apply {receipt['status']}.")
+        if receipt["status"] == "succeeded":
+            print(f"Target: {receipt.get('target_dir')}")
+            print("Wrote:")
+            for path in receipt.get("written_paths", []):
+                print(f"  - {path}")
+        _print_string_items("Blockers", receipt.get("blockers", []))
+    return 0 if receipt["status"] == "succeeded" else 1
+
+
 def _print_error(message: str, emit_json: bool) -> int:
     if emit_json:
         print(json.dumps({"ok": False, "error": message}, indent=2, sort_keys=True))
@@ -570,3 +711,115 @@ def _print_string_items(label: str, value: object) -> None:
             print(f"  - {item.get('message') or item}")
         else:
             print(f"  - {item}")
+
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app templates list",
+        operation="app.templates.list",
+        summary="List app scaffold templates with required secrets and generated files.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.app_templates",
+        args_schema={
+            "type": "object",
+            "properties": {"json": {"type": "boolean"}},
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.app_templates.v1",
+        artifacts=[],
+        safety_notes=["Read-only template discovery. No mutation; secrets named only."],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app templates explain",
+        operation="app.templates.explain",
+        summary="Explain one app scaffold template (manifest shape, secrets, files).",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.app_template",
+        args_schema={
+            "type": "object",
+            "properties": {"template": {"type": "string"}, "json": {"type": "boolean"}},
+            "required": ["template"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.app_template.v1",
+        artifacts=[],
+        safety_notes=["Read-only template detail. No mutation; secrets named only."],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app create plan",
+        operation="app.create.plan",
+        summary="Plan an app scaffold. Read-only: writes nothing and calls no GitHub API.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command="ship app create plan",
+        apply_command="ship app create apply",
+        json_kind="ophelia.app_create_plan",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "template": {"type": "string"},
+                "owner": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app", "template"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.app_create_plan.v1",
+        artifacts=["generated scaffold files (preview only)"],
+        safety_notes=[
+            "Read-only. Writes nothing to disk; GitHub provisioning is described, never executed.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app create apply",
+        operation="app.create.apply",
+        summary="Write scaffold files only under --target-dir, gated by a confirmation token.",
+        risk="medium",
+        mutates_state=True,
+        requires_confirmation=True,
+        plan_command="ship app create plan",
+        apply_command="ship app create apply",
+        json_kind="ophelia.receipt",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "plan": {"type": "string"},
+                "plan_id": {"type": "string"},
+                "confirm": {"type": "string"},
+                "target_dir": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["confirm", "target_dir"],
+            "additionalProperties": False,
+        },
+        output_schema_ref=RECEIPT_SCHEMA_REF,
+        artifacts=["scaffolded app files under the target dir", "apply receipt"],
+        safety_notes=[
+            "Writes only inside the explicit --target-dir; refuses targets inside the runtime root or repo.",
+            "No VPS, SSH, or GitHub mutation. Secrets referenced by name only.",
+        ],
+    )
+)

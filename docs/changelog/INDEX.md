@@ -12,3 +12,4 @@
 | [0008](0008-policy-engine.md) | 2026-06-21 | landed | Deterministic safety-policy engine | cli, policy, planning, traffic, portability, foundation, docs, changelog |
 | [0009](0009-operation-graph.md) | 2026-06-21 | landed | Agent-native operation graph | cli, api, workflows, planning, foundation, docs, changelog |
 | [0010](0010-lumen-ops-adapter.md) | 2026-06-21 | landed | Lumen ops adapter | cli, api, lumen, redaction, foundation, docs, changelog |
+| [0011](0011-app-factory-and-release-model.md) | 2026-06-21 | landed | App factory and default GitHub release/deploy model | cli, app-factory, scaffolding, github, release, foundation, docs, changelog |
