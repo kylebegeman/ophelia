@@ -10,3 +10,5 @@
 | [0006](0006-receipt-timeline-and-dryrun-diffs.md) | 2026-06-21 | landed | Receipt timeline and dry-run diff artifacts | cli, receipts, planning, traffic, redaction, foundation, docs, changelog |
 | [0007](0007-runtime-state-database.md) | 2026-06-21 | landed | Runtime state SQLite read-model | cli, api, state, redaction, foundation, docs, changelog |
 | [0008](0008-policy-engine.md) | 2026-06-21 | landed | Deterministic safety-policy engine | cli, policy, planning, traffic, portability, foundation, docs, changelog |
+| [0009](0009-operation-graph.md) | 2026-06-21 | landed | Agent-native operation graph | cli, api, workflows, planning, foundation, docs, changelog |
+| [0010](0010-lumen-ops-adapter.md) | 2026-06-21 | landed | Lumen ops adapter | cli, api, lumen, redaction, foundation, docs, changelog |

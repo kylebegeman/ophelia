@@ -4,15 +4,23 @@ import json
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .actions import ActionError, action_catalog, cancel_job, run_job
 from .command_catalog import catalog as command_catalog
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from .lumen_adapter import (
+    action_descriptors as lumen_action_descriptors,
+    app_readiness as lumen_app_readiness,
+    app_timeline as lumen_app_timeline,
+    capabilities as lumen_capabilities,
+    dashboard_data as lumen_dashboard_data,
+)
 from .operator_reports import host_inventory, manifest_registry, release_registry
 from .operations import list_operations, run_operation
 from .schema_export import manifest_json_schema
 from .state_db import SQLITE_AVAILABLE, query_receipts, state_db_path, state_status
+from .workflows import list_workflow_templates, show_workflow
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> None:
@@ -63,6 +71,14 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         if parsed.path == "/operations":
             self._json(list_operations())
             return
+        if parsed.path == "/workflows":
+            self._json(list_workflow_templates())
+            return
+        if parsed.path.startswith("/workflows/"):
+            workflow_id = parsed.path.split("/", 2)[2]
+            # Missing graph -> HTTP 200 with a workflow_not_found blocker, never 500.
+            self._json(show_workflow(workflow_id, self.runtime_root_value))
+            return
         if parsed.path == "/state/status":
             self._json(state_status(self.runtime_root_value))
             return
@@ -77,6 +93,21 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/state/backups":
             self._json(self._state_table("backups", "backup_id"))
+            return
+        if parsed.path == "/lumen/capabilities":
+            self._json(lumen_capabilities(self.runtime_root_value))
+            return
+        if parsed.path == "/lumen/dashboard-data":
+            self._json(lumen_dashboard_data(self.runtime_root_value, REPO_ROOT / "manifests"))
+            return
+        if parsed.path == "/lumen/action-descriptors":
+            self._json(lumen_action_descriptors())
+            return
+        if parsed.path == "/lumen/apps":
+            self._json(self._lumen_apps())
+            return
+        if parsed.path.startswith("/lumen/apps/"):
+            self._lumen_app_subresource(parsed)
             return
         if parsed.path.startswith("/jobs/") and parsed.path.endswith("/events"):
             job_id = parsed.path.split("/")[2]
@@ -223,6 +254,57 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         base[table] = rows
         base["summary"] = f"{len(rows)} {table} record(s) from the local state index."
         return base
+
+    def _lumen_apps(self) -> dict:
+        """List apps/environments from the manifest registry, framed for Lumen.
+
+        Degrades gracefully: a missing manifests directory yields an empty
+        ``apps`` list (HTTP 200), never a 500.
+        """
+        registry = manifest_registry(REPO_ROOT / "manifests", self.runtime_root_value)
+        apps = [
+            {
+                "app": entry.get("app"),
+                "environment": entry.get("environment"),
+                "manifest_path": entry.get("manifest_path"),
+                "domains": entry.get("domains", []),
+            }
+            for entry in registry.get("manifests", [])
+            if isinstance(entry, dict)
+        ]
+        return {
+            "schema_version": 1,
+            "kind": "ophelia.lumen.apps",
+            "apps": apps,
+            "errors": registry.get("errors", []),
+            "summary": f"{len(apps)} app/environment(s) from the manifest registry.",
+        }
+
+    def _lumen_app_subresource(self, parsed) -> None:
+        """Handle ``/lumen/apps/<app>/readiness`` and ``/lumen/apps/<app>/timeline``.
+
+        ``environment`` may be supplied as a query parameter. Unknown
+        subresources return a 404 error envelope; data sub-reports degrade
+        gracefully (the readiness/timeline reports surface their own blockers
+        rather than raising), so there is no 500.
+        """
+        # Path shape: /lumen/apps/<app>/<subresource>
+        remainder = parsed.path[len("/lumen/apps/"):]
+        parts = [segment for segment in remainder.split("/") if segment]
+        if len(parts) != 2:
+            self._error("not found", status=404, code="not_found")
+            return
+        app = unquote(parts[0])
+        subresource = parts[1]
+        query = parse_qs(parsed.query)
+        environment = query.get("environment", [None])[0]
+        if subresource == "readiness":
+            self._json(lumen_app_readiness(app, environment, self.runtime_root_value))
+            return
+        if subresource == "timeline":
+            self._json(lumen_app_timeline(app, environment, self.runtime_root_value))
+            return
+        self._error("not found", status=404, code="not_found")
 
     def log_message(self, format, *args):  # noqa: A003
         return

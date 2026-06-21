@@ -17,6 +17,7 @@ from .host import register as register_host
 from .inspect import register as register_inspect
 from .jobs import register as register_jobs
 from .list_apps import register as register_list
+from .lumen import register as register_lumen
 from .notes import register as register_notes
 from .operations import register as register_operations
 from .pack import register as register_pack
@@ -36,6 +37,7 @@ from .state import register as register_state
 from .status import register as register_status
 from .validate import register as register_validate
 from .verify import register as register_verify
+from .workflows import register as register_workflows
 
 
 def register_commands(subparsers):
@@ -75,5 +77,7 @@ def register_commands(subparsers):
     register_doctor(subparsers)
     register_inspect(subparsers)
     register_list(subparsers)
+    register_lumen(subparsers)
     register_release(subparsers)
     register_rollback(subparsers)
+    register_workflows(subparsers)
