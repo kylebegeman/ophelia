@@ -198,15 +198,11 @@ into a real runtime root.
 
 ## Legacy Snapshot Records
 
-The earlier Quark staging snapshot records are retained as historical evidence:
-
-- [`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md)
-- [`quark-ops-staging-live-evidence-pass-2026-06-22.md`](scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md)
-
-Those records are not the forward test model. New hydration behavior should be
-proved with synthetic fixtures first. Real retained products should receive
-their own profiles and evidence only during an approved adoption, migration, or
-production deployment phase.
+Earlier private live snapshot scratchpad records were removed from the public
+tree during open-source readiness cleanup. They are not the forward test model.
+New hydration behavior should be proved with synthetic fixtures first. Real
+retained products should receive their own profiles and evidence only during an
+approved adoption, migration, or production deployment phase.
 
 ## Safety Contract
 

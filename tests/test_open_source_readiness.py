@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -60,6 +61,24 @@ class OpenSourceReadinessTests(unittest.TestCase):
         self.assertIn("personal_local_path", codes)
         self.assertGreaterEqual(report["warning_count"], 1)
 
+    def test_deleted_tracked_file_does_not_crash_or_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_public_governance(root)
+            scratchpad = root / "docs" / "scratchpad" / "note.md"
+            _write(scratchpad, "private working note\n")
+            try:
+                subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+                subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+            except (OSError, subprocess.CalledProcessError):
+                self.skipTest("git is required for deleted tracked file coverage")
+            scratchpad.unlink()
+
+            report = open_source_audit_report(root=root)
+
+        self.assertEqual("ok", report["status"])
+        self.assertEqual([], report["blockers"])
+
     def test_cli_json_and_catalog_descriptor_are_registered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -82,6 +101,14 @@ class OpenSourceReadinessTests(unittest.TestCase):
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _write_public_governance(root: Path) -> None:
+    _write(root / "LICENSE", "Apache License placeholder\n")
+    _write(root / "SECURITY.md", "Report security issues through private disclosure.\n")
+    _write(root / "CONTRIBUTING.md", "Use signed-off commits.\n")
+    _write(root / "CODE_OF_CONDUCT.md", "Community standards.\n")
+    _write(root / "SUPPORT.md", "Community support policy.\n")
 
 
 if __name__ == "__main__":

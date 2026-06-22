@@ -25,9 +25,9 @@ three Prism staging secrets verified from the upstream Quark workflow.
     `PRISM_CREDENTIAL_ENCRYPTION_KEY`
   - `QUARK_STAGING_MFA_ENCRYPTION_KEY` -> `PRISM_MFA_ENCRYPTION_KEY`
 - Reran hydration, probe gate, and focused live-readiness summaries.
-- Added
-  [`quark-ops-staging-live-evidence-pass-2026-06-22.md`](../scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md)
-  with commands, results, improved counts, and remaining blockers.
+- Recorded private operator notes with commands, results, improved counts, and
+  remaining blockers. Those scratchpad notes are intentionally not part of the
+  public tree.
 - Updated README, roadmap, live hydration docs, product findings, live baseline
   scratchpad, and changelog index.
 

@@ -620,7 +620,7 @@ running HTTP, Docker, authenticated provider, or mutation probes.
   Ops production/staging focused profiles.
 - Run first read-only live baseline against repo manifests and
   `~/ophelia-runtime`.
-- Record live baseline findings in `docs/scratchpad/`.
+- Record private live baseline findings outside the public repo.
 - Preserve secret-provider metadata counts/status in live-readiness output
   without exposing values.
 
@@ -882,8 +882,7 @@ secret and no-probe safety boundary.
   `~/ophelia-runtime/hydration/quark-ops-staging/staging`.
 - Rerun hydration, evidence validation, promotion planning, and probe gate.
 - Document the exact commands, safe mutations, non-mutations, results, and
-  remaining blockers in
-  [`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md).
+  remaining blockers in private operator notes outside the public repo.
 
 **Dependencies:** Phase 16 promotion plan, Phase 15 probe gate, and the local
 Quark staging live drill profile.
@@ -924,8 +923,8 @@ be verified without reading or inventing secret values.
   `~/ophelia-runtime/github/secret-observations/quark-ops-staging.staging.json`.
 - Rerun hydration, probe gate, and focused live-readiness summaries.
 - Document the commands, runtime evidence written, improved counts, remaining
-  blockers, and safety boundary in
-  [`quark-ops-staging-live-evidence-pass-2026-06-22.md`](scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md).
+  blockers, and safety boundary in private operator notes outside the public
+  repo.
 
 **Dependencies:** Phase 18 live snapshot attempt and GitHub CLI read access to
 the Prism repository metadata.

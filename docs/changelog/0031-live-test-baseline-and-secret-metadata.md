@@ -29,8 +29,9 @@ and necessary for operators to understand missing secret-name observations.
   containers while still redacting actual secret-shaped values.
 - `tests/test_live_drills.py` and `tests/test_live_readiness.py`: cover local
   profile loading, path expansion, and visible secret-provider metadata.
-- `docs/scratchpad/live-test-baseline-2026-06-22.md`: records the first
-  read-only live baseline and next safe steps.
+- Private operator notes recorded the first read-only live baseline and next
+  safe steps; those scratchpad notes are intentionally not part of the public
+  tree.
 - README and live drill docs updated with local profile usage.
 
 ## Contract Impact

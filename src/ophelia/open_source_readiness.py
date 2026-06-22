@@ -183,7 +183,12 @@ def open_source_audit_report(
 def _tracked_or_recursive_files(root: Path) -> List[Path]:
     tracked = _git_ls_files(root)
     if tracked is not None:
-        return [root / rel for rel in tracked if _is_scannable_path(root / rel)]
+        files = []
+        for rel in tracked:
+            path = root / rel
+            if path.exists() and _is_scannable_path(path):
+                files.append(path)
+        return files
     return sorted(path for path in root.rglob("*") if path.is_file() and _is_scannable_path(path))
 
 
@@ -271,7 +276,7 @@ def _content_findings(root: Path, files: Iterable[Path]) -> List[Dict[str, Any]]
     for path in files:
         try:
             content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+        except (FileNotFoundError, UnicodeDecodeError):
             continue
         rel = path.relative_to(root) if _is_relative_to(path, root) else Path(_relative_display(path))
         for line_number, line in enumerate(content.splitlines(), start=1):

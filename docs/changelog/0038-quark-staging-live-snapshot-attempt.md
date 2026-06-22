@@ -20,9 +20,9 @@ the remaining real-evidence blockers were documented.
 - Ran host readiness, hydration, evidence validation, promotion planning, and
   probe gate against the current local state.
 - Checked GitHub secret-name availability through `gh` without reading values.
-- Added
-  [`quark-ops-staging-live-snapshot-2026-06-22.md`](../scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md)
-  with commands, mutations, non-mutations, results, and remaining blockers.
+- Recorded private operator notes with commands, mutations, non-mutations,
+  results, and remaining blockers. Those scratchpad notes are intentionally not
+  part of the public tree.
 - Updated README, roadmap, live baseline scratchpad, and changelog index.
 
 ## Safety

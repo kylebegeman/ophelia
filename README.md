@@ -193,7 +193,8 @@ starting SSH and never prints their values.
 28. Phase 26 has landed: `ship open-source audit` now provides a read-only public-release hygiene gate and documents the license/readiness path.
 29. Phase 27 has landed: public examples, tests, generated domains, and shared Caddy static mount defaults no longer assume private hostnames or one operator path.
 30. Phase 28 has landed: the public README is fixture-first and no longer exposes private host/path examples or private legacy deployment recipes.
-31. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+31. Phase 29 has landed: private scratchpad notes were removed from the public tree, with durable docs updated to reference private operator notes instead.
+32. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
