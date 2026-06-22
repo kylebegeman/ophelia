@@ -65,6 +65,22 @@ Temporary scaffold validation smoke:
 make live-hydration-validate-evidence-quark-staging
 ```
 
+Check whether opt-in probes are allowed later:
+
+```bash
+./cli/ship live-hydration probe-gate \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --allow-blocked \
+  --json
+```
+
+Equivalent current-state audit:
+
+```bash
+make live-hydration-probe-gate-quark-staging
+```
+
 Run from explicit app inputs instead of a profile:
 
 ```bash
@@ -134,6 +150,18 @@ Validation is intentionally not promotion. A warning result can be useful while
 templates are still blank. A blocked result means the evidence directory is
 missing, malformed, or contains data that should not live in a scaffold.
 
+`kind: "ophelia.live_hydration_probe_gate"` includes:
+
+- compact hydration and evidence validation child summaries
+- `go_no_go: "go" | "review" | "no_go"`
+- `probes_executed: false`
+- `probe_policy` with HTTP and Docker disabled
+- `probe_commands` only when there are no blockers
+- `next_commands` for the blocked path
+
+The gate is a decision report, not a runner. Current Quark staging returns
+`no_go` because hydration and evidence validation are still blocked.
+
 ## Current Quark Staging Result
 
 The current file-based Quark staging baseline is expected to be blocked. The
@@ -170,6 +198,10 @@ or production runtime paths.
 `ship live-hydration validate-evidence` is always read-only. It never copies,
 promotes, or mutates runtime files. It reports secret-shaped values by key name
 and issue code only.
+
+`ship live-hydration probe-gate` is always read-only. It never performs network
+or Docker probes. When the gate is clear enough, it emits exact commands an
+operator can review and run explicitly.
 
 Use hydration reports before enabling probes. A focused app should have a
 reviewed file-based baseline before running `--probe-http`, `--check-docker`,

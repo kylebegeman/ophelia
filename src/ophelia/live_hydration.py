@@ -18,6 +18,7 @@ from .secret_providers import secret_provider_report
 LIVE_HYDRATION_KIND = "ophelia.live_hydration_report"
 LIVE_HYDRATION_SCAFFOLD_KIND = "ophelia.live_hydration_scaffold"
 LIVE_HYDRATION_EVIDENCE_KIND = "ophelia.live_hydration_evidence_validation"
+LIVE_HYDRATION_PROBE_GATE_KIND = "ophelia.live_hydration_probe_gate"
 
 
 def live_hydration_report(
@@ -305,6 +306,102 @@ def live_hydration_evidence_validate(
     return _redact(payload)
 
 
+def live_hydration_probe_gate(
+    *,
+    app: Optional[str] = None,
+    environment: Optional[str] = None,
+    profile: Optional[str] = None,
+    profiles_path: Path = DEFAULT_LOCAL_LIVE_DRILL_PROFILES,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    ophelia_root: Path = REPO_ROOT,
+    manifest_path: Optional[Path] = None,
+    host_config: Optional[Path] = None,
+    provider_config: Optional[Path] = None,
+    target_host: Optional[str] = None,
+    input_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Decide whether opt-in live probes are allowed to be run later."""
+    hydration = live_hydration_report(
+        app=app,
+        environment=environment,
+        profile=profile,
+        profiles_path=profiles_path,
+        runtime_root=runtime_root,
+        manifests_dir=manifests_dir,
+        ophelia_root=ophelia_root,
+        manifest_path=manifest_path,
+        host_config=host_config,
+        provider_config=provider_config,
+        target_host=target_host,
+    )
+    evidence = live_hydration_evidence_validate(
+        app=app,
+        environment=environment,
+        profile=profile,
+        profiles_path=profiles_path,
+        runtime_root=runtime_root,
+        manifests_dir=manifests_dir,
+        ophelia_root=ophelia_root,
+        manifest_path=manifest_path,
+        host_config=host_config,
+        provider_config=provider_config,
+        target_host=target_host,
+        input_dir=input_dir,
+    )
+    resolved_app = _optional_str(hydration.get("app")) or _optional_str(evidence.get("app"))
+    resolved_environment = _optional_str(hydration.get("environment")) or _optional_str(evidence.get("environment"))
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    if hydration.get("status") == "blocked":
+        blockers.append(issue("probe_gate_hydration_blocked", "Hydration report is blocked; do not run probes.", "hydration"))
+    elif hydration.get("status") == "warning":
+        warnings.append(issue("probe_gate_hydration_warning", "Hydration report has warnings; probes require review.", "hydration"))
+    if evidence.get("status") == "blocked":
+        blockers.append(issue("probe_gate_evidence_blocked", "Evidence validation is blocked; do not run probes.", "evidence"))
+    elif evidence.get("status") == "warning":
+        warnings.append(issue("probe_gate_evidence_warning", "Evidence validation has warnings; probes require review.", "evidence"))
+    status = "blocked" if blockers else "warning" if warnings else "ok"
+    go_no_go = "no_go" if blockers else "review" if warnings else "go"
+    probe_commands = [] if blockers else _probe_commands(hydration, evidence)
+    next_commands = _probe_gate_next_commands(hydration, evidence, blockers)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": LIVE_HYDRATION_PROBE_GATE_KIND,
+        "operation": "live_hydration.probe_gate",
+        "operation_id": operation_id("live_hydration.probe_gate", resolved_app, resolved_environment),
+        "status": status,
+        "go_no_go": go_no_go,
+        "app": resolved_app,
+        "environment": resolved_environment,
+        "profile": hydration.get("profile") or evidence.get("profile"),
+        "profiles_path": hydration.get("profiles_path") or evidence.get("profiles_path"),
+        "runtime_root": hydration.get("runtime_root") or evidence.get("runtime_root"),
+        "input_dir": evidence.get("input_dir"),
+        "read_only": True,
+        "dry_run": True,
+        "mutates_state": False,
+        "confirmation_required": False,
+        "probes_executed": False,
+        "probe_policy": {"http": {"enabled": False}, "docker": {"enabled": False}},
+        "checks": [
+            {"name": "hydration_report", "ok": hydration.get("status") != "blocked", "status": hydration.get("status")},
+            {"name": "evidence_validation", "ok": evidence.get("status") != "blocked", "status": evidence.get("status")},
+            {"name": "probes_not_executed", "ok": True, "status": "ok"},
+        ],
+        "reports": {
+            "hydration": _compact_child(hydration),
+            "evidence": _compact_child(evidence),
+        },
+        "probe_commands": probe_commands,
+        "next_commands": next_commands,
+        "blockers": _dedupe_issues(blockers),
+        "warnings": _dedupe_issues(warnings),
+        "summary": f"Live probe gate for {resolved_app or 'unknown'}/{resolved_environment or 'unknown'}: {go_no_go}.",
+    }
+    return _redact(payload)
+
+
 def _resolve_inputs(
     *,
     app: Optional[str],
@@ -571,6 +668,92 @@ def _expected_file_map(scaffold: Dict[str, Any]) -> Dict[str, Path]:
         if kind and path_value:
             result[kind] = Path(path_value)
     return result
+
+
+def _probe_commands(hydration: Dict[str, Any], evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
+    app = _optional_str(hydration.get("app") or evidence.get("app"))
+    environment = _optional_str(hydration.get("environment") or evidence.get("environment"))
+    if app is None or environment is None:
+        return []
+    command = [
+        "ship",
+        "live-readiness",
+        "run",
+        "--app",
+        app,
+        "--environment",
+        environment,
+        "--runtime-root",
+        str(hydration.get("runtime_root") or evidence.get("runtime_root") or DEFAULT_RUNTIME_ROOT),
+        "--manifests-dir",
+        str(hydration.get("manifests_dir") or REPO_ROOT / "manifests"),
+    ]
+    if hydration.get("manifest_path"):
+        command.extend(["--manifest", str(hydration["manifest_path"])])
+    if hydration.get("host_config"):
+        command.extend(["--host-config", str(hydration["host_config"])])
+    if hydration.get("provider_config"):
+        command.extend(["--provider-config", str(hydration["provider_config"])])
+    if hydration.get("target_host"):
+        command.extend(["--target-host", str(hydration["target_host"])])
+    command.extend(["--probe-http", "--check-docker", "--allow-blocked", "--json"])
+    commands = [
+        {
+            "name": "bounded_live_readiness_probe",
+            "argv": command,
+            "command": " ".join(command),
+            "requires_operator_review": True,
+            "probes_http": True,
+            "checks_docker": True,
+        }
+    ]
+    profile = _optional_str(hydration.get("profile") or evidence.get("profile"))
+    profiles_path = _optional_str(hydration.get("profiles_path") or evidence.get("profiles_path"))
+    if profile and profiles_path:
+        commands.append(
+            {
+                "name": "rerun_file_profile_after_probe_review",
+                "argv": ["ship", "live-drills", "run", profile, "--profiles", profiles_path, "--json"],
+                "command": f"ship live-drills run {profile} --profiles {profiles_path} --json",
+                "requires_operator_review": True,
+                "probes_http": False,
+                "checks_docker": False,
+            }
+        )
+    return commands
+
+
+def _probe_gate_next_commands(hydration: Dict[str, Any], evidence: Dict[str, Any], blockers: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    if not blockers:
+        return [{"code": "run_probe_commands", "command": "Review and run `probe_commands` explicitly if desired."}]
+    commands = []
+    profile = _optional_str(hydration.get("profile") or evidence.get("profile"))
+    profiles_path = _optional_str(hydration.get("profiles_path") or evidence.get("profiles_path"))
+    if profile and profiles_path:
+        commands.append(
+            {
+                "code": "rerun_hydration",
+                "command": f"ship live-hydration report --profile {profile} --profiles {profiles_path} --allow-blocked --json",
+            }
+        )
+        commands.append(
+            {
+                "code": "validate_evidence",
+                "command": f"ship live-hydration validate-evidence --profile {profile} --profiles {profiles_path} --input-dir {evidence.get('input_dir')} --json",
+            }
+        )
+    return commands
+
+
+def _compact_child(report: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "kind": report.get("kind"),
+        "operation": report.get("operation"),
+        "status": report.get("status"),
+        "summary": report.get("summary"),
+        "blocker_count": len(report.get("blockers", [])) if isinstance(report.get("blockers"), list) else 0,
+        "warning_count": len(report.get("warnings", [])) if isinstance(report.get("warnings"), list) else 0,
+    }
 
 
 def _validate_evidence_file(kind: str, path: Path, scaffold: Dict[str, Any]) -> Dict[str, Any]:

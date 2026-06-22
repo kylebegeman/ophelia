@@ -388,3 +388,7 @@ Hydration evidence validation adds the next guardrail: scaffold/evidence
 directories can be checked for missing files, malformed JSON, leftover
 placeholders, missing required names, and secret-shaped values before anything
 is copied into runtime or provider observation paths.
+
+The no-probe gate adds a final file-based go/no-go report before live checks. It
+keeps probes disabled, combines hydration and evidence validation, and emits
+exact probe commands only when there are no blockers for an operator to review.

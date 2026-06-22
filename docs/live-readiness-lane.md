@@ -85,6 +85,16 @@ ship live-hydration scaffold \
   --json
 ```
 
+Before enabling probes, run the no-probe gate:
+
+```bash
+ship live-hydration probe-gate \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --allow-blocked \
+  --json
+```
+
 ## What It Runs
 
 Top-level checks:
@@ -156,7 +166,8 @@ Use this lane now for staging and production inspection:
 4. Review blockers, warnings, drift, missing observations, and placement output.
 5. Run a focused `ship live-hydration report` for the first target app.
 6. Generate and review `ship live-hydration scaffold` templates for that app.
-7. Opt into `--probe-http` and `--check-docker` only after the file-only report
+7. Validate the reviewed evidence kit and run `ship live-hydration probe-gate`.
+8. Opt into `--probe-http` and `--check-docker` only after the file-only report
    is understood.
 
 Use production hardening and live drill profiles for read-only migration

@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-14 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-15 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -73,6 +73,8 @@ rebuilt:
   runtime, provider observation, release, and host capability evidence.
 - Read-only hydration evidence validation for scaffold directories before any
   runtime promotion or probe enablement.
+- A no-probe gate that combines hydration and evidence validation before
+  suggesting opt-in HTTP/Docker probe commands.
 
 ## Implementation Rules
 
@@ -741,6 +743,40 @@ copying any evidence into consumed runtime paths.
 release metadata, provider observations, host inventory, state DB files, or
 workflow artifacts. It does not run probes.
 
+## Phase 15: No-Probe Live Probe Gate
+
+**Status:** Landed in changelog record
+[`0035`](changelog/0035-no-probe-live-gate.md).
+
+**Goal:** Add a final file-based go/no-go report before any opt-in HTTP or
+Docker probes are run.
+
+**Work items:**
+
+- Add `ship live-hydration probe-gate`.
+- Compose hydration report status and evidence validation status into
+  `go_no_go: "go" | "review" | "no_go"`.
+- Keep `probe_policy` disabled and `probes_executed: false`.
+- Emit exact probe commands only when the gate has no blockers.
+- Add command catalog examples, `make live-hydration-probe-gate-quark-staging`,
+  tests, docs, roadmap, scratchpad, and changelog.
+
+**Dependencies:** Phase 14 evidence validation.
+
+**Milestone commit:** `feat: add no-probe live gate`
+
+**Definition of done:**
+
+- Current Quark staging returns `no_go` without running probes.
+- Fixture review cases can return `review` and emit explicit probe commands for
+  operator review.
+- The gate is read-only, redacted, and never calls HTTP, Docker, providers,
+  workflows, or runtime mutation commands.
+
+**Boundary:** Phase 15 does not run the emitted commands. It does not perform
+network/Docker probes, provider calls, state refresh, runtime writes, workflow
+execution, or production mutation.
+
 ## Phase Dependency Graph
 
 ```text
@@ -759,6 +795,7 @@ Phase 0 docs
                       -> Phase 12 live hydration reports
                         -> Phase 13 live evidence scaffold templates
                           -> Phase 14 hydration evidence validation
+                            -> Phase 15 no-probe live gate
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

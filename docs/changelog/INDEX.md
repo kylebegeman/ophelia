@@ -36,3 +36,4 @@
 | [0032](0032-live-baseline-hydration-report.md) | 2026-06-22 | landed | Live baseline hydration report | live-hydration, live-readiness, live-drills, cli, api, command-catalog, docs, tests |
 | [0033](0033-live-evidence-scaffold-templates.md) | 2026-06-22 | landed | Live evidence scaffold templates | live-hydration, cli, command-catalog, docs, tests |
 | [0034](0034-hydration-evidence-validation.md) | 2026-06-22 | landed | Hydration evidence validation | live-hydration, cli, command-catalog, docs, tests |
+| [0035](0035-no-probe-live-gate.md) | 2026-06-22 | landed | No-probe live gate | live-hydration, cli, command-catalog, docs, tests |

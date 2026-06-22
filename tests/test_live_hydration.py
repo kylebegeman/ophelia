@@ -17,8 +17,10 @@ from ophelia.command_catalog import command_registry  # noqa: E402
 from ophelia.live_hydration import (  # noqa: E402
     LIVE_HYDRATION_EVIDENCE_KIND,
     LIVE_HYDRATION_KIND,
+    LIVE_HYDRATION_PROBE_GATE_KIND,
     LIVE_HYDRATION_SCAFFOLD_KIND,
     live_hydration_evidence_validate,
+    live_hydration_probe_gate,
     live_hydration_report,
     live_hydration_scaffold,
 )
@@ -294,6 +296,64 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(LIVE_HYDRATION_EVIDENCE_KIND, payload["kind"])
         self.assertIn("live_hydration.evidence.validate", operations)
+
+    def test_probe_gate_blocks_current_quark_staging_without_running_probes(self) -> None:
+        report = live_hydration_probe_gate(profile="quark-ops-staging-file-baseline", profiles_path=LOCAL_PROFILES)
+
+        self.assertEqual(LIVE_HYDRATION_PROBE_GATE_KIND, report["kind"])
+        self.assertEqual("blocked", report["status"])
+        self.assertEqual("no_go", report["go_no_go"])
+        self.assertFalse(report["probes_executed"])
+        self.assertFalse(report["mutates_state"])
+        self.assertEqual([], report["probe_commands"])
+        self.assertIn("probe_gate_hydration_blocked", {item["code"] for item in report["blockers"]})
+        self.assertIn("probe_gate_evidence_blocked", {item["code"] for item in report["blockers"]})
+
+    def test_probe_gate_for_fixture_review_emits_probe_commands_without_running_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="fixture-postgres-focused",
+                profiles_path=FIXTURE_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            report = live_hydration_probe_gate(
+                profile="fixture-postgres-focused",
+                profiles_path=FIXTURE_PROFILES,
+                input_dir=output_dir,
+            )
+
+        self.assertEqual("warning", report["status"])
+        self.assertEqual("review", report["go_no_go"])
+        self.assertFalse(report["probes_executed"])
+        self.assertGreaterEqual(len(report["probe_commands"]), 1)
+        command = report["probe_commands"][0]["command"]
+        self.assertIn("--probe-http", command)
+        self.assertIn("--check-docker", command)
+
+    def test_cli_probe_gate_and_catalog_descriptor(self) -> None:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(
+                [
+                    "live-hydration",
+                    "probe-gate",
+                    "--profile",
+                    "quark-ops-staging-file-baseline",
+                    "--profiles",
+                    str(LOCAL_PROFILES),
+                    "--allow-blocked",
+                    "--json",
+                ]
+            )
+
+        payload = json.loads(buffer.getvalue())
+        operations = {descriptor.operation for descriptor in command_registry()}
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(LIVE_HYDRATION_PROBE_GATE_KIND, payload["kind"])
+        self.assertIn("live_hydration.probe_gate", operations)
 
     def test_profile_without_app_blocks(self) -> None:
         report = live_hydration_report(profile="local-file-baseline", profiles_path=LOCAL_PROFILES)
