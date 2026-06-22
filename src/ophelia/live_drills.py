@@ -217,7 +217,7 @@ def _profile_paths(profile: Dict[str, Any]) -> Dict[str, Optional[Path]]:
 def _resolve_path(value: Any, base: Path, default: Optional[Path]) -> Optional[Path]:
     if value is None or value == "":
         return default
-    path = Path(str(value))
+    path = Path(str(value)).expanduser()
     if path.is_absolute():
         return path
     return (base / path).resolve()

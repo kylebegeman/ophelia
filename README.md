@@ -131,6 +131,7 @@ make live-drills-fixtures
 make lumen-console-fixtures
 make production-hardening-fixtures
 ./cli/ship live-drills run fixture-suite-review --json
+./cli/ship live-drills run quark-ops-production-file-baseline --profiles config/ophelia-live-drills.yml --json
 ./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
@@ -207,7 +208,8 @@ starting SSH and never prints their values.
 10. Phase 8 has landed: a read-only Lumen console payload over apps, approvals, workflows, plugins, quick actions, and fixture live-state smoke coverage.
 11. Phase 9 has landed: a read-only production hardening report and fixture go/no-go drill.
 12. Phase 10 has landed: fixture-backed live drill profiles for repeatable read-only staging/prod rehearsal scenarios.
-13. Next work: authenticated live provider probes and production migration rehearsals behind explicit plan, confirmation-token, and receipt contracts.
+13. Phase 11 has landed: local live-test profile baselines and the first read-only file-based live test against `~/ophelia-runtime`.
+14. Next work: collect one real app runtime snapshot, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
 
 ## Deploy Flows
 

@@ -54,6 +54,12 @@ Fixture profiles live at:
 fixtures/app-suite/live-drills.yml
 ```
 
+Local live-test profiles live at:
+
+```text
+config/ophelia-live-drills.yml
+```
+
 Each profile can define:
 
 - runtime, manifest, host, provider, plugin, and fixture paths
@@ -81,6 +87,29 @@ All four profiles should return `status: "ok"` from the drill runner when the
 expected mixed state is intact. Child reports can still be `blocked` or
 `warning`; the drill status reports whether that state matched the profile
 expectations.
+
+## Local Live Profiles
+
+Current local profiles:
+
+- `local-file-baseline`: all repo manifests against `~/ophelia-runtime`, local
+  host inventory, provider observations, and production hardening.
+- `quark-ops-production-file-baseline`: focused production Quark Ops
+  live-readiness run.
+- `quark-ops-staging-file-baseline`: focused staging Quark Ops live-readiness
+  run.
+
+These profiles intentionally have no expected state yet. Without expectations,
+the drill result propagates child `blocked` or `warning` statuses. Add expected
+baselines only after an operator-reviewed known-good run.
+
+Example:
+
+```bash
+./cli/ship live-drills run quark-ops-production-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --json
+```
 
 ## Safety Contract
 

@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-10 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-11 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -65,6 +65,8 @@ rebuilt:
   safety, and fixture drills into one go/no-go payload.
 - Fixture-backed live drill profiles for repeatable read-only live-readiness and
   hardening rehearsal scenarios.
+- Local live-test profile baselines and first read-only file-based live test
+  results against `~/ophelia-runtime`.
 
 ## Implementation Rules
 
@@ -585,6 +587,42 @@ report, command catalog, and local API route manifest.
 production. Real staging/prod profiles can reuse the profile file shape, but
 operator-reviewed baselines and opt-in probes still come later.
 
+## Phase 11: Read-Only Live Test Baseline
+
+**Status:** Landed in changelog record
+[`0031`](changelog/0031-live-test-baseline-and-secret-metadata.md).
+
+**Goal:** Start real live testing with file-based, non-mutating baselines before
+running HTTP, Docker, authenticated provider, or mutation probes.
+
+**Work items:**
+
+- Add `config/ophelia-live-drills.yml` with local runtime baseline and Quark
+  Ops production/staging focused profiles.
+- Run first read-only live baseline against repo manifests and
+  `~/ophelia-runtime`.
+- Record live baseline findings in `docs/scratchpad/`.
+- Preserve secret-provider metadata counts/status in live-readiness output
+  without exposing values.
+
+**Dependencies:** Phase 10 live drill profiles, live-readiness lane, local
+host/provider configs, and production hardening report.
+
+**Milestone commit:** `chore: add live test baseline profiles`
+
+**Definition of done:**
+
+- Local live profiles load and run without mutation.
+- Current blocked live baseline is documented with blocker groups and next safe
+  steps.
+- Redaction keeps useful secret-provider metadata visible while blocking secret
+  values.
+
+**Boundary:** Phase 11 does not run HTTP probes, Docker probes, authenticated
+provider collection, state refresh, workflow execution, or production
+mutations. Those should wait until a file-based baseline for one target app is
+operator-reviewed.
+
 ## Phase Dependency Graph
 
 ```text
@@ -599,6 +637,7 @@ Phase 0 docs
               -> Phase 8 Lumen console
                 -> Phase 9 hardening
                   -> Phase 10 live drill profiles
+                    -> Phase 11 live test baseline
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

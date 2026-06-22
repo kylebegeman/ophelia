@@ -26,6 +26,7 @@ from ophelia.main import main  # noqa: E402
 
 
 PROFILES = REPO_ROOT / "fixtures" / "app-suite" / "live-drills.yml"
+LOCAL_PROFILES = REPO_ROOT / "config" / "ophelia-live-drills.yml"
 
 
 class LiveDrillTests(unittest.TestCase):
@@ -82,6 +83,29 @@ class LiveDrillTests(unittest.TestCase):
             report = run_live_drill("missing-profile", PROFILES)
         self.assertEqual("blocked", report["status"])
         self.assertEqual("live_drill_profile_not_found", report["blockers"][0]["code"])
+
+    def test_local_live_profile_catalog_loads_without_expectations(self) -> None:
+        catalog = list_live_drill_profiles(LOCAL_PROFILES)
+        profile_ids = {profile["id"] for profile in catalog["profiles"]}
+
+        self.assertEqual("ok", catalog["status"])
+        self.assertEqual(
+            {
+                "local-file-baseline",
+                "quark-ops-production-file-baseline",
+                "quark-ops-staging-file-baseline",
+            },
+            profile_ids,
+        )
+        local_profile = next(profile for profile in catalog["profiles"] if profile["id"] == "local-file-baseline")
+        self.assertEqual({}, local_profile["expected"])
+
+    def test_profile_paths_expand_user_home(self) -> None:
+        with _skip_docker_status():
+            report = run_live_drill("quark-ops-production-file-baseline", LOCAL_PROFILES)
+
+        self.assertEqual(str(Path.home() / "ophelia-runtime"), report["paths"]["runtime_root"])
+        self.assertEqual("blocked", report["status"])
 
 
 def _check_actual(report: dict, name: str) -> object:

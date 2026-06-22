@@ -171,7 +171,11 @@ def live_readiness_report(
             f"{totals['blocked']} blocked, {totals['warning']} warning, {totals['drift']} drift."
         ),
     }
-    redacted = deep_redact(payload, safe_keys={"values_redacted"}, propagate=True)
+    redacted = deep_redact(
+        payload,
+        safe_keys={"github_secret_observations", "secret_provider_status", "secrets", "values_redacted"},
+        propagate=True,
+    )
     _restore_docker_status(restore_docker_status)
     return redacted
 

@@ -32,3 +32,4 @@
 | [0028](0028-phase-8-lumen-console-mvp.md) | 2026-06-22 | landed | Phase 8 Lumen console MVP | lumen, console, api, cli, fixtures, docs, tests |
 | [0029](0029-phase-9-production-hardening-report.md) | 2026-06-22 | landed | Phase 9 production hardening report | hardening, cli, api, fixtures, command-catalog, docs, tests |
 | [0030](0030-live-drill-profiles.md) | 2026-06-22 | landed | Live drill profiles | live-readiness, hardening, fixtures, cli, api, command-catalog, docs, tests |
+| [0031](0031-live-test-baseline-and-secret-metadata.md) | 2026-06-22 | landed | Live test baseline and secret metadata | live-readiness, live-drills, redaction, config, docs, tests |
