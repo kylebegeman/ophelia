@@ -1,0 +1,11 @@
+{
+  "environments": {
+    "staging": {
+      "secrets": [
+        {"name": "API_TOKEN"},
+        {"name": "DATABASE_URL"}
+      ]
+    }
+  }
+}
+
