@@ -113,6 +113,12 @@ python3 -m venv .venv
 ./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --confirm <token> --json
 ./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
 ./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship workflow plan move-app --app dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
+./cli/ship workflow run latest:dragon-writer --preview --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --json
+./cli/ship workflow run latest:dragon-writer --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --json
+./cli/ship workflow resume latest:dragon-writer --confirm-node export-create=<token> --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --set EXPORT_BUNDLE=exports/dragon-writer --json
+./cli/ship workflow pause latest:dragon-writer --json
+./cli/ship workflow cancel latest:dragon-writer --json
 ./cli/ship receipts list --app dragon-writer --json
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
 ./cli/ship inspect conflicts
@@ -170,8 +176,8 @@ starting SSH and never prints their values.
 1. Phase 1 of the [Strategic Implementation Roadmap](docs/ophelia-strategic-implementation-roadmap.md) has landed: plan digest cards, expanded `ship doctor`, and command catalog examples.
 2. Phase 2 has landed: workflow run preview plus shared plan/receipt search aliases.
 3. Phase 3 has landed: durable state refresh/summary plus structured drift snapshots, findings, and remediation commands.
-4. Execute Phase 4: resumable, receipt-backed workflow orchestration.
-5. Continue later phases in dependency order: GitHub App and secrets integrations, multi-host placement, plugin contracts, then the Lumen operator console.
+4. Phase 4 has landed: resumable, receipt-backed workflow orchestration with pause/resume/cancel and confirmation-gated mutating nodes.
+5. Execute Phase 5 next: GitHub App and secrets integrations. Later phases continue with multi-host placement, plugin contracts, then the Lumen operator console.
 
 ## Deploy Flows
 
@@ -204,6 +210,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship app isolation plan` for per-app network compatibility planning; manifests can opt into `networking.internal: per-app`.
 - `ship receipts list|show` for local operation receipt browsing.
 - `ship state refresh|summary` for the local SQLite state service and app aggregates.
+- `ship workflow list|plan|show|run|pause|resume|cancel` for resumable, receipt-backed workflow orchestration. `run --preview` resolves nodes without executing them; mutating nodes pause until `--confirm-node NODE_ID=TOKEN` is supplied from that node's own plan.
 - `ship pack init` for preview-first app pack scaffolding; pass `--write` before it creates files.
 - `ship deploy --apply --confirm <token>` for confirmed production apply.
 - `ship releases <app>` and `ship release show <app> <release-id>` for release history.

@@ -58,7 +58,7 @@ from .portability import (
 from .receipt_index import receipt_timeline
 from .redaction import deep_redact, redact_mapping
 
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 3
 STATE_FRESHNESS_STALE_AFTER_SECONDS = 3600
 
 REBUILD_KIND = "ophelia.state_rebuild"
@@ -105,6 +105,11 @@ _SCHEMA_STATEMENTS: List[str] = [
     "environment TEXT, provider TEXT, status TEXT, path TEXT, payload_json TEXT)",
     "CREATE TABLE github_provisioning (receipt_id TEXT PRIMARY KEY, operation TEXT, "
     "status TEXT, app TEXT, environment TEXT, path TEXT, payload_json TEXT)",
+    "CREATE TABLE workflow_states (workflow_id TEXT PRIMARY KEY, name TEXT, app TEXT, "
+    "environment TEXT, status TEXT, updated_at TEXT, path TEXT, payload_json TEXT)",
+    "CREATE TABLE workflow_nodes (workflow_id TEXT, node_id TEXT, operation TEXT, "
+    "status TEXT, mutates_state INTEGER, requires_confirmation INTEGER, plan_id TEXT, "
+    "receipt_id TEXT, payload_json TEXT, PRIMARY KEY (workflow_id, node_id))",
     "CREATE TABLE operation_plans (operation_id TEXT PRIMARY KEY, operation TEXT, "
     "app TEXT, environment TEXT, status TEXT, path TEXT, payload_json TEXT)",
     "CREATE TABLE policy_results (operation_id TEXT, decision TEXT, app TEXT, "
@@ -132,6 +137,8 @@ _TABLE_NAMES: List[str] = [
     "traffic_state",
     "provider_snapshots",
     "github_provisioning",
+    "workflow_states",
+    "workflow_nodes",
     "operation_plans",
     "policy_results",
     "state_metadata",
@@ -344,6 +351,7 @@ def _populate(
     _index_observability_runs(connection, runtime_root, apps_by_environments, warnings)
     _index_traffic_provider_state(connection, runtime_root, apps_by_environments, warnings)
     _index_github_provisioning(connection, runtime_root, apps_by_environments, warnings)
+    _index_workflows(connection, runtime_root, apps_by_environments, warnings)
     _index_manifest_registry(connection, manifests_dir, runtime_root, apps_by_environments, warnings)
     _index_apps(connection, apps_by_environments)
 
@@ -367,6 +375,8 @@ def _populate(
             "traffic_state",
             "provider_snapshots",
             "github_provisioning",
+            "workflow_states",
+            "workflow_nodes",
         )
     }
 
@@ -928,6 +938,77 @@ def _index_github_provisioning(
     return count
 
 
+def _index_workflows(
+    connection: "sqlite3.Connection",
+    runtime_root: Path,
+    apps_by_environments: Dict[str, set],
+    warnings: List[Dict[str, str]],
+) -> int:
+    workflows_root = runtime_root / "workflows"
+    if not workflows_root.exists():
+        return 0
+    count = 0
+    for path in sorted(workflows_root.glob("*.json")):
+        try:
+            payload = _read_json_file(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            warnings.append(issue("workflow_unreadable", f"Could not read workflow graph: {exc}", str(path)))
+            continue
+        if not isinstance(payload, dict):
+            warnings.append(issue("workflow_unreadable", "Workflow graph is not a JSON object.", str(path)))
+            continue
+        workflow_id = payload.get("workflow_id")
+        if not isinstance(workflow_id, str) or not workflow_id:
+            workflow_id = path.stem
+        app = payload.get("app") if isinstance(payload.get("app"), str) else None
+        environment = payload.get("environment") if isinstance(payload.get("environment"), str) else None
+        status = payload.get("workflow_status") or payload.get("status")
+        connection.execute(
+            "INSERT OR REPLACE INTO workflow_states "
+            "(workflow_id, name, app, environment, status, updated_at, path, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                workflow_id,
+                payload.get("name") if isinstance(payload.get("name"), str) else None,
+                app,
+                environment,
+                status if isinstance(status, str) else None,
+                payload.get("updated_at") if isinstance(payload.get("updated_at"), str) else None,
+                _relative_path(path, runtime_root),
+                _canonical_json(_redact_payload_env(payload)),
+            ),
+        )
+        nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = node.get("id")
+            if not isinstance(node_id, str) or not node_id:
+                continue
+            connection.execute(
+                "INSERT OR REPLACE INTO workflow_nodes "
+                "(workflow_id, node_id, operation, status, mutates_state, requires_confirmation, "
+                "plan_id, receipt_id, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    workflow_id,
+                    node_id,
+                    node.get("operation") if isinstance(node.get("operation"), str) else None,
+                    node.get("status") if isinstance(node.get("status"), str) else None,
+                    1 if node.get("mutates_state") else 0,
+                    1 if node.get("requires_confirmation") else 0,
+                    node.get("plan_id") if isinstance(node.get("plan_id"), str) else None,
+                    node.get("receipt_id") if isinstance(node.get("receipt_id"), str) else None,
+                    _canonical_json(_redact_payload_env(node)),
+                ),
+            )
+        if app:
+            apps_by_environments.setdefault(app, set())
+            if environment:
+                apps_by_environments[app].add(environment)
+        count += 1
+    return count
+
+
 def _index_manifest_registry(
     connection: "sqlite3.Connection",
     manifests_dir: Path,
@@ -1095,6 +1176,8 @@ def _counts_from_db(connection: "sqlite3.Connection") -> Dict[str, int]:
         "traffic_state",
         "provider_snapshots",
         "github_provisioning",
+        "workflow_states",
+        "workflow_nodes",
         "operation_plans",
         "policy_results",
     ):
@@ -1124,6 +1207,7 @@ def state_summary(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
         "freshness": status.get("freshness"),
         "counts": status.get("counts", {}),
         "apps": [],
+        "workflows": [],
         "warnings": [],
         "blockers": [],
     }
@@ -1137,6 +1221,7 @@ def state_summary(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
     connection.row_factory = sqlite3.Row
     try:
         base["apps"] = _state_summary_apps(connection)
+        base["workflows"] = _state_summary_workflows(connection)
     except sqlite3.Error as exc:
         base["status"] = "error"
         base["needs_rebuild"] = True
@@ -1171,10 +1256,46 @@ def _state_summary_apps(connection: "sqlite3.Connection") -> List[Dict[str, Any]
                 "traffic_state_count": _count_where(connection, "traffic_state", "app", app),
                 "provider_snapshot_count": _count_where(connection, "provider_snapshots", "app", app),
                 "github_provisioning_count": _count_where(connection, "github_provisioning", "app", app),
+                "workflow_count": _count_where(connection, "workflow_states", "app", app),
                 "latest_receipt": _latest_receipt_for_app(connection, app),
             }
         )
     return apps
+
+
+def _state_summary_workflows(connection: "sqlite3.Connection") -> List[Dict[str, Any]]:
+    rows = connection.execute(
+        "SELECT workflow_id, name, app, environment, status, updated_at, path "
+        "FROM workflow_states ORDER BY COALESCE(updated_at, ''), workflow_id"
+    ).fetchall()
+    workflows: List[Dict[str, Any]] = []
+    for row in rows:
+        workflow_id = str(row["workflow_id"])
+        workflows.append(
+            {
+                "workflow_id": workflow_id,
+                "name": row["name"],
+                "app": row["app"],
+                "environment": row["environment"],
+                "status": row["status"],
+                "updated_at": row["updated_at"],
+                "path": row["path"],
+                "node_count": _count_where(connection, "workflow_nodes", "workflow_id", workflow_id),
+                "paused_node_count": _count_workflow_nodes_by_status(connection, workflow_id, "paused_for_confirmation"),
+                "failed_node_count": _count_workflow_nodes_by_status(connection, workflow_id, "failed"),
+                "succeeded_node_count": _count_workflow_nodes_by_status(connection, workflow_id, "succeeded"),
+            }
+        )
+    return workflows
+
+
+def _count_workflow_nodes_by_status(connection: "sqlite3.Connection", workflow_id: str, status: str) -> int:
+    cursor = connection.execute(
+        "SELECT COUNT(*) FROM workflow_nodes WHERE workflow_id = ? AND status = ?",
+        (workflow_id, status),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
 
 
 def _json_list(value: object) -> List[str]:

@@ -152,8 +152,8 @@ cohesive operator experience while keeping execution deterministic in Ophelia.
 
 **Selected item:** Major 2, Full Workflow Orchestrator
 
-Current workflow execution is intentionally limited to non-mutating nodes.
-Real app movement and incident flows need resumability, per-node plans,
+Before Phase 4, workflow execution was intentionally limited to non-mutating
+nodes. Real app movement and incident flows need resumability, per-node plans,
 confirmation, pause/resume, and rollback context.
 
 **Product opportunity:** Add a workflow orchestrator that can run read-only
@@ -164,6 +164,13 @@ resume safely, and stop on policy failures.
 movement, incident response, and agent-executable runbooks.
 
 **Roadmap phase:** Phase 4
+
+**Implementation status:** Landed in
+[`0022`](changelog/0022-phase-4-resumable-workflow-orchestrator.md). The local
+orchestrator now persists workflow state, supports preview/run/pause/resume/cancel,
+stores per-node status and receipts, and confirmation-gates mutating nodes.
+Live GitHub, secrets, and production provider value integration remains a
+separate later phase.
 
 ### F-008: GitHub Provisioning Should Move Beyond Local `gh`
 
@@ -290,7 +297,8 @@ Highest ROI near-term:
 Most strategic long-term:
 
 - F-006 Lumen Operator Console
-- F-007 Full Workflow Orchestrator
+- F-007 Full Workflow Orchestrator (local orchestrator landed; live
+  integrations continue in later phases)
 - F-010 Durable State Service
 - F-009 Drift Detection Engine live provider observations
 - F-012 Multi-Host Inventory And Placement
@@ -305,3 +313,4 @@ Fastest visible wins:
 - Expand doctor with GitHub/provider/state checks.
 - Run `ship state refresh` and use `ship state summary` for local app
   aggregates.
+- Use `ship workflow pause|resume|cancel` for local workflow control.

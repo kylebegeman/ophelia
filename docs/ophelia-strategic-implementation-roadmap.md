@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-3 landed
+Status: selected next-stage roadmap, Phases 1-4 landed
 
 Date: 2026-06-21
 
@@ -42,7 +42,8 @@ rebuilt:
 - Central redaction and propagated data redaction.
 - Command catalog and Lumen action descriptors.
 - App factory, scaffold apply, and token-gated GitHub provisioning via `gh`.
-- Workflow graph planning and non-mutating workflow execution.
+- Workflow graph planning, preview, pause/resume/cancel, and confirmation-gated
+  mutating workflow nodes.
 - Receipt timeline and state DB read model.
 - Policy engine and readiness aggregation.
 - Traffic status, traffic provider plans, and rollback receipts.
@@ -221,6 +222,8 @@ traffic status, GitHub provisioning contracts, observability schedule runs.
 
 ## Phase 4: Full Workflow Orchestrator
 
+Status: landed in [`0022`](changelog/0022-phase-4-resumable-workflow-orchestrator.md).
+
 **Goal:** Turn workflow graphs into resumable, receipt-backed operations.
 
 **Implements:**
@@ -256,6 +259,10 @@ policy engine, receipt timeline.
 - Resume is deterministic after process restart.
 - Failed nodes stop dependent nodes.
 - Lumen can render workflow state from one read model.
+
+**Boundary:** Phase 4 persists and resumes local workflow state and executes
+existing typed commands. Full authenticated live GitHub, secrets, and production
+provider value integration remains in Phase 5 and later provider phases.
 
 ## Phase 5: GitHub App And Secrets Integrations
 

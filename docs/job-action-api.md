@@ -34,6 +34,9 @@ Quark can call these read-only commands today:
 - `ship receipts list --json`
 - `ship receipts show <receipt-id> --json`
 - `ship receipts show latest:<app> --json`
+- `ship workflow list --json`
+- `ship workflow plan <template> --app <app> --json`
+- `ship workflow show <workflow-id-or-alias> --json`
 - `ship workflow run <workflow-id-or-alias> --preview --json`
 - `ship state refresh --json`
 - `ship state summary --json`
@@ -51,6 +54,7 @@ Mutating commands require confirmation tokens from their matching plans:
 - `ship app cutover apply ... --confirm <token>` for cutover checkpoint receipts
 - `ship app traffic apply ... --confirm <token>` for production traffic checkpoint receipts
 - `ship app traffic rollback apply ... --confirm <token>` for file-provider traffic rollback receipts
+- `ship workflow run|resume ... --confirm-node <node-id>=<token>` for confirmation-gated mutating workflow nodes
 
 Isolation apply is not exposed as a standalone mutating action descriptor.
 Per-app internal networks are enabled by manifest opt-in
@@ -96,6 +100,8 @@ API endpoints:
 - `GET /registry/releases`
 - `GET /operations`
 - `POST /operations/run`
+- `GET /workflows`
+- `GET /workflows/<id>`
 - `GET /state/status`
 - `GET /state/summary`
 
@@ -210,20 +216,36 @@ so confirmation tokens are bound to the resolved receipt path/id, not to a
 moving alias.
 
 Alias-enabled surfaces include `receipts show`, `restore-drills show`,
-`state query receipts --ref`, `workflow show`, `workflow run`, and
-`app traffic rollback plan|apply --receipt`.
+`state query receipts --ref`, `workflow show`, `workflow run`,
+`workflow pause|resume|cancel`, and `app traffic rollback plan|apply --receipt`.
 
-## Workflow Run Preview
+## Workflow Orchestrator
 
 `ship workflow run <workflow-ref> --preview --json` emits
 `{"schema_version": 1, "kind": "ophelia.workflow_preview", ...}` and never
 executes a node or writes a receipt. It resolves the workflow reference,
 substitutions, dependency outcomes, unresolved placeholders, local executable
-paths, blockers, skipped nodes, and ready nodes.
+paths, blockers, skipped nodes, ready nodes, and the first mutating node that
+would pause for confirmation.
 
-The non-preview `ship workflow run` path still executes only stored nodes marked
-non-mutating, passes commands as argv arrays, and writes a receipt. Both preview
-and run receipts include the shared `digest` block.
+The non-preview `ship workflow run` path executes read-only nodes immediately,
+passes commands as argv arrays, and writes a workflow receipt. Mutating nodes
+run only when the command includes `--confirm-node NODE_ID=TOKEN` for that
+exact node id. Without the token, the workflow is persisted as `paused`, the
+node is marked `paused_for_confirmation`, and downstream nodes are skipped.
+
+`ship workflow resume <workflow-ref>` reads the stored workflow graph, skips
+already-succeeded nodes, applies any new `--set` substitutions and
+`--confirm-node` tokens, and continues deterministically from durable state.
+`ship workflow pause` and `ship workflow cancel` only mutate local workflow
+state and write control receipts. State refresh indexes workflow graphs and
+nodes so `ship state summary --json` can expose workflow counts and status from
+one read model.
+
+Built-in workflow templates are `move-app`, `incident-triage`,
+`release-readiness`, `github-provisioning`, and `restore-rehearsal`. Later
+integration phases will replace remaining local or placeholder provider values
+with authenticated live GitHub, secrets, and production provider reads.
 
 ## Drift Reports
 

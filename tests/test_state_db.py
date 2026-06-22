@@ -21,6 +21,7 @@ from ophelia.state_db import (
     state_db_path,
     state_status,
 )
+from ophelia.workflows import plan_workflow
 
 
 # Secret values that must never appear in the index. They are written into the
@@ -183,6 +184,16 @@ def _build_runtime_root(base: Path) -> Path:
         + "\n"
     )
 
+    plan_workflow(
+        "move-app",
+        app="dragon-writer",
+        environment="production",
+        source="spaceship",
+        target="ovh",
+        target_origin="https://dragonwriter-target.example.net",
+        runtime_root=runtime_root,
+    )
+
     return runtime_root
 
 
@@ -207,6 +218,8 @@ class StateDbTests(unittest.TestCase):
         self.assertGreater(counts["traffic_state"], 0)
         self.assertGreater(counts["provider_snapshots"], 0)
         self.assertGreater(counts["github_provisioning"], 0)
+        self.assertGreater(counts["workflow_states"], 0)
+        self.assertGreater(counts["workflow_nodes"], 0)
 
     def test_rebuild_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -367,6 +380,14 @@ class StateDbTests(unittest.TestCase):
         self.assertGreater(apps["dragon-writer"]["traffic_state_count"], 0)
         self.assertGreater(apps["dragon-writer"]["provider_snapshot_count"], 0)
         self.assertGreater(apps["dragon-writer"]["github_provisioning_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["workflow_count"], 0)
+        self.assertGreater(summary["counts"]["workflow_states"], 0)
+        self.assertGreater(summary["counts"]["workflow_nodes"], 0)
+        self.assertTrue(summary["workflows"])
+        workflow = summary["workflows"][0]
+        self.assertEqual("move-app", workflow["name"])
+        self.assertEqual("dragon-writer", workflow["app"])
+        self.assertGreater(workflow["node_count"], 0)
 
     def test_state_status_without_index_is_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
