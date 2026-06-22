@@ -40,6 +40,30 @@ class OpenSourceReadinessTests(unittest.TestCase):
         self.assertTrue(report["read_only"])
         self.assertFalse(report["mutates_state"])
 
+    def test_public_github_repository_owner_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_public_governance(root)
+            owner = "mr" + "bagels"
+            _write(root / "README.md", f"Clone https://github.com/{owner}/ophelia.git\n")
+
+            report = open_source_audit_report(root=root)
+
+        self.assertEqual("ok", report["status"])
+        self.assertEqual([], report["warnings"])
+
+    def test_private_registry_owner_is_still_warned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_public_governance(root)
+            owner = "mr" + "bagels"
+            _write(root / "README.md", f"image: ghcr.io/{owner}/private-app:latest\n")
+
+            report = open_source_audit_report(root=root)
+
+        self.assertEqual("warning", report["status"])
+        self.assertIn("private_registry_reference", {finding["code"] for finding in report["warnings"]})
+
     def test_private_public_surface_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

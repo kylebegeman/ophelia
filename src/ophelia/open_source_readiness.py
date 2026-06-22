@@ -103,7 +103,7 @@ _RULES: Sequence[AuditRule] = (
         code="private_registry_reference",
         severity="warning",
         pattern=re.compile(
-            rf"\b(ghcr\.io/(?:{_PRIVATE_REGISTRY_TERMS[0]}|{_PRIVATE_REGISTRY_TERMS[1]})/|repos/{_PRIVATE_REGISTRY_TERMS[1]}/|{_PRIVATE_REGISTRY_TERMS[0]}/)",
+            rf"\b(ghcr\.io/(?:{_PRIVATE_REGISTRY_TERMS[0]}|{_PRIVATE_REGISTRY_TERMS[1]})/|repos/{_PRIVATE_REGISTRY_TERMS[1]}/)",
             re.IGNORECASE,
         ),
         message="Private registry, owner, or repository reference found.",

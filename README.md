@@ -28,6 +28,9 @@ env files, provider credentials, and product-specific migration notes belong in
 private operator material until a deployment or adoption phase is explicitly
 approved.
 
+Repository target: `github.com/mrbagels/ophelia`. The project is GitHub-only
+and remains private until the public release decision is made.
+
 ## What Ophelia Gives You
 
 | Area | What it does |
@@ -66,7 +69,7 @@ make open-source-audit-strict
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR-ORG/ophelia.git ophelia
+git clone https://github.com/mrbagels/ophelia.git ophelia
 cd ophelia
 
 python3 -m venv .venv

@@ -56,3 +56,4 @@
 | [0052](0052-public-warning-cleanup.md) | 2026-06-22 | landed | Public warning cleanup | open-source, manifests, docs, tests, audit |
 | [0053](0053-release-gate-polish.md) | 2026-06-22 | landed | Release gate polish | open-source, ci, packaging, docs, tests |
 | [0054](0054-doc-link-check.md) | 2026-06-22 | landed | Doc link check | docs, open-source, tests |
+| [0055](0055-github-private-030.md) | 2026-06-22 | landed | GitHub private 0.3.0 metadata | release, packaging, open-source, docs, tests |

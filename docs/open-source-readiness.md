@@ -8,6 +8,12 @@ operator's private host. Real deployment registries, production env files,
 provider evidence, and product-specific migration notes belong outside the
 public tree until a deliberate adoption or deployment phase starts.
 
+Current publication posture:
+
+- Repository target: `https://github.com/mrbagels/ophelia`
+- Visibility: private until the public release decision is made
+- Distribution: GitHub only for now, no PyPI release path is configured
+
 ## License And Contribution Model
 
 Approved default:

@@ -25,8 +25,8 @@ onboarding path.
   existing fence and secret-assignment checks.
 - `tests/test_docs_check.py`: covers valid local/external links, missing local
   links, skipped generated/venv docs, and existing fence/secret failures.
-- `README.md`: replaces the rough clone placeholder with a conventional
-  `YOUR-ORG` GitHub URL placeholder.
+- `README.md`: replaces the rough clone placeholder with the approved
+  `mrbagels` GitHub repository URL.
 
 ## Contract Impact
 
