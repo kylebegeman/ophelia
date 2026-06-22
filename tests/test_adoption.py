@@ -68,6 +68,24 @@ class AdoptionPlanTests(unittest.TestCase):
         self.assertEqual("warning", gate_status["repo_artifacts"])
         self.assertEqual(["ship", "pack", "validate", str(manifest), "--json"], plan["next_commands"][1]["argv"])
 
+    def test_embedded_pack_validation_redacts_command_secret_literals(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "demo-app"
+            repo.mkdir()
+            (repo / ".ophelia.yml").write_text(_manifest_with_secret_command("demo-app", "staging"))
+
+            plan = adoption_plan(
+                "demo-app",
+                "staging",
+                repo_path=repo,
+                runtime_root=Path(temp_dir) / "runtime",
+            )
+
+        blob = json.dumps(plan)
+        self.assertNotIn("super-secret", blob)
+        self.assertNotIn("postgres://user:password", blob)
+        self.assertIn("<redacted>", blob)
+
     def test_cli_json_and_catalog_descriptor_are_available(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir) / "demo-app"
@@ -124,6 +142,44 @@ pack:
   description: Synthetic adoption test app.
 
 data:
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+"""
+
+
+def _manifest_with_secret_command(app: str, environment: str) -> str:
+    return f"""\
+version: 1
+app: {app}
+environment: {environment}
+kind: service
+
+services:
+  web:
+    image: ghcr.io/ophelia-fixtures/{app}@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    port: 8080
+
+routes:
+  - domain: {app}.fixture.invalid
+    service: web
+
+pack:
+  portability: standard
+  owner: platform-fixtures
+  description: Synthetic adoption redaction test app.
+
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: demo_app
+    export:
+      command: pg_dump --password super-secret postgres://user:password@db.example/demo_app
+    import:
+      command: pg_restore --dbname=demo_app demo_app.dump
+    verify:
+      command: psql demo_app -c "select 1"
   backups:
     required: true
     restore_drill_required: true

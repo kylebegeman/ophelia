@@ -44,3 +44,4 @@
 | [0040](0040-source-of-truth-and-fixture-first-validation.md) | 2026-06-22 | landed | Source-of-truth and fixture-first validation | docs, fixtures, command-catalog, tests |
 | [0041](0041-app-adoption-plan.md) | 2026-06-22 | landed | App adoption plan | cli, adoption, command-catalog, docs, tests |
 | [0042](0042-adoption-fixture-repos.md) | 2026-06-22 | landed | Adoption fixture repos | fixtures, adoption, tests, docs |
+| [0043](0043-pack-command-metadata-redaction.md) | 2026-06-22 | landed | Pack command metadata redaction | security, redaction, portability, adoption, tests, docs |

@@ -1065,6 +1065,41 @@ that represent future Ophelia-first products instead of old live deployments.
 values, run probes, or deploy the fixture apps. It only adds synthetic repo
 fixtures and validation.
 
+## Phase 23: Pack Command Metadata Redaction
+
+**Status:** Landed in changelog record
+[`0043`](changelog/0043-pack-command-metadata-redaction.md).
+
+**Goal:** Preserve the no-secret-output invariant for pack and adoption
+surfaces that summarize manifest data-contract command strings.
+
+**Work items:**
+
+- Deep-redact `data_contract_dict` output before pack validation, pack
+  explanation, export planning, and adoption plans can embed it.
+- Scrub Postgres and Redis export command summaries with the central command
+  string redactor.
+- Redact adoption-embedded pack validation payloads before emission.
+- Add regression coverage for `pack_validation_report`, `export_plan`, and
+  `adoption_plan` with secret-looking command literals and credential URLs.
+- Document the redaction guarantee in [Portable App Pack Spec](portable-app-pack-spec.md)
+  and [App Adoption Planning](app-adoption.md).
+
+**Dependencies:** Central redaction helpers and Phase 21 adoption planning.
+
+**Milestone commit:** `fix: redact pack command metadata`
+
+**Definition of done:**
+
+- Command strings embedded in pack/adoption/export metadata preserve shape but
+  mask secret-looking literals.
+- Pack validation and export planning tests fail if `--password super-secret`
+  or credential URLs appear in JSON output.
+- No command execution behavior changes.
+
+**Boundary:** Phase 23 does not forbid free-form data-contract commands or
+execute them. It only changes emitted metadata redaction.
+
 ## Phase Dependency Graph
 
 ```text
@@ -1091,6 +1126,7 @@ Phase 0 docs
                                       -> Phase 20 source-of-truth fixture-first validation
                                         -> Phase 21 app adoption plan contract
                                           -> Phase 22 future-app adoption fixture repos
+                                            -> Phase 23 pack command metadata redaction
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

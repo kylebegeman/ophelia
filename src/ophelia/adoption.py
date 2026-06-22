@@ -8,6 +8,7 @@ from .config import DEFAULT_RUNTIME_ROOT
 from .manifest import Manifest, ManifestError, load_manifest
 from .operation_schema import artifact, issue, plan_envelope
 from .portability import pack_validation_report
+from .redaction import deep_redact
 
 
 ADOPTION_ARTIFACTS = (
@@ -195,8 +196,8 @@ def adoption_plan(
         mutates_state=False,
         repo_path=str(repo_root),
         manifest_path=str(resolved_manifest_path),
-        required_artifacts=artifacts,
-        pack_validation=pack_validation,
+    required_artifacts=artifacts,
+        pack_validation=deep_redact(pack_validation),
         adoption_gates=gates,
         next_commands=next_commands,
         secrets_redacted=True,

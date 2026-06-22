@@ -229,7 +229,8 @@ starting SSH and never prints their values.
 22. Phase 20 has landed: active guidance now treats Ophelia as the source-of-truth contract, uses synthetic fixtures as the development test substrate, and leaves old deployments as legacy inventory until an explicit migration or deployment phase.
 23. Phase 21 has landed: app adoption planning now checks future app repos against the Ophelia contract without collecting live values or mutating product code.
 24. Phase 22 has landed: committed future-app adoption fixture repos now validate the Ophelia repo contract without using legacy products as examples.
-25. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+25. Phase 23 has landed: pack validation, pack explanation, export command summaries, and adoption-embedded pack validation now scrub secret-shaped command literals.
+26. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 

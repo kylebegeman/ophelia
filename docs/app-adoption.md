@@ -57,6 +57,10 @@ The JSON output is an `ophelia.plan` with:
 - `mutates_state: false`
 - `live_values_collected: false`
 
+Embedded pack validation data is redacted before output. Secret-shaped command
+flags, key/value arguments, and credential URLs are masked while preserving
+useful command shape.
+
 The next commands are ordered around the Ophelia contract:
 
 1. preview repo artifact scaffolding with `ship pack init`

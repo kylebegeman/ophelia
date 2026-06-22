@@ -258,6 +258,10 @@ default should be secret refs and redacted env shape.
 `pack init` is preview-only unless `--write` is passed. It refuses to overwrite
 existing scaffold files unless `--force` is also passed.
 
+`pack validate --json` and `pack explain --json` redact data-contract command
+metadata before output. Secret-shaped flags, key/value arguments, and
+credential URLs are masked while preserving enough command shape for review.
+
 ### Readiness Commands
 
 ```bash

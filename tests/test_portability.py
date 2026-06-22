@@ -64,6 +64,19 @@ class PortabilityTests(unittest.TestCase):
         error_codes = {item["code"] for item in report["errors"]}
         self.assertIn("postgres_data_contract_inferred", error_codes)
 
+    def test_pack_validation_redacts_secret_literals_in_data_contract_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "secret-command.ophelia.yml"
+            manifest_path.write_text(_portable_manifest_with_secret_data_command())
+            manifest = load_manifest(manifest_path)
+
+            report = pack_validation_report(manifest, manifest_path)
+
+        blob = json.dumps(report)
+        self.assertNotIn("super-secret", blob)
+        self.assertNotIn("postgres://user:password", blob)
+        self.assertIn("<redacted>", blob)
+
     def test_export_plan_is_read_only_and_redacts_env_shape(self) -> None:
         with self._skip_docker_status():
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -92,6 +105,26 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("postgres", plan["data_dependencies"])
         self.assertIn("export-plan.json", plan["artifact_paths"]["export_plan_receipt"])
         self.assertNotIn("super-secret", json.dumps(plan))
+
+    def test_export_plan_redacts_secret_literals_in_command_summaries(self) -> None:
+        with self._skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                manifest_path = root / "secret-command.ophelia.yml"
+                manifest_path.write_text(_portable_manifest_with_secret_data_command())
+
+                plan = export_plan(
+                    "secret-command",
+                    environment="staging",
+                    runtime_root=root / "runtime",
+                    manifest_path=manifest_path,
+                    ophelia_root=root,
+                )
+
+        blob = json.dumps(plan)
+        self.assertNotIn("super-secret", blob)
+        self.assertNotIn("postgres://user:password", blob)
+        self.assertIn("<redacted>", blob)
 
     def test_export_plan_blocks_external_runtime_symlink(self) -> None:
         with self._skip_docker_status():
@@ -1596,6 +1629,40 @@ data:
 verify:
   - name: health
     url: https://dragonwriter.begam.in/health
+""".strip() + "\n"
+
+
+def _portable_manifest_with_secret_data_command() -> str:
+    return """
+version: 1
+app: secret-command
+environment: staging
+kind: service
+image: ghcr.io/example/secret-command@sha256:bbbbbbbb
+pack:
+  portability: standard
+  owner: personal
+services:
+  web:
+    port: 3000
+routes:
+  - domain: secret-command.example.com
+    service: web
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: secret_command
+    export:
+      format: custom
+      command: pg_dump --password super-secret postgres://user:password@db.example/secret_command
+    import:
+      command: pg_restore
+    verify:
+      command: psql secret_command -c "select 1"
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
 """.strip() + "\n"
 
 

@@ -36,7 +36,13 @@ from .policy import policy_check_entry
 from .provider_config import validate_provider_config, validate_ttl
 from .redaction import redact_url
 from .remediation import remediation_for
-from .redaction import deep_redact, redact_mapping, redacted_cloudflare_record, redacted_compose_text
+from .redaction import (
+    deep_redact,
+    redact_command_string,
+    redact_mapping,
+    redacted_cloudflare_record,
+    redacted_compose_text,
+)
 from .runtime import active_release, active_release_id, image_references, latest_release_id
 from .templates import compose_network_summary, render_env_example
 from .verify import verification_checks
@@ -100,7 +106,7 @@ class ManifestResolution:
 
 def data_contract_dict(manifest: Manifest) -> Dict[str, object]:
     payload = manifest.to_lock_dict().get("data", {})
-    return payload if isinstance(payload, dict) else {}
+    return deep_redact(payload) if isinstance(payload, dict) else {}
 
 
 def pack_validation_report(
@@ -5269,7 +5275,7 @@ def _export_commands(manifest: Manifest) -> List[Dict[str, object]]:
     data = manifest.data
     if data.postgres:
         export = data.postgres.export
-        command = export.get("command") or "pg_dump"
+        command = redact_command_string(str(export.get("command") or "pg_dump"))
         database = data.postgres.database or "<database-from-env-or-addon>"
         commands.append(
             {
@@ -5287,7 +5293,11 @@ def _export_commands(manifest: Manifest) -> List[Dict[str, object]]:
                 "name": "redis.export",
                 "data": "redis",
                 "mode": data.redis.mode,
-                "command": export.get("command") or "redis export is not enabled by default for logical DB cache state",
+                "command": (
+                    redact_command_string(str(export.get("command")))
+                    if export.get("command")
+                    else "redis export is not enabled by default for logical DB cache state"
+                ),
                 "executes_in_plan": False,
             }
         )
