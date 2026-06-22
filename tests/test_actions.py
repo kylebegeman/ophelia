@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -35,6 +36,21 @@ class ActionTests(unittest.TestCase):
         self.assertIn("app.traffic.rollback.plan", ids)
         self.assertIn("app.traffic.rollback.apply", ids)
         self.assertIn("receipts.list", ids)
+
+    def test_action_catalog_rejects_invalid_config_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "actions.json"
+            config_path.write_text("{")
+            previous = os.environ.get("OPHELIA_ACTION_CONFIG")
+            os.environ["OPHELIA_ACTION_CONFIG"] = str(config_path)
+            try:
+                with self.assertRaisesRegex(ValueError, "Action config JSON is invalid"):
+                    action_catalog()
+            finally:
+                if previous is None:
+                    os.environ.pop("OPHELIA_ACTION_CONFIG", None)
+                else:
+                    os.environ["OPHELIA_ACTION_CONFIG"] = previous
 
     def test_invalid_action_inputs_are_rejected(self) -> None:
         with self.assertRaises(ActionError):
@@ -156,6 +172,23 @@ class ActionTests(unittest.TestCase):
             self.assertEqual("failed", locked.job["state"])
             self.assertIn("locked", locked.job["error"])
 
+    def test_corrupt_idempotency_index_fails_before_job_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            jobs_root = runtime_root / "jobs"
+            jobs_root.mkdir(parents=True)
+            (jobs_root / "idempotency.json").write_text("{")
+
+            with self.assertRaisesRegex(ActionError, "Idempotency index is unreadable"):
+                run_job(
+                    "manifest.validate",
+                    {"manifest_path": str(Path(temp_dir) / "missing.ophelia.yml")},
+                    runtime_root,
+                    idempotency_key="same-key",
+                )
+
+            self.assertEqual(["idempotency.json"], [path.name for path in jobs_root.iterdir()])
+
     def test_same_input_jobs_get_distinct_ids_without_idempotency_key(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -238,6 +271,103 @@ class ActionTests(unittest.TestCase):
 
             self.assertEqual("succeeded", result.job["state"])
             self.assertIn("callbacks are disabled", result.job["warnings"][0])
+
+    def test_completion_callback_rejects_secret_shaped_url(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "app.ophelia.yml"
+            runtime_root = root / "runtime"
+            config_path = root / "actions.json"
+            manifest_path.write_text(_production_static_manifest(root / "static"))
+            (root / "static").mkdir()
+            config_path.write_text(json.dumps({"callbacks_enabled": True}))
+            previous = os.environ.get("OPHELIA_ACTION_CONFIG")
+            os.environ["OPHELIA_ACTION_CONFIG"] = str(config_path)
+            try:
+                result = run_job(
+                    "manifest.validate",
+                    {
+                        "manifest_path": str(manifest_path),
+                        "runtime_root": str(runtime_root),
+                        "completion_callback_url": "https://user:secret@example.com/cb?token=abc#frag",
+                    },
+                    runtime_root,
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("OPHELIA_ACTION_CONFIG", None)
+                else:
+                    os.environ["OPHELIA_ACTION_CONFIG"] = previous
+
+        blob = json.dumps(result.job)
+        self.assertEqual("failed", result.job["state"])
+        self.assertIn("must not contain credentials", blob)
+        self.assertNotIn("secret", blob)
+        self.assertNotIn("token=abc", blob)
+
+    def test_completion_callback_requires_allowlisted_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "app.ophelia.yml"
+            runtime_root = root / "runtime"
+            config_path = root / "actions.json"
+            manifest_path.write_text(_production_static_manifest(root / "static"))
+            (root / "static").mkdir()
+            config_path.write_text(json.dumps({"callbacks_enabled": True}))
+            previous = os.environ.get("OPHELIA_ACTION_CONFIG")
+            os.environ["OPHELIA_ACTION_CONFIG"] = str(config_path)
+            try:
+                with mock.patch("ophelia.actions.request.urlopen") as urlopen:
+                    result = run_job(
+                        "manifest.validate",
+                        {
+                            "manifest_path": str(manifest_path),
+                            "runtime_root": str(runtime_root),
+                            "completion_callback_url": "http://127.0.0.1:9/callback",
+                        },
+                        runtime_root,
+                    )
+            finally:
+                if previous is None:
+                    os.environ.pop("OPHELIA_ACTION_CONFIG", None)
+                else:
+                    os.environ["OPHELIA_ACTION_CONFIG"] = previous
+
+        self.assertEqual("succeeded", result.job["state"])
+        self.assertIn("not allowlisted", result.job["warnings"][0])
+        self.assertFalse(urlopen.called)
+
+    def test_completion_callback_allowed_host_attempts_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "app.ophelia.yml"
+            runtime_root = root / "runtime"
+            config_path = root / "actions.json"
+            manifest_path.write_text(_production_static_manifest(root / "static"))
+            (root / "static").mkdir()
+            config_path.write_text(json.dumps({"callbacks_enabled": True, "callback_allowed_hosts": ["127.0.0.1:9"]}))
+            previous = os.environ.get("OPHELIA_ACTION_CONFIG")
+            os.environ["OPHELIA_ACTION_CONFIG"] = str(config_path)
+            try:
+                with mock.patch("ophelia.actions.request.urlopen", side_effect=OSError("boom")) as urlopen:
+                    result = run_job(
+                        "manifest.validate",
+                        {
+                            "manifest_path": str(manifest_path),
+                            "runtime_root": str(runtime_root),
+                            "completion_callback_url": "http://127.0.0.1:9/callback",
+                        },
+                        runtime_root,
+                    )
+            finally:
+                if previous is None:
+                    os.environ.pop("OPHELIA_ACTION_CONFIG", None)
+                else:
+                    os.environ["OPHELIA_ACTION_CONFIG"] = previous
+
+        self.assertEqual("succeeded", result.job["state"])
+        self.assertIn("Completion callback failed for http://127.0.0.1:9/callback", json.dumps(result.job))
+        self.assertTrue(urlopen.called)
 
     def test_pack_init_preview_action_does_not_write_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

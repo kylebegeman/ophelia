@@ -339,6 +339,75 @@ class DashboardObservabilityTests(unittest.TestCase):
             self.assertNotIn("super-secret-value", text)
             self.assertNotIn("postgres://user:secret", text)
 
+    def test_dashboard_includes_traffic_and_top_level_aggregates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifests_dir = root / "manifests"
+            manifests_dir.mkdir()
+            (manifests_dir / "app.ophelia.yml").write_text(_manifest_text(health_url="https://web:3000/health"))
+            runtime_root = _seed_runtime(root, with_backup=True, with_failed_receipt=False)
+
+            report = dashboard_data(runtime_root=runtime_root, manifests_dir=manifests_dir)
+
+            row = next(entry for entry in report["apps"] if entry["app"] == "dragon-writer")
+            self.assertIsNotNone(row["traffic_status"])
+            self.assertEqual("ok", row["traffic_status"]["status"])
+            self.assertIsInstance(report["traffic_status"], dict)
+            self.assertIsInstance(report["observability"], dict)
+            self.assertEqual(1, report["traffic_status"]["app_count"])
+            self.assertEqual(1, report["observability"]["app_count"])
+
+
+class ObservabilityScheduleTests(unittest.TestCase):
+    def test_schedule_run_writes_latest_and_timestamped_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifests_dir = root / "manifests"
+            manifests_dir.mkdir()
+            (manifests_dir / "app.ophelia.yml").write_text(_manifest_text(health_url="https://web:3000/health"))
+            runtime_root = _seed_runtime(root, with_backup=True, with_failed_receipt=False)
+
+            report = obs.observability_schedule_run(
+                runtime_root=runtime_root,
+                manifests_dir=manifests_dir,
+            )
+
+            self.assertEqual("ophelia.observability_schedule_run", report["kind"])
+            self.assertEqual("succeeded", report["status"])
+            self.assertEqual(1, report["totals"]["app_count"])
+            self.assertEqual("dragon-writer", report["apps"][0]["app"])
+            latest = runtime_root / "observability" / "latest.json"
+            self.assertTrue(latest.exists())
+            run_artifacts = list((runtime_root / "observability" / "runs").glob("*.json"))
+            self.assertEqual(1, len(run_artifacts))
+            json.loads(latest.read_text())
+
+    def test_schedule_run_does_not_probe_http_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifests_dir = root / "manifests"
+            manifests_dir.mkdir()
+            (manifests_dir / "app.ophelia.yml").write_text(_manifest_text(health_url="https://web:3000/health"))
+            runtime_root = _seed_runtime(root, with_backup=True, with_failed_receipt=False)
+
+            import urllib.request as urlreq
+
+            original = urlreq.urlopen
+
+            def _boom(*args, **kwargs):  # pragma: no cover - must not be called
+                raise AssertionError("schedule run made a network call by default")
+
+            urlreq.urlopen = _boom
+            try:
+                report = obs.observability_schedule_run(
+                    runtime_root=runtime_root,
+                    manifests_dir=manifests_dir,
+                )
+            finally:
+                urlreq.urlopen = original
+
+            self.assertFalse(report["probed_http"])
+
 
 if __name__ == "__main__":
     unittest.main()

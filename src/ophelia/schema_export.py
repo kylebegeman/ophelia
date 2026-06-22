@@ -40,7 +40,6 @@ _ENUM_BY_PATH: Dict[str, List[Any]] = {
     "kind": ["service", "multi-service", "static", "tunnel", "redirect"],
     "environment": ["dev", "staging", "production"],
     "profile": ["prism"],
-    "redirect_status": [301, 302, 307, 308],
     "edge.catch_all.http_redirect_status": [301, 302, 307, 308],
     "pack.portability": ["critical", "standard", "static"],
     "networking.edge": ["shared"],
@@ -50,6 +49,13 @@ _ENUM_BY_PATH: Dict[str, List[Any]] = {
     "verify_policy.failure_mode": ["hard", "warn"],
     "observability.metrics.format": ["prometheus", "json", "none"],
     "observability.metrics.auth": ["none", "bearer_env", "basic_env"],
+}
+
+_STRING_SCHEMA_BY_PATH: Dict[str, Dict[str, Any]] = {
+    "verify.url": {
+        "type": "string",
+        "pattern": r"^https?://(?![^/?#]*@)[^?#]*$",
+    },
 }
 
 # A few dataclass field names are exported under a different YAML key by the
@@ -88,6 +94,16 @@ def manifest_json_schema() -> Dict[str, Any]:
         "required": list(REQUIRED_TOP_LEVEL),
         "additionalProperties": True,
         "properties": properties,
+        "allOf": [
+            {
+                "if": {"properties": {"kind": {"const": "redirect"}}},
+                "then": {
+                    "properties": {
+                        "redirect_status": {"enum": [301, 302, 307, 308]},
+                    }
+                },
+            }
+        ],
     }
     return schema
 
@@ -148,6 +164,8 @@ def _schema_for_type(annotation: Any, path: str) -> Dict[str, Any]:
     if annotation is float:
         return {"type": "number"}
     if annotation is str:
+        if path in _STRING_SCHEMA_BY_PATH:
+            return dict(_STRING_SCHEMA_BY_PATH[path])
         return {"type": "string"}
 
     if origin in (list, List):

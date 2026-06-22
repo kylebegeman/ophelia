@@ -40,11 +40,18 @@ class InspectionTests(unittest.TestCase):
             root = Path(temp_dir)
             (root / "platform" / "shared").mkdir(parents=True)
             (root / "platform" / "shared" / "compose.yml").write_text("services: {}\n")
-            with patch.dict("os.environ", {"OPHELIA_SKIP_DOCKER_STATUS": "1"}):
+            with patch.dict("os.environ", {"OPHELIA_SKIP_DOCKER_STATUS": "1", "OPHELIA_SKIP_GH_STATUS": "1"}):
                 report = doctor_report(root / "missing-runtime", root, root / "manifests")
 
             self.assertTrue(report["ok"])
+            self.assertEqual(1, report["schema_version"])
+            self.assertEqual("ophelia.doctor", report["kind"])
+            self.assertEqual("ok", report["status"])
             self.assertTrue(any("missing-runtime" in warning for warning in report["warnings"]))
+            check_names = {str(check["name"]) for check in report["checks"]}
+            self.assertIn("state.index.current", check_names)
+            self.assertIn("command_catalog.complete", check_names)
+            self.assertIn("redaction.smoke", check_names)
 
 
 def _manifest() -> str:

@@ -92,7 +92,7 @@ def _release_id_from_path(release_path: Path) -> str | None:
         return None
     try:
         payload = json.loads(release_path.read_text())
-    except json.JSONDecodeError:
+    except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
         return None

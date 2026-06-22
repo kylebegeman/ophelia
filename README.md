@@ -36,6 +36,8 @@ logs, and pulled images.
 - [Dragon Writer Migration Runbook](docs/dragon-writer-migration-runbook.md)
 - [Selected Portability Feature Roadmap](docs/selected-portability-feature-roadmap.md)
 - [Ophelia Improvement Execution Plan](docs/ophelia-improvement-execution-plan.md)
+- [Product Improvement Findings](docs/product-improvement-findings.md)
+- [Strategic Implementation Roadmap](docs/ophelia-strategic-implementation-roadmap.md)
 - [Ophelia Change Records](docs/changelog/README.md)
 
 ## Repository Layout
@@ -165,9 +167,10 @@ starting SSH and never prints their values.
 
 ## Next Milestones
 
-1. Harden release history, rollback, status, backup, drift, and preflight flows.
-2. Keep moving app repos onto repo-owned Ophelia manifests and GHCR-backed CI deploys.
-3. Layer in optional auth and monitoring after the runtime path is inspectable.
+1. Phase 1 of the [Strategic Implementation Roadmap](docs/ophelia-strategic-implementation-roadmap.md) has landed: plan digest cards, expanded `ship doctor`, and command catalog examples.
+2. Phase 2 has landed: workflow run preview plus shared plan/receipt search aliases.
+3. Execute Phase 3: durable state service and drift engine foundation.
+4. Continue later phases in dependency order: workflow orchestrator, GitHub App and secrets integrations, multi-host placement, plugin contracts, then the Lumen operator console.
 
 ## Deploy Flows
 

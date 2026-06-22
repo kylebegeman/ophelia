@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from .redaction import deep_redact, redact_command_string
 
 
 SCHEMA_VERSION = 1
@@ -19,7 +22,8 @@ def operation_id(operation: str, app: Optional[str] = None, environment: Optiona
         parts.append(app)
     if environment:
         parts.append(environment)
-    parts.append(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    parts.append(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+    parts.append(secrets.token_hex(3))
     return ".".join(_slug(part) for part in parts if part)
 
 
@@ -64,6 +68,77 @@ def diff_artifact(
     return payload
 
 
+def attach_digest(
+    payload: Dict[str, Any],
+    *,
+    operation: Optional[str] = None,
+    risk: Optional[str] = None,
+    status: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Attach a compact, redacted operator digest to a plan/report/receipt.
+
+    The digest is intentionally redundant with the full payload. It gives humans,
+    Lumen, and downstream agents a bounded summary of operation identity, risk,
+    confirmation/rollback posture, and blocker/warning counts without requiring
+    every consumer to understand every operation-specific field.
+    """
+    if "digest" not in payload:
+        payload["digest"] = operation_digest(payload, operation=operation, risk=risk, status=status)
+    return payload
+
+
+def operation_digest(
+    payload: Dict[str, Any],
+    *,
+    operation: Optional[str] = None,
+    risk: Optional[str] = None,
+    status: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a scalar-only summary for an operation payload."""
+    blockers = _list_value(payload.get("blockers"))
+    warnings = _list_value(payload.get("warnings"))
+    checks = _list_value(payload.get("checks"))
+    artifacts = _list_value(payload.get("artifacts"))
+    changes = _list_value(payload.get("changes"))
+    exact_apply_input = payload.get("exact_apply_input")
+    rollback = payload.get("rollback") if isinstance(payload.get("rollback"), dict) else {}
+
+    confirmation_required = bool(payload.get("confirmation_required"))
+    confirmation_token = payload.get("confirmation_token")
+    digest: Dict[str, Any] = {
+        "operation": operation or payload.get("operation"),
+        "app": payload.get("app"),
+        "environment": payload.get("environment"),
+        "risk": risk or payload.get("risk"),
+        "status": status or _digest_status(payload, blockers, warnings),
+        "summary": payload.get("summary"),
+        "counts": {
+            "blockers": len(blockers),
+            "warnings": len(warnings),
+            "checks": len(checks),
+            "artifacts": len(artifacts),
+            "changes": len(changes),
+        },
+        "blocker_codes": _issue_codes(blockers),
+        "warning_codes": _issue_codes(warnings),
+        "confirmation": {
+            "required": confirmation_required,
+            "token_present": bool(confirmation_token),
+            "apply_command": _apply_command_preview(exact_apply_input),
+        },
+        "mutation": {
+            "dry_run": bool(payload.get("dry_run")),
+            "changes_planned": len(changes),
+            "artifacts_planned": len(artifacts),
+        },
+        "rollback": {
+            "available": bool(rollback.get("available")),
+            "note": rollback.get("note") if isinstance(rollback.get("note"), str) else None,
+        },
+    }
+    return deep_redact(digest)
+
+
 def plan_envelope(
     operation: str,
     app: Optional[str],
@@ -100,7 +175,7 @@ def plan_envelope(
         "exact_apply_input": exact_apply_input,
     }
     payload.update(extra)
-    return payload
+    return attach_digest(payload)
 
 
 def report_envelope(
@@ -131,7 +206,7 @@ def report_envelope(
         "inputs_redacted": True,
     }
     payload.update(extra)
-    return payload
+    return attach_digest(payload)
 
 
 def receipt_envelope(
@@ -165,7 +240,7 @@ def receipt_envelope(
         "rollback": rollback or {"available": False, "note": "No mutation was performed."},
     }
     payload.update(extra)
-    return payload
+    return attach_digest(payload)
 
 
 def error_envelope(
@@ -203,3 +278,37 @@ def token(action: str, payload: Dict[str, Any]) -> str:
 
 def _slug(value: str) -> str:
     return "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in value)
+
+
+def _digest_status(payload: Dict[str, Any], blockers: List[Any], warnings: List[Any]) -> str:
+    status = payload.get("status")
+    if isinstance(status, str) and status:
+        return status
+    if blockers:
+        return "blocked"
+    if payload.get("confirmation_required"):
+        return "awaiting_confirmation"
+    if warnings:
+        return "warning"
+    return "ready"
+
+
+def _list_value(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _issue_codes(items: List[Any]) -> List[str]:
+    codes: List[str] = []
+    for item in items:
+        if isinstance(item, dict) and isinstance(item.get("code"), str):
+            codes.append(item["code"])
+    return codes[:10]
+
+
+def _apply_command_preview(exact_apply_input: Any) -> Optional[str]:
+    if not isinstance(exact_apply_input, dict):
+        return None
+    command = exact_apply_input.get("command")
+    if isinstance(command, str) and command:
+        return redact_command_string(command)
+    return None

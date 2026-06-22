@@ -66,13 +66,19 @@ class SchemaExportTests(unittest.TestCase):
             ["service", "multi-service", "static", "tunnel", "redirect"],
         )
         self.assertEqual(props["environment"]["enum"], ["dev", "staging", "production"])
-        self.assertEqual(props["redirect_status"]["enum"], [301, 302, 307, 308])
+        self.assertEqual(props["redirect_status"]["type"], "integer")
+        redirect_condition = manifest_json_schema()["allOf"][0]
+        self.assertEqual(
+            redirect_condition["then"]["properties"]["redirect_status"]["enum"],
+            [301, 302, 307, 308],
+        )
         self.assertEqual(props["pack"]["properties"]["portability"]["enum"], ["critical", "standard", "static"])
         self.assertEqual(props["networking"]["properties"]["edge"]["enum"], ["shared"])
         self.assertEqual(props["networking"]["properties"]["internal"]["enum"], ["shared", "per-app"])
         self.assertEqual(props["edge"]["properties"]["tls"]["properties"]["mode"]["enum"], ["auto", "internal", "custom"])
         self.assertEqual(props["prism"]["properties"]["surface"]["enum"], ["console", "quark"])
         self.assertEqual(props["verify_policy"]["properties"]["failure_mode"]["enum"], ["hard", "warn"])
+        self.assertEqual(props["verify"]["items"]["properties"]["url"]["pattern"], r"^https?://(?![^/?#]*@)[^?#]*$")
 
     def test_additional_properties_matches_lenient_parser(self) -> None:
         # The parser silently ignores unknown top-level keys, so the schema must
@@ -144,6 +150,25 @@ class SchemaExportTests(unittest.TestCase):
             "schema and parser disagree on unknown extension fields",
         )
         self.assertTrue(parser_accepts, "expected parser to tolerate unknown fields")
+
+    @unittest.skipUnless(_jsonschema_available(), "jsonschema not installed")
+    def test_lock_dict_omits_none_fields_and_validates(self) -> None:
+        import jsonschema
+        import yaml
+
+        instance = {
+            "version": 1,
+            "app": "schema-lock-test",
+            "kind": "tunnel",
+            "routes": [{"domain": "lock.example.com", "upstream": "http://127.0.0.1:3000"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "m.ophelia.yml"
+            manifest_path.write_text(yaml.safe_dump(instance))
+            lock = load_manifest(manifest_path).to_lock_dict()
+
+        self.assertNotIn("tunnel_target", lock)
+        jsonschema.validate(lock, manifest_json_schema())
 
 
 if __name__ == "__main__":

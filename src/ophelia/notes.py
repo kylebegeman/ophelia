@@ -20,7 +20,7 @@ def add_note(runtime_root: Path, target_type: str, target_id: str, text: str, au
     }
     path = _notes_path(runtime_root, target_type, target_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    notes = json.loads(path.read_text()) if path.exists() else []
+    notes = _load_notes(path)
     notes.append(note)
     path.write_text(json.dumps(notes, indent=2, sort_keys=True) + "\n")
     return note
@@ -28,9 +28,21 @@ def add_note(runtime_root: Path, target_type: str, target_id: str, text: str, au
 
 def list_notes(runtime_root: Path, target_type: str, target_id: str) -> List[Dict[str, object]]:
     path = _notes_path(runtime_root, target_type, target_id)
-    return json.loads(path.read_text()) if path.exists() else []
+    return _load_notes(path)
 
 
 def _notes_path(runtime_root: Path, target_type: str, target_id: str) -> Path:
     safe_id = target_id.replace("/", "_")
     return runtime_root / "notes" / target_type / f"{safe_id}.json"
+
+
+def _load_notes(path: Path) -> List[Dict[str, object]]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Notes file is unreadable: {path}") from exc
+    if not isinstance(payload, list) or not all(isinstance(note, dict) for note in payload):
+        raise ValueError(f"Notes file must contain a list of note objects: {path}")
+    return payload

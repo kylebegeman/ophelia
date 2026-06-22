@@ -30,12 +30,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import command_catalog
+from .api_routes import HTTP_ROUTE_PATTERNS
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .conflicts import scan_conflicts
 from .observability import compact_observability_summary, observability_status
 from .operation_schema import SCHEMA_VERSION, issue
 from .operator_reports import manifest_registry
-from .portability import app_readiness_report, backup_status_report
+from .portability import app_readiness_report, backup_status_report, traffic_status
 from .receipt_index import receipt_timeline
 from .redaction import deep_redact
 
@@ -46,35 +47,6 @@ APPS_KIND = "ophelia.lumen.apps"
 
 # Recent receipts surfaced per app/environment on the dashboard.
 _DASHBOARD_RECEIPT_LIMIT = 10
-
-# Read-only HTTP endpoint path templates Ophelia exposes. Kept here as a stable,
-# inspectable manifest so Lumen can discover the surface without scraping
-# ``api.py``. Listing-only: this does not register routes.
-_HTTP_ENDPOINTS: List[str] = [
-    "/health",
-    "/actions",
-    "/commands",
-    "/schema/manifest",
-    "/host/inventory",
-    "/registry/manifests",
-    "/registry/releases",
-    "/operations",
-    "/workflows",
-    "/workflows/<id>",
-    "/state/status",
-    "/state/apps",
-    "/state/receipts",
-    "/state/routes",
-    "/state/backups",
-    "/jobs/<id>",
-    "/jobs/<id>/events",
-    "/lumen/capabilities",
-    "/lumen/dashboard-data",
-    "/lumen/action-descriptors",
-    "/lumen/apps",
-    "/lumen/apps/<app>/readiness",
-    "/lumen/apps/<app>/timeline",
-]
 
 # The named surfaces Lumen can render. These map to existing Ophelia contracts;
 # this list is descriptive metadata, not a router.
@@ -108,11 +80,11 @@ def capabilities(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
             "count": len(descriptors),
             "catalog": descriptors,
         },
-        "http_endpoints": list(_HTTP_ENDPOINTS),
+        "http_endpoints": list(HTTP_ROUTE_PATTERNS),
         "surfaces": list(_SURFACES),
         "summary": (
             f"Ophelia exposes {len(descriptors)} command(s), "
-            f"{len(_HTTP_ENDPOINTS)} read-only HTTP endpoint(s), "
+            f"{len(HTTP_ROUTE_PATTERNS)} read-only HTTP endpoint(s), "
             f"and {len(_SURFACES)} Lumen surface(s)."
         ),
     }
@@ -167,10 +139,8 @@ def dashboard_data(
     For each app/environment in the manifest registry this surfaces: readiness
     status + portability score, open blocker counts/codes (codes only, never the
     full secret-bearing finding payloads), recent receipts (capped at
-    :data:`_DASHBOARD_RECEIPT_LIMIT`), route-conflict counts, and backup
-    freshness. Each per-app entry's ``observability`` is populated with a compact
-    summary; the top-level ``observability`` and ``traffic_status`` remain
-    reserved placeholder keys (``None``) that later phases fill in.
+    :data:`_DASHBOARD_RECEIPT_LIMIT`), route-conflict counts, backup freshness,
+    compact traffic status, and compact observability status.
 
     Resilient by construction: a failing per-app sub-report becomes a structured
     ``warnings`` entry, never a crash. The whole assembled payload is run through
@@ -219,11 +189,8 @@ def dashboard_data(
             "blocked": blocked,
             "warning": sum(1 for entry in entries if entry.get("readiness_level") == "warning"),
         },
-        # Reserved for later phases; explicitly null so the shape is stable now.
-        # Per-app entries carry a populated ``observability`` summary; these
-        # top-level aggregates are not yet computed.
-        "traffic_status": None,
-        "observability": None,
+        "traffic_status": _aggregate_traffic_status(entries),
+        "observability": _aggregate_observability(entries),
         "summary": (
             f"{len(entries)} app/environment(s): {ready} ready, {blocked} blocked, "
             f"{len(warnings)} warning(s)."
@@ -251,8 +218,6 @@ def _dashboard_app_entry(
         "recent_receipts": [],
         "route_conflicts": {"count": 0, "ok": None},
         "backup_freshness": None,
-        # ``traffic_status`` is a reserved per-app placeholder for later phases;
-        # ``observability`` is populated below with a compact summary.
         "traffic_status": None,
         "observability": None,
     }
@@ -327,7 +292,86 @@ def _dashboard_app_entry(
     if isinstance(observability, dict):
         entry["observability"] = compact_observability_summary(observability)
 
+    traffic = _safe_call(
+        lambda: traffic_status(
+            app,
+            environment=environment,
+            runtime_root=runtime_root,
+            manifest_path=Path(manifest_path) if manifest_path else None,
+        ),
+        warnings,
+        "traffic_status_unavailable",
+        app,
+    )
+    if isinstance(traffic, dict):
+        entry["traffic_status"] = _compact_traffic_summary(traffic)
+
     return entry
+
+
+def _compact_traffic_summary(status: Dict[str, Any]) -> Dict[str, Any]:
+    latest_apply = status.get("latest_apply") if isinstance(status.get("latest_apply"), dict) else {}
+    latest_rollback = status.get("latest_rollback") if isinstance(status.get("latest_rollback"), dict) else {}
+    route_conflicts = status.get("route_conflicts") if isinstance(status.get("route_conflicts"), list) else []
+    route_ownership = status.get("route_ownership") if isinstance(status.get("route_ownership"), list) else []
+    blockers = status.get("blockers") if isinstance(status.get("blockers"), list) else []
+    target_health = status.get("target_health") if isinstance(status.get("target_health"), dict) else {}
+    return {
+        "status": status.get("status"),
+        "latest_apply_status": latest_apply.get("status"),
+        "latest_apply_completed_at": latest_apply.get("completed_at"),
+        "latest_rollback_status": latest_rollback.get("status"),
+        "provider_mutation_performed": bool(latest_apply.get("provider_mutation_performed")),
+        "route_count": len(route_ownership),
+        "route_conflict_count": len(route_conflicts),
+        "target_health_ok": target_health.get("ok"),
+        "blocker_count": len(blockers),
+    }
+
+
+def _aggregate_observability(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summaries = [entry.get("observability") for entry in entries if isinstance(entry.get("observability"), dict)]
+    statuses = _count_values(summary.get("status") for summary in summaries)
+    warning_count = sum(int(summary.get("warning_count") or 0) for summary in summaries)
+    blocker_count = sum(int(summary.get("blocker_count") or 0) for summary in summaries)
+    return {
+        "app_count": len(summaries),
+        "status": "blocked" if blocker_count else "warning" if warning_count else "ok",
+        "statuses": statuses,
+        "health_configured": sum(1 for summary in summaries if summary.get("health_configured")),
+        "metrics_configured": sum(1 for summary in summaries if summary.get("metrics_configured")),
+        "logs_configured": sum(1 for summary in summaries if summary.get("logs_configured")),
+        "receipt_failures": sum(int(summary.get("receipt_failures") or 0) for summary in summaries),
+        "warning_count": warning_count,
+        "blocker_count": blocker_count,
+    }
+
+
+def _aggregate_traffic_status(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summaries = [entry.get("traffic_status") for entry in entries if isinstance(entry.get("traffic_status"), dict)]
+    statuses = _count_values(summary.get("status") for summary in summaries)
+    blocker_count = sum(int(summary.get("blocker_count") or 0) for summary in summaries)
+    route_conflict_count = sum(int(summary.get("route_conflict_count") or 0) for summary in summaries)
+    return {
+        "app_count": len(summaries),
+        "status": "blocked" if blocker_count else "warning" if route_conflict_count else "ok",
+        "statuses": statuses,
+        "with_latest_apply": sum(1 for summary in summaries if summary.get("latest_apply_status")),
+        "with_latest_rollback": sum(1 for summary in summaries if summary.get("latest_rollback_status")),
+        "provider_mutations_performed": sum(1 for summary in summaries if summary.get("provider_mutation_performed")),
+        "route_conflict_count": route_conflict_count,
+        "blocker_count": blocker_count,
+    }
+
+
+def _count_values(values) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for value in values:
+        if value is None:
+            continue
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _receipt_summary(receipt: Any) -> Dict[str, Any]:

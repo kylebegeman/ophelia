@@ -54,6 +54,22 @@ separate approved cleanup operation.
 - Prefer dry-run plans, confirmation tokens, and explicit cutover commands over
   implicit mutation.
 
+## Current Strategic Roadmap
+
+The next selected product-improvement batch is documented in:
+
+- [Product Improvement Findings](product-improvement-findings.md)
+- [Strategic Implementation Roadmap](ophelia-strategic-implementation-roadmap.md)
+
+The roadmap adds operator readability, richer diagnostics, operation aliases,
+durable state, drift detection, workflow orchestration, GitHub App and secret
+provider integrations, multi-host placement, plugin contracts, and a Lumen
+operator console.
+
+Implementation should follow the documented phase order. Foundational contracts,
+state, redaction, and diagnostic work come before Lumen UI, host placement, and
+plugin expansion.
+
 ## Non-Goals
 
 - Do not replace Lumen Ops with an Ophelia UI.

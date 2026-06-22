@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.findings import Finding, Remediation, attach_remediation, finding_from_issue
-from ophelia.operation_schema import error_envelope, issue
+from ophelia.operation_schema import error_envelope, issue, operation_id
 
 
 class RemediationTests(unittest.TestCase):
@@ -75,6 +75,12 @@ class ErrorEnvelopeTests(unittest.TestCase):
     def test_next_actions_included_when_provided(self) -> None:
         env = error_envelope("x", "code", next_actions=["ship validate manifest --json"])
         self.assertEqual(["ship validate manifest --json"], env["next_actions"])
+
+
+class OperationIdTests(unittest.TestCase):
+    def test_operation_ids_are_unique_within_same_second(self) -> None:
+        ids = {operation_id("deploy.apply", "app", "production") for _ in range(20)}
+        self.assertEqual(20, len(ids))
 
 
 class AttachRemediationTests(unittest.TestCase):

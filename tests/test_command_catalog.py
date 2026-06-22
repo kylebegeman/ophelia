@@ -49,11 +49,39 @@ class CommandCatalogTests(unittest.TestCase):
         commands = [item["command"] for item in catalog()]
         self.assertEqual(commands, sorted(commands))
 
+    def test_catalog_entries_include_examples(self) -> None:
+        descriptors = {item["operation"]: item for item in catalog()}
+        for item in catalog():
+            self.assertIsInstance(item["examples"], list, item["operation"])
+            self.assertTrue(item["examples"], f"{item['operation']} is missing examples")
+
+        self.assertIn("ship app traffic plan", descriptors["app.traffic.plan"]["examples"][0])
+        self.assertIn("ship doctor --json", descriptors["runtime.doctor"]["examples"])
+
     def test_every_action_id_is_a_descriptor_operation(self) -> None:
         action_ids = {item["id"] for item in action_catalog()}
         operations = {descriptor.operation for descriptor in command_registry()}
         missing = action_ids - operations
         self.assertEqual(missing, set(), f"action ids missing from catalog: {missing}")
+
+    def test_action_args_schema_is_operation_specific(self) -> None:
+        descriptors = {descriptor.operation: descriptor for descriptor in command_registry()}
+        deploy_props = descriptors["deploy.plan"].args_schema["properties"]
+        self.assertEqual("string", deploy_props["manifest_path"]["type"])
+        self.assertNotIn("target_origin", deploy_props)
+        self.assertNotIn("provider_config", deploy_props)
+
+        traffic_props = descriptors["app.traffic.plan"].args_schema["properties"]
+        self.assertIn("target_origin", traffic_props)
+        self.assertIn("provider_config", traffic_props)
+        self.assertNotIn("backup_id", traffic_props)
+
+    def test_receipt_descriptors_are_not_shadowed_by_cli_only_copies(self) -> None:
+        descriptors = {descriptor.operation: descriptor for descriptor in command_registry()}
+        self.assertEqual("ship receipts list", descriptors["receipts.list"].command)
+        self.assertEqual("ship receipts show", descriptors["receipts.show"].command)
+        self.assertEqual("ophelia.report", descriptors["receipts.list"].json_kind)
+        self.assertEqual("ophelia.report", descriptors["receipts.show"].json_kind)
 
     def test_main_commands_catalog_json_is_pure_json(self) -> None:
         buffer = io.StringIO()

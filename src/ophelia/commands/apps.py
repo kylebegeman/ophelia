@@ -5,6 +5,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..app_registry import load_app_registry, registry_conflicts
+from ._output import print_error
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -18,10 +19,7 @@ def run(args: Namespace) -> int:
     try:
         entries = load_app_registry(args.registry)
     except (FileNotFoundError, ValueError) as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
-        else:
-            print(str(exc))
+        print_error(str(exc), "app_registry_invalid", json_output=args.json)
         return 1
     conflicts = registry_conflicts(entries)
     payload = {

@@ -1,28 +1,30 @@
 # Dedicated Agent Prompt: Ophelia Improvement Roadmap
 
-Use this prompt for an implementation agent that should build the selected
-post-Ophelia 2.0 improvement roadmap.
+Use this prompt for an implementation agent that should build the current
+selected Ophelia product-improvement roadmap.
 
 ```text
 You are working in /Users/kyle/Developer/platforms/ophelia.
 
 Goal:
-Implement the selected Ophelia improvement roadmap documented in docs/ophelia-improvement-execution-plan.md. Ophelia remains the VPS deploy/runtime substrate. Do not rename it. Do not mutate production VPS state, delete services, change production DNS/Caddy, or print secrets.
+Implement the selected Ophelia strategic roadmap documented in docs/ophelia-strategic-implementation-roadmap.md. Ophelia remains the VPS deploy/runtime substrate. Do not rename it. Do not mutate production VPS state, delete services, change production DNS/Caddy, or print secrets.
 
 Read first:
 1. README.md
-2. docs/ophelia-improvement-execution-plan.md
-3. docs/changelog/README.md
-4. docs/changelog/TEMPLATE.md
-5. docs/job-action-api.md
-6. docs/portable-app-pack-spec.md
-7. docs/preflight-and-safety.md
-8. docs/lumen-vps-ophelia-2-handoff.md
+2. docs/product-improvement-findings.md
+3. docs/ophelia-strategic-implementation-roadmap.md
+4. docs/ophelia-improvement-execution-plan.md
+5. docs/changelog/README.md
+6. docs/changelog/TEMPLATE.md
+7. docs/job-action-api.md
+8. docs/portable-app-pack-spec.md
+9. docs/preflight-and-safety.md
+10. docs/lumen-vps-ophelia-2-handoff.md
 
 Before coding:
 1. Run git status --short --branch.
 2. Review the current diff and preserve unrelated user or agent work.
-3. Start at Phase 0/Phase 1 of docs/ophelia-improvement-execution-plan.md and move in dependency order.
+3. Start at the next incomplete phase of docs/ophelia-strategic-implementation-roadmap.md and move in dependency order.
 4. For each logical change, add docs/changelog/NNNN-short-slug.md and update docs/changelog/INDEX.md.
 
 Implementation rules:
@@ -39,5 +41,5 @@ Implementation rules:
   git diff --check
 
 Definition of done:
-The selected minor and major improvements have documented commands or API surfaces, stable JSON contracts, tests, safety gates, Lumen-consumable descriptors, and change records. Final response must list changed files, verification run, and remaining risks.
+The selected phase has documented commands or API surfaces, stable JSON contracts, tests, safety gates, Lumen-consumable descriptors, and change records. Final response must list changed files, verification run, and remaining risks.
 ```

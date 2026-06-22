@@ -18,7 +18,7 @@ class JsonOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            env = {**os.environ, "OPHELIA_SKIP_DOCKER_STATUS": "1"}
+            env = {**os.environ, "OPHELIA_SKIP_DOCKER_STATUS": "1", "OPHELIA_SKIP_GH_STATUS": "1"}
 
             commands = [
                 ["validate", "examples/dragonwriter.ophelia.yml", "--json"],

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,10 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ophelia.command_catalog import command_registry
 from ophelia.workflows import (
     WORKFLOW_PLAN_KIND,
+    WORKFLOW_PREVIEW_KIND,
     WORKFLOW_TEMPLATES_KIND,
     command_has_shell_metacharacters,
     list_workflow_templates,
     plan_workflow,
+    preview_workflow,
+    run_workflow,
     show_workflow,
 )
 
@@ -74,6 +79,34 @@ class MoveAppGraphTests(unittest.TestCase):
     def test_node_commands_are_arg_arrays_without_shell_metacharacters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             plan = _plan(Path(tmp))
+        commands_by_id = {node["id"]: node["command"] for node in plan["nodes"]}
+        self.assertEqual(
+            ["ship", "validate", "MANIFEST_PATH", "--json"],
+            commands_by_id["validate-manifest"],
+        )
+        self.assertEqual(
+            ["ship", "inspect", "conflicts", "--manifest-dir", "MANIFEST_DIR", "--json"],
+            commands_by_id["check-route-conflicts"],
+        )
+        self.assertEqual(
+            [
+                "ship",
+                "app",
+                "traffic",
+                "plan",
+                "dragon-writer",
+                "--from",
+                "spaceship",
+                "--to",
+                "ovh",
+                "--target-origin",
+                "https://origin.example.com",
+                "--environment",
+                "production",
+                "--json",
+            ],
+            commands_by_id["traffic-plan"],
+        )
         for node in plan["nodes"]:
             command = node["command"]
             self.assertIsInstance(command, list)
@@ -124,6 +157,10 @@ class MoveAppGraphTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             runtime_root = Path(tmp)
             plan = _plan(runtime_root)
+            self.assertEqual(WORKFLOW_PLAN_KIND, plan["kind"])
+            self.assertEqual("workflow.plan", plan["operation"])
+            self.assertFalse(plan["confirmation_required"])
+            self.assertIsNone(plan["exact_apply_input"])
             self.assertEqual(1, len(plan["artifacts"]))
             artifact_path = Path(plan["artifacts"][0]["path"])
             self.assertTrue(artifact_path.exists())
@@ -163,6 +200,120 @@ class ShowWorkflowTests(unittest.TestCase):
         self.assertIsNone(report["workflow"])
         codes = {blocker["code"] for blocker in report["blockers"]}
         self.assertIn("workflow_not_found", codes)
+
+
+class RunWorkflowTests(unittest.TestCase):
+    def test_run_executes_non_mutating_nodes_with_substitutions_and_writes_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp)
+            plan = _plan(runtime_root)
+            calls: list[list[str]] = []
+
+            def _runner(command: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "schema_version": 1,
+                            "kind": "ophelia.report",
+                            "operation": "test.node",
+                            "operation_id": f"node-output-{len(calls)}",
+                            "status": "ok",
+                            "blockers": [],
+                            "warnings": [],
+                            "artifacts": [],
+                        }
+                    ),
+                    stderr="",
+                )
+
+            receipt = run_workflow(
+                plan["workflow_id"],
+                runtime_root=runtime_root,
+                substitutions={
+                    "MANIFEST_PATH": "manifests/dragon-writer.ophelia.yml",
+                    "PROVIDER_CONFIG": "providers.json",
+                    "MANIFEST_DIR": "manifests",
+                    "EXPORT_BUNDLE": "exports/dragon-writer",
+                },
+                command_runner=_runner,
+            )
+
+            self.assertEqual("succeeded", receipt["status"])
+            self.assertEqual("workflow.run", receipt["operation"])
+            self.assertEqual(len(EXPECTED_MOVE_APP_ORDER), len(calls))
+            self.assertTrue(all(node["status"] == "succeeded" for node in receipt["nodes"]))
+            self.assertEqual("node-output-1", receipt["nodes"][0]["receipt_id"])
+            self.assertEqual("ship", Path(calls[0][0]).name)
+            self.assertTrue((runtime_root / "workflows" / "receipts").exists())
+            self.assertTrue((runtime_root / "apps" / "dragon-writer" / "receipts").exists())
+            stored = show_workflow(plan["workflow_id"], runtime_root=runtime_root)
+            self.assertEqual("succeeded", stored["workflow"]["last_run"]["status"])
+
+    def test_run_blocks_unresolved_placeholders_without_executing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp)
+            plan = _plan(runtime_root)
+
+            def _runner(_command: list[str], _timeout: float) -> subprocess.CompletedProcess[str]:
+                raise AssertionError("unresolved workflow should not execute a command")
+
+            receipt = run_workflow(
+                plan["workflow_id"],
+                runtime_root=runtime_root,
+                command_runner=_runner,
+            )
+
+            self.assertEqual("blocked", receipt["status"])
+            self.assertEqual("blocked", receipt["nodes"][0]["status"])
+            self.assertEqual("skipped", receipt["nodes"][1]["status"])
+            codes = {blocker["code"] for blocker in receipt["blockers"]}
+            self.assertIn("workflow_unresolved_placeholder", codes)
+
+
+class PreviewWorkflowTests(unittest.TestCase):
+    def test_preview_resolves_nodes_without_executing_or_writing_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp)
+            plan = _plan(runtime_root)
+
+            preview = preview_workflow(
+                "latest:dragon-writer",
+                runtime_root=runtime_root,
+                substitutions={
+                    "MANIFEST_PATH": "manifests/dragon-writer.ophelia.yml",
+                    "PROVIDER_CONFIG": "providers.json",
+                    "MANIFEST_DIR": "manifests",
+                    "EXPORT_BUNDLE": "exports/dragon-writer",
+                },
+            )
+
+            self.assertEqual(WORKFLOW_PREVIEW_KIND, preview["kind"])
+            self.assertEqual("ready", preview["status"])
+            self.assertEqual(plan["workflow_id"], preview["workflow_id"])
+            self.assertEqual(len(EXPECTED_MOVE_APP_ORDER), preview["node_counts"]["ready"])
+            self.assertTrue(all(node["status"] == "ready" for node in preview["nodes"]))
+            self.assertTrue(all("resolved_command" in node for node in preview["nodes"]))
+            self.assertTrue(all("executable_path" in node for node in preview["nodes"]))
+            self.assertFalse((runtime_root / "workflows" / "receipts").exists())
+            stored = show_workflow(plan["workflow_id"], runtime_root=runtime_root)
+            self.assertNotIn("last_run", stored["workflow"])
+
+    def test_preview_blocks_unresolved_placeholders_and_skips_dependents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp)
+            plan = _plan(runtime_root)
+
+            preview = preview_workflow(plan["workflow_id"], runtime_root=runtime_root)
+
+            self.assertEqual("blocked", preview["status"])
+            self.assertEqual("blocked", preview["nodes"][0]["status"])
+            self.assertEqual("skipped", preview["nodes"][1]["status"])
+            codes = {blocker["code"] for blocker in preview["blockers"]}
+            self.assertIn("workflow_unresolved_placeholder", codes)
+            self.assertFalse((runtime_root / "workflows" / "receipts").exists())
 
 
 class ListTemplatesTests(unittest.TestCase):

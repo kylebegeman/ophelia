@@ -33,6 +33,9 @@ Quark can call these read-only commands today:
 - `ship app isolation plan <app> --environment <env> --json`
 - `ship receipts list --json`
 - `ship receipts show <receipt-id> --json`
+- `ship receipts show latest:<app> --json`
+- `ship workflow run <workflow-id-or-alias> --preview --json`
+- `ship state query receipts --ref latest:<operation> --json`
 
 Mutating commands require confirmation tokens from their matching plans:
 
@@ -104,6 +107,26 @@ root, returns `required_confirmation_token`, `confirmation_expires_at`, and
 `exact_apply_input`, and the apply job must submit the matching token before it
 expires. Successful apply consumes the token.
 
+## Operation Digest Blocks
+
+Canonical plan, report, and receipt envelopes include a compact `digest` block.
+The digest is redundant with the full payload, but bounded for operator cards,
+Lumen previews, and downstream agents that need a quick summary.
+
+Digest fields include:
+
+- `operation`, `app`, `environment`, `risk`, and `status`.
+- `counts` for blockers, warnings, checks, artifacts, and planned changes.
+- `blocker_codes` and `warning_codes` for fast filtering.
+- `confirmation.required`, `confirmation.token_present`, and a redacted
+  `confirmation.apply_command` when the operation exposes one.
+- `mutation.dry_run`, `mutation.changes_planned`, and
+  `mutation.artifacts_planned`.
+- `rollback.available` and `rollback.note`.
+
+The digest is produced through the same redaction path as other operator JSON.
+Command strings are token-scrubbed before they are added to the digest.
+
 Completion callbacks are disabled by default. When enabled in
 `config/ophelia-actions.json`, Ophelia posts the completed job JSON to
 `completion_callback_url` and signs the payload with `X-Ophelia-Signature:
@@ -148,6 +171,55 @@ Each `CommandDescriptor` has these fields:
 - `output_schema_ref`: a reference to the output envelope version.
 - `artifacts`: artifact kinds the command may produce.
 - `safety_notes`: human-readable safety notes plus policy gates.
+- `examples`: copyable example invocations. These are surfaced by
+  `ship commands catalog --json`, `GET /commands`, and Lumen action
+  descriptors.
+
+## Doctor Diagnostics
+
+`ship doctor --json` emits
+`{"schema_version": 1, "kind": "ophelia.doctor", ...}` and returns non-zero
+only when a non-warning blocker is present. Fresh checkout gaps, such as missing
+Docker, no provider config, or no state DB yet, are warnings so the command can
+be used during setup.
+
+The expanded report checks Python and PyYAML availability, runtime-root
+writability and layout, manifest parsing/rendering, manifest registry health,
+state DB freshness, command catalog completeness, changelog consistency, Docker
+and `gh` status, provider config validity, and a redaction smoke test.
+
+## Operation Reference Aliases
+
+Receipt and workflow continuation commands accept exact IDs as before, plus
+aliases resolved through the shared operation-reference resolver:
+
+- `latest`: newest matching receipt or workflow in the current command scope.
+- `latest:<app>`: newest receipt or workflow for an app.
+- `latest:<operation>`: newest receipt for an operation, for example
+  `latest:app.traffic.apply`.
+- Short ID prefixes, when they match exactly one candidate.
+- Receipt/workflow JSON paths.
+
+Ambiguous prefixes return an explicit blocker with candidate IDs. Commands do
+not guess. Traffic rollback resolves aliases before token generation and apply,
+so confirmation tokens are bound to the resolved receipt path/id, not to a
+moving alias.
+
+Alias-enabled surfaces include `receipts show`, `restore-drills show`,
+`state query receipts --ref`, `workflow show`, `workflow run`, and
+`app traffic rollback plan|apply --receipt`.
+
+## Workflow Run Preview
+
+`ship workflow run <workflow-ref> --preview --json` emits
+`{"schema_version": 1, "kind": "ophelia.workflow_preview", ...}` and never
+executes a node or writes a receipt. It resolves the workflow reference,
+substitutions, dependency outcomes, unresolved placeholders, local executable
+paths, blockers, skipped nodes, and ready nodes.
+
+The non-preview `ship workflow run` path still executes only stored nodes marked
+non-mutating, passes commands as argv arrays, and writes a receipt. Both preview
+and run receipts include the shared `digest` block.
 
 ## Provider And Secret Validation (Phase 3)
 

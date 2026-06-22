@@ -17,6 +17,7 @@ from .lumen_adapter import (
     dashboard_data as lumen_dashboard_data,
 )
 from .operator_reports import host_inventory, manifest_registry, release_registry
+from .operation_schema import error_envelope
 from .operations import list_operations, run_operation
 from .schema_export import manifest_json_schema
 from .state_db import SQLITE_AVAILABLE, query_receipts, state_db_path, state_status
@@ -51,7 +52,10 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             )
             return
         if parsed.path == "/actions":
-            self._json({"actions": action_catalog()})
+            try:
+                self._json({"actions": action_catalog()})
+            except ValueError as exc:
+                self._error(str(exc), status=500, code="actions_config_invalid")
             return
         if parsed.path == "/commands":
             self._json({"commands": command_catalog()})
@@ -119,7 +123,10 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             if not path.exists():
                 self._error("job not found", status=404, code="job_not_found")
                 return
-            self._json(json.loads(path.read_text()))
+            try:
+                self._json(json.loads(path.read_text()))
+            except (OSError, json.JSONDecodeError):
+                self._error(f"job record is unreadable: {job_id}", status=409, code="job_unreadable")
             return
         self._error("not found", status=404, code="not_found")
 
@@ -188,27 +195,22 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _error(self, message: str, status: int, code: str) -> None:
-        self._json(
-            {
-                "schema_version": 1,
-                "kind": "ophelia.error",
-                "status": "failed",
-                "error": message,
-                "blockers": [{"code": code, "message": message}],
-                "warnings": [],
-            },
-            status=status,
-        )
+        self._json(error_envelope(message, code), status=status)
 
     def _events(self, job_id: str) -> None:
         path = self.runtime_root_value / "jobs" / f"{job_id}.events.ndjson"
         if not path.exists():
             self._error("events not found", status=404, code="events_not_found")
             return
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            self._error(f"job events are unreadable: {job_id}", status=409, code="job_events_unreadable")
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        for line in path.read_text().splitlines():
+        for line in lines:
             self.wfile.write(f"data: {line}\n\n".encode("utf-8"))
 
     def _state_table(self, table: str, order_by: str) -> dict:
@@ -243,7 +245,7 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         try:
             cursor = connection.execute(f"SELECT payload_json FROM {table} ORDER BY {order_by}")
             rows = [json.loads(row["payload_json"]) for row in cursor.fetchall() if row["payload_json"]]
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, json.JSONDecodeError, TypeError) as exc:
             base["status"] = "error"
             base["summary"] = f"Local state index is unreadable: {exc}. Run `ship state rebuild`."
             return base

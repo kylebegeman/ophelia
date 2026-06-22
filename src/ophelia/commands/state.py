@@ -33,6 +33,7 @@ def register(subparsers: _SubParsersAction) -> None:
     receipts_parser.add_argument("--environment", choices=["dev", "staging", "production"])
     receipts_parser.add_argument("--operation", help="Filter by exact operation id")
     receipts_parser.add_argument("--status", help="Filter by exact status")
+    receipts_parser.add_argument("--ref", help="Resolve one receipt by id, prefix, path, latest, latest:<app>, or latest:<operation>")
     receipts_parser.add_argument("--limit", type=int, help="Limit the number of results")
     receipts_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     receipts_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
@@ -82,6 +83,7 @@ def run_query_receipts(args: Namespace) -> int:
         environment=args.environment,
         operation=args.operation,
         status=args.status,
+        ref=args.ref,
         limit=args.limit,
     )
     if args.json:
@@ -170,6 +172,7 @@ register_cli_descriptor(
                 "environment": {"type": "string"},
                 "operation": {"type": "string"},
                 "status": {"type": "string"},
+                "ref": {"type": "string"},
                 "limit": {"type": "integer"},
                 "runtime_root": {"type": "string"},
                 "json": {"type": "boolean"},

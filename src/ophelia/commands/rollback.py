@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT
 from ..rollback import apply_rollback, rollback_plan
+from ._output import print_error, print_issues, print_json
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -42,10 +42,17 @@ def run_plan(args: Namespace) -> int:
     try:
         plan = rollback_plan(args.runtime_root, args.app, args.release_id)
     except FileNotFoundError as exc:
-        print(str(exc))
+        print_error(str(exc), "rollback_plan_failed", json_output=args.json)
         return 1
 
-    print(json.dumps(plan, indent=2, sort_keys=True))
+    if args.json:
+        print_json(plan)
+    else:
+        print(plan["summary"])
+        if plan.get("confirmation_token"):
+            print(f"Confirmation token: {plan['confirmation_token']}")
+        print_issues("Blockers", plan.get("blockers", []))
+        print_issues("Warnings", plan.get("warnings", []))
     return 0 if plan["can_apply"] else 1
 
 
@@ -53,8 +60,13 @@ def run_apply(args: Namespace) -> int:
     try:
         report = apply_rollback(args.runtime_root, args.app, args.release_id, args.confirm)
     except (FileNotFoundError, RuntimeError) as exc:
-        print(f"Rollback failed: {exc}")
+        print_error(f"Rollback failed: {exc}", "rollback_apply_failed", json_output=args.json)
         return 1
 
-    print(json.dumps(report, indent=2, sort_keys=True))
+    if args.json:
+        print_json(report)
+    else:
+        print(report["summary"])
+        print(f"Target release: {report['target_release_id']}")
+        print(f"Report: {args.runtime_root / 'apps' / args.app / 'rollback-reports' / (report['report_id'] + '.json')}")
     return 0

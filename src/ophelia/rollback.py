@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+from .path_safety import assert_no_external_symlinks, external_symlinks
 from .runtime import (
     activate_release,
     cleanup_inactive_support_files,
@@ -40,6 +41,8 @@ def rollback_plan(runtime_root: Path, app: str, release_id: str) -> Dict[str, ob
         warnings.append("Target release is already the current release pointer.")
     if not bundle_root.exists():
         blockers.append(f"Rendered bundle snapshot is missing: {bundle_root}")
+    for link in external_symlinks(bundle_root, bundle_root):
+        blockers.append(f"External symlink is not rollback-eligible: {link} -> {link.readlink()}")
     if not changes:
         warnings.append("No generated files are available to restore from the target release.")
 
@@ -95,7 +98,7 @@ def apply_rollback(runtime_root: Path, app: str, release_id: str, confirm: str) 
         relative_path = Path(str(change["path"]))
         source = bundle_root / relative_path
         target = app_root / relative_path
-        _copy_path(source, target)
+        _copy_path(source, target, allowed_root=bundle_root)
         restored.append(str(relative_path))
 
     shared_caddy_updates = _restore_shared_caddy(runtime_root, app, bundle_root, restored)
@@ -192,12 +195,16 @@ def _file_hash(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _copy_path(source: Path, target: Path) -> None:
+def _copy_path(source: Path, target: Path, *, allowed_root: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, target, dirs_exist_ok=True)
+    assert_no_external_symlinks(source, allowed_root)
+    if source.is_symlink():
+        shutil.copy2(source, target, follow_symlinks=False)
         return
-    shutil.copy2(source, target)
+    if source.is_dir():
+        shutil.copytree(source, target, dirs_exist_ok=True, symlinks=True)
+        return
+    shutil.copy2(source, target, follow_symlinks=False)
 
 
 def _restore_shared_caddy(runtime_root: Path, app: str, bundle_root: Path, restored: List[str]) -> List[str]:
@@ -205,7 +212,7 @@ def _restore_shared_caddy(runtime_root: Path, app: str, bundle_root: Path, resto
     site_source = bundle_root / "caddy" / f"{app}.caddy"
     if site_source.exists():
         site_target = runtime_root / "caddy" / "sites.d" / f"{app}.caddy"
-        _copy_path(site_source, site_target)
+        _copy_path(site_source, site_target, allowed_root=bundle_root)
         relative = str(site_target.relative_to(runtime_root))
         restored.append(relative)
         updates.append(relative)

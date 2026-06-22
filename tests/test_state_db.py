@@ -26,6 +26,7 @@ from ophelia.state_db import (
 # proves the redaction path before anything is stored.
 ROOT_SECRET = "super-secret-root-token-ABC123"
 SERVICE_SECRET = "service-db-password-SECRET999"
+NESTED_SECRET = "nested-credential-value-777"
 
 
 def _manifest_yaml() -> str:
@@ -79,6 +80,7 @@ def _build_runtime_root(base: Path) -> Path:
                 "started_at": "2026-06-20T10:00:00Z",
                 "completed_at": "2026-06-20T10:01:00Z",
                 "inputs_redacted": True,
+                "credentials": {"username": NESTED_SECRET, "region": "us-east-1"},
                 "artifacts": [{"name": "bundle", "kind": "ophelia.artifact", "path": "bundle.tar"}],
                 "checks": [{"name": "export_ok", "ok": True, "message": "exported"}],
                 "rollback": {"available": True},
@@ -181,6 +183,18 @@ class StateDbTests(unittest.TestCase):
                 [item["receipt_id"] for item in query_filtered["receipts"]],
             )
 
+    def test_query_receipts_can_resolve_ref_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = _build_runtime_root(Path(temp_dir))
+            rebuild_state(runtime_root, Path(temp_dir) / "manifests")
+
+            report = query_receipts(runtime_root, ref="latest:deploy.apply")
+
+        self.assertEqual("ok", report["status"])
+        self.assertEqual(1, len(report["receipts"]))
+        self.assertEqual("deploy.apply.dragon-writer.production.fixture", report["receipts"][0]["receipt_id"])
+        self.assertEqual("latest", report["resolved_ref"]["strategy"])
+
     def test_query_receipts_without_index_reports_needs_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir) / "runtime"
@@ -201,6 +215,7 @@ class StateDbTests(unittest.TestCase):
             raw_bytes = db_path.read_bytes()
             self.assertNotIn(ROOT_SECRET.encode("utf-8"), raw_bytes)
             self.assertNotIn(SERVICE_SECRET.encode("utf-8"), raw_bytes)
+            self.assertNotIn(NESTED_SECRET.encode("utf-8"), raw_bytes)
 
             # 2. Every stored payload_json column is secret-free.
             connection = sqlite3.connect(str(db_path))
@@ -220,6 +235,7 @@ class StateDbTests(unittest.TestCase):
                             continue
                         self.assertNotIn(ROOT_SECRET, payload_json)
                         self.assertNotIn(SERVICE_SECRET, payload_json)
+                        self.assertNotIn(NESTED_SECRET, payload_json)
             finally:
                 connection.close()
 

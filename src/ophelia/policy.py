@@ -49,6 +49,14 @@ KNOWN_TOP_LEVEL_KEYS = ("version", "defaults", "rules")
 #: Keys understood inside a single rule. Unknown rule keys are advisory.
 KNOWN_RULE_KEYS = ("id", "operation", "environment", "require", "severity", "description")
 
+#: Keys understood inside the top-level defaults block. Defaults are enforced as
+#: implicit production rules for mutating operations.
+KNOWN_DEFAULT_KEYS = (
+    "production_requires_plan",
+    "production_requires_confirmation",
+    "require_json_receipts",
+)
+
 
 # --------------------------------------------------------------------------- #
 # Condition evaluators
@@ -239,6 +247,21 @@ def validate_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
                 issue("policy_unknown_top_level_key", f"Unknown top-level policy key `{key}` is ignored.", key)
             )
 
+    defaults = policy.get("defaults")
+    if defaults is not None:
+        if not isinstance(defaults, dict):
+            blockers.append(issue("policy_defaults_not_mapping", "Policy `defaults` must be a mapping.", "defaults"))
+        else:
+            for key in defaults:
+                if key not in KNOWN_DEFAULT_KEYS:
+                    warnings.append(
+                        issue(
+                            "policy_unknown_default_key",
+                            f"Unknown policy default `{key}` is ignored.",
+                            f"defaults.{key}",
+                        )
+                    )
+
     rules = policy.get("rules")
     if rules is None:
         blockers.append(issue("policy_rules_missing", "Policy is missing a `rules` list.", "rules"))
@@ -370,6 +393,54 @@ def _select_rules(policy: Dict[str, Any], operation: str, environment: Optional[
     return sorted(selected, key=lambda item: str(item.get("id")))
 
 
+def _implicit_default_rules(policy: Dict[str, Any], operation: str, environment: Optional[str]) -> List[Dict[str, Any]]:
+    defaults = policy.get("defaults")
+    if not isinstance(defaults, dict):
+        return []
+    if environment != "production" or not _is_mutating_operation(operation):
+        return []
+
+    rules: List[Dict[str, Any]] = []
+    if defaults.get("production_requires_plan") is True:
+        rules.append(
+            {
+                "id": "default-production-requires-plan",
+                "operation": operation,
+                "environment": environment,
+                "severity": "blocker",
+                "require": {"plan_exists": True},
+                "description": "Production mutating operations require a plan.",
+            }
+        )
+    if defaults.get("production_requires_confirmation") is True:
+        rules.append(
+            {
+                "id": "default-production-requires-confirmation",
+                "operation": operation,
+                "environment": environment,
+                "severity": "blocker",
+                "require": {"confirmation_required": True},
+                "description": "Production mutating operations require operator confirmation.",
+            }
+        )
+    if defaults.get("require_json_receipts") is True:
+        rules.append(
+            {
+                "id": "default-require-json-receipts",
+                "operation": operation,
+                "environment": environment,
+                "severity": "blocker",
+                "require": {"json_receipts": True},
+                "description": "Production mutating operations require JSON receipts.",
+            }
+        )
+    return rules
+
+
+def _is_mutating_operation(operation: str) -> bool:
+    return operation.endswith(".apply") or operation.endswith(".create")
+
+
 def evaluate_policy(
     operation: str,
     app: Optional[str],
@@ -393,6 +464,8 @@ def evaluate_policy(
     context = dict(context or {})
 
     selected = _select_rules(policy, operation, environment)
+    selected.extend(_implicit_default_rules(policy, operation, environment))
+    selected = sorted(selected, key=lambda item: str(item.get("id")))
     rule_results: List[Dict[str, str]] = []
     blockers: List[Dict[str, str]] = []
     warnings: List[Dict[str, str]] = []

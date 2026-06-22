@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import load_manifest
-from ophelia.runtime import apply_local_bundle, current_release_id, deploy_bundle, list_releases, load_release
+from ophelia.runtime import apply_local_bundle, current_release_id, deploy_bundle, list_deployments, list_releases, load_release
 
 
 class ReleaseHistoryTests(unittest.TestCase):
@@ -74,6 +74,28 @@ routes:
             second_id = json.loads((second / "release.json").read_text())["release_id"]
 
             self.assertNotEqual(first_id, second_id)
+
+    def test_corrupt_release_records_do_not_break_deployment_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            bad_app = runtime_root / "apps" / "bad"
+            incomplete_app = runtime_root / "apps" / "incomplete"
+            bad_app.mkdir(parents=True)
+            incomplete_app.mkdir(parents=True)
+            (bad_app / "release.json").write_text("{")
+            (incomplete_app / "release.json").write_text(json.dumps({"app": "incomplete"}))
+
+            self.assertEqual([], list_deployments(runtime_root))
+
+    def test_load_release_reports_corrupt_record_clearly(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            releases_root = runtime_root / "apps" / "release-test" / "releases"
+            releases_root.mkdir(parents=True)
+            (releases_root / "bad.json").write_text("[1, 2, 3]")
+
+            with self.assertRaisesRegex(ValueError, "Release record must be a JSON object"):
+                load_release(runtime_root, "release-test", "bad")
 
     def test_active_release_tracks_successful_apply_not_latest_stage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

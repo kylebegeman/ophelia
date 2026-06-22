@@ -31,8 +31,10 @@ from .manifest import (
 )
 from .operation_schema import artifact, issue as schema_issue, plan_envelope, receipt_envelope, report_envelope
 from .operator_reports import host_inventory
+from .path_safety import assert_no_external_symlinks, external_symlinks
 from .policy import policy_check_entry
 from .provider_config import validate_provider_config, validate_ttl
+from .redaction import redact_url
 from .remediation import remediation_for
 from .redaction import deep_redact, redact_mapping, redacted_cloudflare_record, redacted_compose_text
 from .runtime import active_release, active_release_id, image_references, latest_release_id
@@ -345,7 +347,7 @@ def pack_explain_report(manifest: Manifest, manifest_path: Path) -> Dict[str, ob
             for route in manifest.routes
         ],
         "verification_checks": [
-            {"name": check.name or check.url, "url": check.url, "expect_status": check.expect_status}
+            {"name": check.name or redact_url(check.url), "url": redact_url(check.url), "expect_status": check.expect_status}
             for check in checks
         ],
         "movement_readiness": {
@@ -540,6 +542,13 @@ def export_plan(
     bundle_directory = artifact_root / bundle_directory_name
     commands = _export_commands(manifest)
     runtime_files = _runtime_export_files(app_root)
+    external_runtime_links = [
+        item for item in runtime_files if item.get("external_symlink")
+    ]
+    for item in external_runtime_links:
+        blockers.append(
+            f"External symlink is not export-eligible: {item.get('path')} -> {item.get('symlink_target')}"
+        )
     plan: Dict[str, object] = {
         "action": "app.export.plan",
         "receipt_type": EXPORT_RECEIPT_TYPES["export_plan"],
@@ -568,7 +577,7 @@ def export_plan(
         "images": image_references(manifest),
         "env_shape": _env_shape(manifest, app_root),
         "verification_checks": [
-            {"name": check.name or check.url, "url": check.url, "expect_status": check.expect_status}
+            {"name": check.name or redact_url(check.url), "url": redact_url(check.url), "expect_status": check.expect_status}
             for check in verification_checks(manifest)
         ],
         "runtime_files": runtime_files,
@@ -656,6 +665,9 @@ def export_create(
         blockers.append(schema_issue("confirmation_token_missing", "Export create requires a confirmation token from app export plan."))
     elif confirm != expected:
         blockers.append(schema_issue("confirmation_token_mismatch", "Export create confirmation token does not match the current plan."))
+    app_root = runtime_root / "apps" / str(plan.get("app") or app)
+    for link in _external_runtime_symlinks(app_root):
+        blockers.append(schema_issue("external_symlink_blocked", f"External symlink is not export-eligible: {link} -> {link.readlink()}", str(link)))
     if blockers:
         return receipt_envelope(
             EXPORT_RECEIPT_TYPES["export_create"],
@@ -1139,7 +1151,7 @@ def app_readiness_report(
     warnings.extend(_as_issues(backup_report["warnings"]))
     route_conflict_issues = _route_conflict_issues(route_report, manifest)
     blockers.extend(route_conflict_issues)
-    warnings.extend(_as_issues(route_report.get("warnings", [])))
+    warnings.extend(_route_warning_issues(route_report, manifest))
     if not release:
         blockers.append(schema_issue("release_missing", "No active or latest release metadata is present.", "release.json"))
     if manifest.data.backups and manifest.data.backups.restore_drill_required and not restore_drill_satisfied:
@@ -1410,7 +1422,8 @@ def portability_score(
     factor("env_ready", "secrets", not any(item["status"] in {"missing", "placeholder"} for item in env_report["entries"] if item["required"]), "Required env keys are present.")
     factor("backup_fresh", "backup", not backup_report["blockers"], "Backup status has no blockers.")
     factor("restore_drill", "restore", restore_drill_satisfied or not (manifest.data.backups and manifest.data.backups.restore_drill_required), "Restore drill or backup-verification receipt is recorded when required.")
-    factor("image_digest", "runtime", all("@sha256:" in image for image in image_references(manifest).values()), "Images are digest-pinned.")
+    images = image_references(manifest)
+    factor("image_digest", "runtime", bool(images) and all("@sha256:" in image for image in images.values()), "Images are digest-pinned.")
     factor("checks_pass", "runtime", all(bool(check.get("ok")) for check in checks if check.get("name") != "restore_drill"), "Readiness checks passed.")
     score = max(0, min(100, score))
     if blockers:
@@ -1555,6 +1568,29 @@ def receipt_list_report(
 
 
 def receipt_show_report(receipt_id: str, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, object]:
+    receipt_path = Path(str(receipt_id)).expanduser()
+    if receipt_path.exists() and receipt_path.is_file():
+        payload = _read_json(receipt_path)
+        if payload:
+            resolved_id = _receipt_id(receipt_path, payload)
+            return report_envelope(
+                "receipts.show",
+                payload.get("app") if isinstance(payload.get("app"), str) else None,
+                payload.get("environment") if isinstance(payload.get("environment"), str) else None,
+                f"Receipt {resolved_id}.",
+                artifacts=[artifact(str(receipt_path), "receipt", present=True)],
+                receipt=payload,
+                receipt_id=resolved_id,
+                requested_ref=receipt_id,
+            )
+        return report_envelope(
+            "receipts.show",
+            None,
+            None,
+            f"Receipt path is unreadable: {receipt_id}.",
+            blockers=[schema_issue("receipt_unreadable", f"Could not read receipt JSON: {receipt_path}")],
+            receipt_id=receipt_id,
+        )
     receipts = _receipt_records(runtime_root)
     for record in receipts:
         if record["receipt_id"] == receipt_id:
@@ -1972,6 +2008,8 @@ def traffic_plan(
         "target_health_check": target_health_present,
         "rollback_available": rollback_available,
         "confirmation_required": True,
+        "plan_exists": True,
+        "json_receipts": True,
         "readiness_clean": not blockers,
     }
     policy_check = policy_check_entry(
@@ -2491,7 +2529,11 @@ def traffic_status(
     # deep_redact recursively masks any nested credential-shaped scalar; the two
     # status-flag booleans are safe-keyed so they stay True rather than being
     # masked by their sensitive-looking key names.
-    return deep_redact(payload, safe_keys={"secrets_redacted", "inputs_redacted"})
+    return deep_redact(
+        payload,
+        safe_keys={"secrets_redacted", "inputs_redacted", "credentials_required"},
+        propagate=True,
+    )
 
 
 def _latest_record_for(records: List[Dict[str, object]], operation: str) -> Optional[Dict[str, object]]:
@@ -2608,18 +2650,16 @@ def _traffic_provider_config_digest(provider_config: Optional[Path]) -> Optional
 def _traffic_target_health_present(target_health: Dict[str, object]) -> bool:
     """Whether the plan carries a usable target health check for policy context.
 
-    A health URL that was configured counts as present unless it was executed and
-    failed (``ok`` is explicitly ``False``). This keeps the production health
-    policy gate honest: a configured-but-failing probe must not satisfy the gate.
+    Production traffic gates require evidence, not intent: the target health URL
+    must be configured, executed, and successful. A configured-but-never-run URL
+    is still useful advisory metadata, but it must not satisfy the production
+    apply policy gate.
     """
     if not isinstance(target_health, dict):
         return False
     if not target_health.get("configured"):
         return False
-    ok = target_health.get("ok")
-    if ok is False:
-        return False
-    return True
+    return bool(target_health.get("executed")) and bool(target_health.get("ok"))
 
 
 def _target_origin_issue(target_origin: str) -> Optional[Dict[str, str]]:
@@ -3994,9 +4034,9 @@ def _backup_records(backups_root: Path) -> List[Dict[str, object]]:
                 "created_at": created_at or None,
                 "path": str(manifest_path.parent),
                 "manifest_path": str(manifest_path),
-                "coverage": deep_redact(payload.get("coverage", {})),
-                "database": deep_redact(payload.get("database", {})),
-                "warnings": deep_redact(payload.get("warnings", [])),
+                "coverage": deep_redact(payload.get("coverage", {}), propagate=True),
+                "database": deep_redact(payload.get("database", {}), propagate=True),
+                "warnings": deep_redact(payload.get("warnings", []), propagate=True),
                 "secrets_redacted_in_report": True,
             }
         )
@@ -4172,6 +4212,20 @@ def _route_conflict_issues(report: Dict[str, object], manifest: Manifest) -> Lis
                 "routes",
             )
         )
+    return issues
+
+
+def _route_warning_issues(report: Dict[str, object], manifest: Manifest) -> List[Dict[str, str]]:
+    issues: List[Dict[str, str]] = []
+    warnings = report.get("warnings") if isinstance(report.get("warnings"), list) else []
+    for warning in warnings:
+        if not isinstance(warning, dict):
+            continue
+        if warning.get("app") != manifest.app:
+            continue
+        if warning.get("environment") not in {None, manifest.environment}:
+            continue
+        issues.extend(_as_issues([warning]))
     return issues
 
 
@@ -4634,12 +4688,16 @@ def _runtime_export_files(app_root: Path) -> List[Dict[str, object]]:
     result = []
     for relative_path in paths:
         path = app_root / relative_path
+        links = external_symlinks(path, app_root)
         result.append(
             {
                 "path": str(relative_path),
-                "present": path.exists(),
+                "present": path.exists() or path.is_symlink(),
                 "kind": "directory" if path.is_dir() else "file",
                 "size_bytes": _path_size(path) if path.exists() else 0,
+                "symlink": path.is_symlink(),
+                "external_symlink": bool(links),
+                "symlink_target": str(links[0].readlink()) if links else None,
             }
         )
     return result
@@ -4714,14 +4772,17 @@ def _copy_export_runtime_files(app_root: Path, bundle_directory: Path) -> List[D
         source = app_root / relative
         target = bundle_directory / "runtime" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        if relative == Path("manifest.lock.json"):
+        assert_no_external_symlinks(source, app_root)
+        if source.is_symlink():
+            shutil.copy2(source, target, follow_symlinks=False)
+        elif relative == Path("manifest.lock.json"):
             _write_json(target, _redact_manifest_lock(_read_json(source)))
         elif relative == Path("compose.yml"):
             target.write_text(_redacted_compose_text(source.read_text()))
         elif source.is_dir():
-            shutil.copytree(source, target, dirs_exist_ok=True)
+            shutil.copytree(source, target, dirs_exist_ok=True, symlinks=True)
         else:
-            shutil.copy2(source, target)
+            shutil.copy2(source, target, follow_symlinks=False)
         copied.append(
             {
                 "path": str(Path("runtime") / relative),
@@ -4731,6 +4792,15 @@ def _copy_export_runtime_files(app_root: Path, bundle_directory: Path) -> List[D
             }
         )
     return copied
+
+
+def _external_runtime_symlinks(app_root: Path) -> List[Path]:
+    links: List[Path] = []
+    for item in _runtime_export_files(app_root):
+        if not item.get("present"):
+            continue
+        links.extend(external_symlinks(app_root / Path(str(item["path"])), app_root))
+    return links
 
 
 def _create_data_archives(
@@ -5041,7 +5111,7 @@ def _redact_manifest_lock(payload: Dict[str, object]) -> Dict[str, object]:
                 service["env"] = {key: "<redacted>" for key in service["env"]}
     # Defense-in-depth: mask any secret-shaped value nested elsewhere in the
     # lock, not just the two known env locations above.
-    redacted = deep_redact(redacted)
+    redacted = deep_redact(redacted, propagate=True)
     redacted["secret_values_redacted"] = True
     return redacted
 
@@ -5062,7 +5132,7 @@ def _redacted_export_plan_receipt(plan: Dict[str, object]) -> Dict[str, object]:
                 exact["command"] = command.replace(token_value, "<redacted-after-create>")
     redacted["inputs_redacted"] = True
     redacted["secrets_redacted"] = True
-    return redacted
+    return deep_redact(redacted, safe_keys={"inputs_redacted", "secrets_redacted"}, propagate=True)
 
 
 def _write_checksums(bundle_directory: Path) -> List[Dict[str, str]]:

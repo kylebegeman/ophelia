@@ -10,6 +10,7 @@ from ..command_catalog import (
     register_cli_descriptor,
 )
 from ..provider_config import explain_provider_config, validate_provider_config
+from ._output import print_error
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -60,23 +61,7 @@ def _require_config(args: Namespace) -> str | None:
 
 
 def _print_error(message: str, code: str, emit_json: bool) -> None:
-    if emit_json:
-        print(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "kind": "ophelia.error",
-                    "status": "failed",
-                    "error": message,
-                    "blockers": [{"code": code, "message": message}],
-                    "warnings": [],
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
-    else:
-        print(message)
+    print_error(message, code, json_output=emit_json)
 
 
 def _print_validation(report: dict) -> None:

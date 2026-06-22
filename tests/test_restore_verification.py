@@ -64,6 +64,30 @@ class RestoreVerificationTests(unittest.TestCase):
         codes = {item["code"] for item in plan["blockers"]}
         self.assertIn("backup_missing", codes)
 
+    def test_plan_scrubs_secret_literals_from_recorded_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path.write_text(
+                _critical_manifest()
+                .replace("command: pg_restore", "command: pg_restore --password hunter2")
+                .replace(
+                    "command: ophelia/checks/data-verify.sh",
+                    "command: ophelia/checks/data-verify.sh --api-token sk-live-secret",
+                )
+            )
+            _write_backup(runtime_root, "dragon-writer", with_checksums=True)
+
+            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+
+        blob = json.dumps(plan)
+        self.assertNotIn("hunter2", blob)
+        self.assertNotIn("sk-live-secret", blob)
+        commands = {item["name"]: item["command"] for item in plan["verification_commands"] if "command" in item}
+        self.assertIn("<redacted>", commands["restore_rehearsal"])
+        self.assertIn("<redacted>", commands["app_verify_hook"])
+
     # ------------------------------------------------------------------ #
     # apply is token-gated, isolated, and never deletes
     # ------------------------------------------------------------------ #

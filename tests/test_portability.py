@@ -93,6 +93,39 @@ class PortabilityTests(unittest.TestCase):
         self.assertIn("export-plan.json", plan["artifact_paths"]["export_plan_receipt"])
         self.assertNotIn("super-secret", json.dumps(plan))
 
+    def test_export_plan_blocks_external_runtime_symlink(self) -> None:
+        with self._skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                runtime_root = root / "runtime"
+                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path.write_text(_portable_manifest())
+                app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
+                external_compose = root / "outside-compose.yml"
+                external_compose.write_text("services: {}\n")
+                (app_root / "compose.yml").unlink()
+                (app_root / "compose.yml").symlink_to(external_compose)
+
+                plan = export_plan(
+                    "dragon-writer",
+                    environment="production",
+                    runtime_root=runtime_root,
+                    manifest_path=manifest_path,
+                    ophelia_root=root,
+                )
+                receipt = export_create(
+                    "dragon-writer",
+                    environment="production",
+                    runtime_root=runtime_root,
+                    manifest_path=manifest_path,
+                    confirm=str(plan["confirmation_token"]),
+                    ophelia_root=root,
+                )
+
+        self.assertFalse(plan["can_create"])
+        self.assertIn("External symlink", json.dumps(plan["blockers"]))
+        self.assertEqual("blocked", receipt["status"])
+
     def test_export_create_requires_token_and_writes_redacted_runtime_bundle(self) -> None:
         with self._skip_docker_status():
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -1257,8 +1290,52 @@ routes:
         self.assertIn(report["readiness_level"], {"ready", "warning"})
         self.assertGreaterEqual(report["portability_score"]["score"], 80)
         self.assertNotIn("secret-value", json.dumps(report))
-        self.assertIn("missing_verification_checks", {item["code"] for item in report["warnings"]})
+        self.assertNotIn("missing_verification_checks", {item["code"] for item in report["warnings"]})
         self.assertNotIn("{'type'", json.dumps(report["warnings"]))
+
+    def test_readiness_ignores_other_app_route_warnings(self) -> None:
+        with self._skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                runtime_root = root / "runtime"
+                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path.write_text(_portable_manifest())
+                (root / "neighbor.ophelia.yml").write_text(
+                    """
+version: 1
+app: neighbor
+kind: static
+static_root: /tmp/neighbor-static
+routes:
+  - domain: neighbor.example.com
+""".strip()
+                    + "\n"
+                )
+                manifest = load_manifest(manifest_path)
+                app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+                release = json.loads((app_root / "release.json").read_text())
+                (app_root / "active_release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
+                _write_filled_env(app_root)
+                _write_backup(runtime_root, "dragon-writer")
+                drill_root = app_root / "restore-drills"
+                drill_root.mkdir()
+                (drill_root / "successful-drill.json").write_text(
+                    json.dumps(
+                        {
+                            "operation": "app.restore-drill.apply",
+                            "operation_id": "app.restore-drill.apply.dragon-writer.production.fixture",
+                            "status": "succeeded",
+                            "app": "dragon-writer",
+                            "environment": "production",
+                        }
+                    )
+                    + "\n"
+                )
+
+                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+
+        self.assertNotIn("neighbor.example.com", json.dumps(report["warnings"]))
+        self.assertNotIn("missing_verification_checks", {item["code"] for item in report["warnings"]})
 
     def test_receipt_browser_lists_and_shows_receipts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

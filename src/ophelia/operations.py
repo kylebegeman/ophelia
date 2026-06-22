@@ -8,7 +8,12 @@ from typing import Dict, List
 
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .manifest import load_manifest
+from .operation_schema import SCHEMA_VERSION
 
+
+OPERATIONS_KIND = "ophelia.operations"
+OPERATION_PLAN_KIND = "ophelia.operation_plan"
+OPERATION_REPORT_KIND = "ophelia.operation_report"
 
 OPERATION_TEMPLATES = {
     "deploy-with-preflight": [
@@ -42,17 +47,21 @@ OPERATION_TEMPLATES = {
 
 
 def list_operations() -> Dict[str, object]:
+    operations = [
+        {
+            "name": name,
+            "steps": steps,
+            "dry_run_first": True,
+            "creates_result_artifact": True,
+            "executes_autonomously": False,
+        }
+        for name, steps in sorted(OPERATION_TEMPLATES.items())
+    ]
     return {
-        "operations": [
-            {
-                "name": name,
-                "steps": steps,
-                "dry_run_first": True,
-                "creates_result_artifact": True,
-                "executes_autonomously": False,
-            }
-            for name, steps in sorted(OPERATION_TEMPLATES.items())
-        ]
+        "schema_version": SCHEMA_VERSION,
+        "kind": OPERATIONS_KIND,
+        "operations": operations,
+        "summary": f"{len(operations)} operation template(s) available.",
     }
 
 
@@ -67,6 +76,8 @@ def operation_plan(
         raise ValueError(f"Unknown operation template: {name}")
     manifests = _ordered_manifests(manifest_dir)
     plan = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": OPERATION_PLAN_KIND,
         "operation": name,
         "steps": OPERATION_TEMPLATES[name],
         "manifest_order": manifests,
@@ -102,6 +113,8 @@ def run_operation(
     if confirm != plan["confirmation_token"]:
         raise ValueError("Operation confirmation token did not match the plan.")
     report = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": OPERATION_REPORT_KIND,
         "operation": name,
         "applied_at": _utc_now(),
         "executed_autonomously": False,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
@@ -9,6 +8,7 @@ from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
 from ..portability import backup_status_report
 from ..restore_verification import backup_verify_apply, backup_verify_plan
+from ._output import print_error, print_issues, print_json
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -76,7 +76,14 @@ def register(subparsers: _SubParsersAction) -> None:
 
 def run_backup_plan(args: Namespace) -> int:
     plan = backup_plan(args.runtime_root, args.app)
-    print(json.dumps(plan, indent=2, sort_keys=True))
+    if args.json:
+        print_json(plan)
+    else:
+        print(plan["summary"])
+        if plan.get("confirmation_token"):
+            print(f"Confirmation token: {plan['confirmation_token']}")
+        print_issues("Blockers", plan.get("blockers", []))
+        print_issues("Warnings", plan.get("warnings", []))
     return 0 if plan["can_apply"] else 1
 
 
@@ -88,7 +95,7 @@ def run_backup_status(args: Namespace) -> int:
         manifest_path=args.manifest,
     )
     if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        print_json(report)
     else:
         print(report["summary"])
         latest = report.get("latest_backup")
@@ -104,15 +111,29 @@ def run_backup_create(args: Namespace) -> int:
     try:
         report = create_backup(args.runtime_root, args.app, args.confirm)
     except RuntimeError as exc:
-        print(f"Backup failed: {exc}")
+        print_error(f"Backup failed: {exc}", "backup_create_failed", json_output=args.json)
         return 1
-    print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
+    if args.json:
+        print_json(report)
+    else:
+        print(report.get("summary") or f"Backup create {report.get('status')}.")
+        if report.get("backup_path"):
+            print(f"Backup: {report['backup_path']}")
+        print_issues("Blockers", report.get("blockers", []))
+        print_issues("Warnings", report.get("warnings", []))
+    return 0 if report.get("status") == "succeeded" else 1
 
 
 def run_restore_plan(args: Namespace) -> int:
     plan = restore_plan(args.runtime_root, args.app, args.backup_id)
-    print(json.dumps(plan, indent=2, sort_keys=True))
+    if args.json:
+        print_json(plan)
+    else:
+        print(plan["summary"])
+        if plan.get("confirmation_token"):
+            print(f"Confirmation token: {plan['confirmation_token']}")
+        print_issues("Blockers", plan.get("blockers", []))
+        print_issues("Warnings", plan.get("warnings", []))
     return 0 if plan["can_apply"] else 1
 
 
@@ -120,10 +141,17 @@ def run_restore_apply(args: Namespace) -> int:
     try:
         report = apply_restore(args.runtime_root, args.app, args.backup_id, args.confirm)
     except RuntimeError as exc:
-        print(f"Restore failed: {exc}")
+        print_error(f"Restore failed: {exc}", "restore_apply_failed", json_output=args.json)
         return 1
-    print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
+    if args.json:
+        print_json(report)
+    else:
+        print(report.get("summary") or f"Restore apply {report.get('status')}.")
+        if report.get("preview_path"):
+            print(f"Preview: {report['preview_path']}")
+        print_issues("Blockers", report.get("blockers", []))
+        print_issues("Warnings", report.get("warnings", []))
+    return 0 if report.get("status") == "succeeded" else 1
 
 
 def run_backup_verify_plan(args: Namespace) -> int:
@@ -135,7 +163,7 @@ def run_backup_verify_plan(args: Namespace) -> int:
         manifest_path=args.manifest,
     )
     if args.json:
-        print(json.dumps(plan, indent=2, sort_keys=True))
+        print_json(plan)
     else:
         print(plan["summary"])
         selected = plan.get("selected_backup") if isinstance(plan.get("selected_backup"), dict) else {}
@@ -160,7 +188,7 @@ def run_backup_verify_apply(args: Namespace) -> int:
         manifest_path=args.manifest,
     )
     if args.json:
-        print(json.dumps(receipt, indent=2, sort_keys=True))
+        print_json(receipt)
     else:
         print(receipt.get("summary") or receipt.get("error") or f"Backup verification {receipt.get('status')}.")
         for check in receipt.get("checks", []) if isinstance(receipt.get("checks"), list) else []:

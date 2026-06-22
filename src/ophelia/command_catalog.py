@@ -47,8 +47,10 @@ class CommandDescriptor:
     output_schema_ref: str = REPORT_SCHEMA_REF
     artifacts: List[str] = field(default_factory=list)
     safety_notes: List[str] = field(default_factory=list)
+    examples: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
+        examples = list(self.examples) or _examples_for(self.operation, self.command)
         return {
             "command": self.command,
             "operation": self.operation,
@@ -63,6 +65,7 @@ class CommandDescriptor:
             "output_schema_ref": self.output_schema_ref,
             "artifacts": list(self.artifacts),
             "safety_notes": list(self.safety_notes),
+            "examples": examples,
         }
 
 
@@ -114,6 +117,77 @@ def _safety_notes_for(item: Dict[str, Any]) -> List[str]:
     return notes
 
 
+_EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
+    "commands.catalog": ["ship commands catalog --json", "ship commands catalog --human"],
+    "self_test": ["ship self-test --json"],
+    "runtime.doctor": ["ship doctor --json"],
+    "runtime.status": ["ship status --json"],
+    "runtime.drift": ["ship drift examples/dragonwriter.ophelia.yml --json"],
+    "validate": ["ship validate examples/dragonwriter.ophelia.yml --json"],
+    "render": ["ship render examples/portfolio.ophelia.yml --output-dir ./build/portfolio --json"],
+    "manifest.validate": ["ship validate examples/dragonwriter.ophelia.yml --json"],
+    "manifest.explain": ["ship explain examples/dragonwriter.ophelia.yml --json"],
+    "manifest.diff": ["ship diff examples/portfolio.ophelia.yml --json"],
+    "manifest.conflicts": ["ship inspect conflicts --json"],
+    "deploy.plan": ["ship deploy examples/portfolio.ophelia.yml --plan --json"],
+    "deploy.apply": ["ship deploy examples/portfolio.ophelia.yml --apply --confirm <token>"],
+    "backup.plan": ["ship backup plan dragon-writer --json"],
+    "backup.status": ["ship backup status dragon-writer --environment production --json"],
+    "backup.create": ["ship backup create dragon-writer --confirm <token> --json"],
+    "restore.plan": ["ship restore plan dragon-writer <backup-id> --json"],
+    "restore.apply": ["ship restore apply dragon-writer <backup-id> --confirm <token> --json"],
+    "app.readiness": ["ship app readiness dragon-writer --environment production --json"],
+    "app.runbook": ["ship app runbook dragon-writer --environment production"],
+    "app.export.plan": ["ship app export plan dragon-writer --environment production --json"],
+    "app.export.create": ["ship app export create dragon-writer --environment production --confirm <token> --json"],
+    "app.import.plan": ["ship app import plan ./exports/dragon-writer.production.export/manifest.json --json"],
+    "app.import.apply": ["ship app import apply ./exports/dragon-writer.production.export/manifest.json --confirm <token> --json"],
+    "app.restore-drill.plan": ["ship app restore-drill plan dragon-writer --source ./exports/dragon-writer.production.export.tar --json"],
+    "app.restore-drill.apply": ["ship app restore-drill apply dragon-writer --source ./exports/dragon-writer.production.export.tar --confirm <token> --json"],
+    "app.cutover.plan": ["ship app cutover plan dragon-writer --from spaceship --to ovh --environment production --json"],
+    "app.cutover.apply": ["ship app cutover apply dragon-writer --from spaceship --to ovh --environment production --confirm <token> --json"],
+    "app.traffic.plan": ["ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json"],
+    "app.traffic.apply": ["ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --confirm <token> --json"],
+    "app.traffic.rollback.plan": ["ship app traffic rollback plan dragon-writer --receipt latest:app.traffic.apply --environment production --json"],
+    "app.traffic.rollback.apply": ["ship app traffic rollback apply dragon-writer --receipt latest:app.traffic.apply --environment production --confirm <token> --json"],
+    "app.isolation.plan": ["ship app isolation plan dragon-writer --environment production --json"],
+    "app.templates.list": ["ship app templates list --json"],
+    "app.templates.explain": ["ship app templates explain web-postgres --json"],
+    "app.create.plan": ["ship app create plan --app demo-app --template static-site --json"],
+    "app.create.apply": ["ship app create apply --plan create-plan.json --target-dir ../demo-app --confirm <token>"],
+    "app.github.provision.plan": ["ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --json"],
+    "app.github.provision.apply": ["ship app github apply --app demo-app --template static-site --owner example --repo example/demo-app --confirm <token> --json"],
+    "receipts.list": ["ship receipts list --app dragon-writer --json"],
+    "receipts.show": ["ship receipts show latest:dragon-writer --json", "ship receipts show <receipt-id-prefix> --json"],
+    "receipts.timeline": ["ship receipts timeline --app dragon-writer --json"],
+    "state.status": ["ship state status --json"],
+    "state.rebuild": ["ship state rebuild --json"],
+    "state.query.receipts": ["ship state query receipts --app dragon-writer --json", "ship state query receipts --ref latest:deploy.apply --json"],
+    "workflow.plan": ["ship workflow plan move-app --app dragon-writer --from spaceship --to ovh --environment production --json"],
+    "workflow.preview": ["ship workflow run latest:dragon-writer --preview --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --json"],
+    "workflow.run": ["ship workflow run latest:dragon-writer --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --json"],
+    "workflow.show": ["ship workflow show latest:dragon-writer --json"],
+    "workflow.list": ["ship workflow list --json"],
+    "observability.plan": ["ship observability plan --app dragon-writer --environment production --json"],
+    "observability.status": ["ship observability status --app dragon-writer --environment production --json"],
+    "observability.export": ["ship observability export --app dragon-writer --environment production --json"],
+    "observability.schedule.run": ["ship observability schedule run --json"],
+    "providers.validate": ["ship providers validate --config ./traffic-providers.json --json"],
+    "providers.explain": ["ship providers explain --config ./traffic-providers.json --json"],
+    "secrets.audit": ["ship secrets audit dragon-writer --environment production --json"],
+    "policy.evaluate": ["ship policy evaluate --operation app.traffic.apply --app dragon-writer --environment production --json"],
+}
+
+
+def _examples_for(operation: str, command: str) -> List[str]:
+    examples = _EXAMPLES_BY_OPERATION.get(operation)
+    if examples:
+        return list(examples)
+    if command:
+        return [f"{command} --json"]
+    return []
+
+
 def _descriptors_from_actions() -> List[CommandDescriptor]:
     catalog = action_catalog()
     ids = {item["id"] for item in catalog}
@@ -150,6 +224,7 @@ def _descriptors_from_actions() -> List[CommandDescriptor]:
                 output_schema_ref=_output_schema_ref_for(operation),
                 artifacts=[],
                 safety_notes=_safety_notes_for(item),
+                examples=list(item.get("examples") or []),
             )
         )
     return descriptors
@@ -225,55 +300,6 @@ CLI_ONLY_DESCRIPTORS: List[CommandDescriptor] = [
         artifacts=["rendered compose bundle"],
         safety_notes=["Writes only local rendered files. Does not touch VPS or runtime root."],
     ),
-    CommandDescriptor(
-        command="ship receipts list",
-        operation="receipts.list",
-        summary="List operation receipts.",
-        risk="low",
-        mutates_state=False,
-        requires_confirmation=False,
-        plan_command=None,
-        apply_command=None,
-        json_kind=REPORT_KIND,
-        args_schema={
-            "type": "object",
-            "properties": {
-                "app": {"type": "string"},
-                "environment": {"type": "string"},
-                "runtime_root": {"type": "string"},
-                "json": {"type": "boolean"},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-        output_schema_ref=REPORT_SCHEMA_REF,
-        artifacts=[],
-        safety_notes=["Read-only receipt browsing. No mutation."],
-    ),
-    CommandDescriptor(
-        command="ship receipts show",
-        operation="receipts.show",
-        summary="Show one operation receipt.",
-        risk="low",
-        mutates_state=False,
-        requires_confirmation=False,
-        plan_command=None,
-        apply_command=None,
-        json_kind=REPORT_KIND,
-        args_schema={
-            "type": "object",
-            "properties": {
-                "receipt_id": {"type": "string"},
-                "runtime_root": {"type": "string"},
-                "json": {"type": "boolean"},
-            },
-            "required": ["receipt_id"],
-            "additionalProperties": False,
-        },
-        output_schema_ref=REPORT_SCHEMA_REF,
-        artifacts=[],
-        safety_notes=["Read-only receipt browsing. No mutation."],
-    ),
 ]
 
 
@@ -292,8 +318,9 @@ def _ensure_cli_descriptors_loaded() -> None:
     """
     try:
         import ophelia.commands  # noqa: F401  (import side effects register CLI descriptors)
-    except ImportError:
-        pass
+    except ModuleNotFoundError as exc:
+        if exc.name != "ophelia.commands":
+            raise
 
 
 def command_registry() -> List[CommandDescriptor]:

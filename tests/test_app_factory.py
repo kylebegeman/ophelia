@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -136,6 +137,89 @@ class CreatePlanTests(unittest.TestCase):
         self.assertIsNone(blocked["confirmation_token"])
 
 
+class GitHubProvisioningTests(unittest.TestCase):
+    def test_github_provision_plan_has_typed_commands_and_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = af.github_provision_plan(
+                "demo-app",
+                "docker-web",
+                owner="example",
+                repo="example/demo-app",
+                phase="all",
+                runtime_root=Path(tmp),
+            )
+
+        self.assertEqual("ophelia.github_provision_plan", plan["kind"])
+        self.assertTrue(plan["confirmation_required"])
+        self.assertTrue(plan["confirmation_token"])
+        self.assertTrue(plan["commands"])
+        for command in plan["commands"]:
+            self.assertIsInstance(command["argv"], list)
+            self.assertEqual("gh", command["argv"][0])
+            self.assertFalse(command["executed"])
+        codes = {warning["code"] for warning in plan["warnings"]}
+        self.assertIn("github_branch_protection_requires_branches", codes)
+
+    def test_github_provision_apply_runs_commands_and_writes_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            plan = af.github_provision_plan(
+                "demo-app",
+                "static-site",
+                owner="example",
+                repo="example/demo-app",
+                phase="repo",
+                runtime_root=runtime_root,
+            )
+            calls: list[dict] = []
+
+            def _runner(command: dict, timeout: float) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                return subprocess.CompletedProcess(command["argv"], 0, stdout="", stderr="")
+
+            receipt = af.github_provision_apply(
+                "demo-app",
+                "static-site",
+                owner="example",
+                repo="example/demo-app",
+                phase="repo",
+                runtime_root=runtime_root,
+                confirm=plan["confirmation_token"],
+                command_runner=_runner,
+            )
+
+            self.assertEqual("succeeded", receipt["status"])
+            self.assertEqual("app.github.provision.apply", receipt["operation"])
+            self.assertEqual(["create_repo"], [call["id"] for call in calls])
+            self.assertEqual("succeeded", receipt["steps"][0]["status"])
+            self.assertTrue((runtime_root / "github" / "provisioning").exists())
+            self.assertTrue((runtime_root / "apps" / "demo-app" / "receipts").exists())
+
+    def test_github_provision_apply_rejects_wrong_token_without_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            calls: list[dict] = []
+
+            def _runner(command: dict, timeout: float) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                return subprocess.CompletedProcess(command["argv"], 0, stdout="", stderr="")
+
+            receipt = af.github_provision_apply(
+                "demo-app",
+                "static-site",
+                owner="example",
+                repo="example/demo-app",
+                phase="repo",
+                runtime_root=Path(tmp),
+                confirm="wrong",
+                command_runner=_runner,
+            )
+
+            self.assertEqual("blocked", receipt["status"])
+            self.assertEqual([], calls)
+            codes = {blocker["code"] for blocker in receipt["blockers"]}
+            self.assertIn("confirmation_token_mismatch", codes)
+
+
 class ManifestValidityTests(unittest.TestCase):
     def test_every_template_manifest_loads(self) -> None:
         for name in af.TEMPLATES:
@@ -243,6 +327,38 @@ class CreateApplyTests(unittest.TestCase):
             self.assertIn("unsafe_target_dir", codes)
             self.assertFalse(target.exists())
 
+    def test_apply_refuses_existing_files_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir).resolve()
+            runtime_root = root / "runtime"
+            runtime_root.mkdir()
+            target = root / "work" / "demo-app"
+            target.mkdir(parents=True)
+            manifest = target / ".ophelia.yml"
+            manifest.write_text("user-owned")
+
+            plan = af.create_plan("demo-app", "static-site", runtime_root=runtime_root)
+            blocked = af.create_apply(
+                plan,
+                plan["confirmation_token"],
+                target,
+                runtime_root=runtime_root,
+            )
+            self.assertEqual("blocked", blocked["status"])
+            self.assertIn("target_file_exists", {b["code"] for b in blocked["blockers"]})
+            self.assertEqual("user-owned", manifest.read_text())
+
+            forced = af.create_apply(
+                plan,
+                plan["confirmation_token"],
+                target,
+                runtime_root=runtime_root,
+                force=True,
+            )
+            self.assertEqual("succeeded", forced["status"])
+            self.assertNotEqual("user-owned", manifest.read_text())
+            self.assertIn(str(runtime_root / "static" / "demo-app"), manifest.read_text())
+
 
 class WorkflowAndSecretTests(unittest.TestCase):
     def test_generated_workflows_parse_as_yaml(self) -> None:
@@ -284,6 +400,16 @@ class WorkflowAndSecretTests(unittest.TestCase):
     def test_release_workflow_validates_release_label(self) -> None:
         release = af._release_workflow("demo-app")
         self.assertIn("release:(patch|minor|major)", release)
+
+    def test_static_workflows_do_not_reference_docker_or_registry_secrets(self) -> None:
+        template = af.TEMPLATES["static-site"]
+        staging = af._staging_workflow("demo-app", template)
+        release = af._release_workflow("demo-app", template)
+        workflow_text = staging + release
+        self.assertNotIn("docker build", workflow_text)
+        self.assertNotIn("docker login", workflow_text)
+        self.assertNotIn("GHCR_TOKEN", workflow_text)
+        self.assertNotIn("packages: write", workflow_text)
 
 
 class ReleaseMetadataTests(unittest.TestCase):

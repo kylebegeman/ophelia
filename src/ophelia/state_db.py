@@ -46,6 +46,7 @@ except ImportError:  # pragma: no cover - defensive
     SQLITE_AVAILABLE = False
 
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from .operation_refs import public_resolution, resolve_receipt_ref
 from .operation_schema import SCHEMA_VERSION, issue
 from .operator_reports import manifest_registry, release_registry
 from .portability import (
@@ -54,7 +55,7 @@ from .portability import (
     _restore_drill_receipts,
 )
 from .receipt_index import receipt_timeline
-from .redaction import redact_mapping
+from .redaction import deep_redact, redact_mapping
 
 STATE_SCHEMA_VERSION = 1
 
@@ -157,7 +158,7 @@ def _redact_payload_env(payload: Any) -> Any:
     """
     cloned = json.loads(json.dumps(payload, default=str)) if payload is not None else payload
     _mask_env_in_place(cloned)
-    return cloned
+    return deep_redact(cloned, propagate=True)
 
 
 def _mask_env_in_place(node: Any) -> None:
@@ -752,9 +753,10 @@ def query_receipts(
     environment: Optional[str] = None,
     operation: Optional[str] = None,
     status: Optional[str] = None,
+    ref: Optional[str] = None,
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Read receipts from the local index, newest-first.
+    """Read receipts with the same content and ordering as the file timeline.
 
     Results match :func:`ophelia.receipt_index.receipt_timeline` ordering and
     content for the same filters. If the index is missing, returns a clear
@@ -773,6 +775,7 @@ def query_receipts(
             "environment": environment,
             "operation": operation,
             "status": status,
+            "ref": ref,
             "limit": limit,
         },
         "receipts": [],
@@ -788,65 +791,51 @@ def query_receipts(
         base["summary"] = "No local state index. Run `ship state rebuild` to create it."
         return base
 
-    connection = sqlite3.connect(str(db_path))
-    connection.row_factory = sqlite3.Row
     try:
-        clauses: List[str] = []
-        params: List[Any] = []
-        if app is not None:
-            clauses.append("app = ?")
-            params.append(app)
-        if environment is not None:
-            clauses.append("environment = ?")
-            params.append(environment)
-        if operation is not None:
-            clauses.append("operation = ?")
-            params.append(operation)
-        if status is not None:
-            clauses.append("status = ?")
-            params.append(status)
-        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        # Mirror receipt_timeline ordering exactly: newest-first by
-        # (started_at, receipt_id) descending. COALESCE keeps NULL started_at
-        # sorting as the empty string, matching the file timeline.
-        sql = (
-            "SELECT receipt_id, operation, status, app, environment, started_at, "
-            "completed_at, path, rollback_available FROM receipts" + where
-            + " ORDER BY COALESCE(started_at, '') DESC, receipt_id DESC"
+        timeline = receipt_timeline(
+            runtime_root,
+            app=app,
+            environment=environment,
+            operation=operation,
+            status=status,
         )
-        # limit > 0 applies a cap; limit <= 0 (or None) means "no limit",
-        # matching receipt_timeline which has no limit concept.
-        if isinstance(limit, int) and limit > 0:
-            sql += " LIMIT ?"
-            params.append(limit)
-        cursor = connection.execute(sql, params)
-        rows = cursor.fetchall()
-    except sqlite3.Error as exc:
+    except Exception as exc:  # noqa: BLE001 - query reports degraded state
         base["needs_rebuild"] = True
         base["status"] = "error"
-        base["summary"] = f"Local state index is unreadable: {exc}. Run `ship state rebuild`."
+        base["summary"] = f"Could not read receipt timeline: {exc}. Run `ship state rebuild`."
         return base
-    finally:
-        connection.close()
-
-    receipts = [
-        {
-            "receipt_id": row["receipt_id"],
-            "operation": row["operation"],
-            "status": row["status"],
-            "app": row["app"],
-            "environment": row["environment"],
-            "started_at": row["started_at"],
-            "completed_at": row["completed_at"],
-            "path": row["path"],
-            "rollback_available": bool(row["rollback_available"]),
-        }
-        for row in rows
-    ]
+    receipts = timeline.get("receipts") if isinstance(timeline.get("receipts"), list) else []
+    if ref:
+        resolution = resolve_receipt_ref(
+            ref,
+            runtime_root=runtime_root,
+            app=app,
+            environment=environment,
+            operation=operation,
+            status=status,
+        )
+        base["resolved_ref"] = public_resolution(resolution)
+        if not resolution.get("ok"):
+            base["status"] = "blocked"
+            base["needs_rebuild"] = False
+            base["blockers"] = resolution.get("blockers", [])
+            base["warnings"] = resolution.get("warnings", [])
+            base["summary"] = f"Receipt reference unresolved: {ref}."
+            return base
+        resolved_id = str(resolution.get("resolved_id") or "")
+        resolved_path = str(resolution.get("path") or "")
+        receipts = [
+            item
+            for item in receipts
+            if item.get("receipt_id") == resolved_id or item.get("path") == resolved_path
+        ]
+    if isinstance(limit, int) and limit > 0:
+        receipts = receipts[:limit]
     base["status"] = "ok"
     base["needs_rebuild"] = False
     base["receipts"] = receipts
-    base["summary"] = f"{len(receipts)} receipt(s) from the local state index."
+    base["warnings"] = timeline.get("warnings", []) if isinstance(timeline.get("warnings"), list) else []
+    base["summary"] = f"{len(receipts)} receipt(s) from the receipt timeline."
     return base
 
 

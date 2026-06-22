@@ -48,6 +48,7 @@ from .portability import (
     traffic_rollback_plan,
 )
 from .rollback import apply_rollback, rollback_plan
+from .redaction import redact_url
 from .runtime import apply_local_bundle, list_releases, load_release
 
 
@@ -562,6 +563,8 @@ def _validate_callback_url(value: Any) -> None:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ActionError("`completion_callback_url` must be an http(s) URL.")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ActionError("`completion_callback_url` must not contain credentials, query strings, or fragments.")
 
 
 def _confirmation_payload(inputs: Dict[str, Any], plan: Dict[str, Any], token: str) -> Dict[str, Any]:
@@ -577,6 +580,139 @@ def _confirmation_payload(inputs: Dict[str, Any], plan: Dict[str, Any], token: s
     }
 
 
+_PROPERTY_SCHEMAS: Dict[str, Dict[str, str]] = {
+    "app": {"type": "string"},
+    "environment": {"type": "string"},
+    "manifest_path": {"type": "string"},
+    "manifest_dir": {"type": "string"},
+    "runtime_root": {"type": "string"},
+    "release_id": {"type": "string"},
+    "backup_id": {"type": "string"},
+    "receipt_id": {"type": "string"},
+    "source_path": {"type": "string"},
+    "source_host": {"type": "string"},
+    "target_host": {"type": "string"},
+    "target_origin": {"type": "string"},
+    "dns_provider": {"type": "string"},
+    "caddy_provider": {"type": "string"},
+    "ttl": {"type": "string"},
+    "provider_config": {"type": "string"},
+    "execute_provider_mutation": {"type": "boolean"},
+    "target_health_url": {"type": "string"},
+    "run_target_health": {"type": "boolean"},
+    "target_health_timeout": {"type": "string"},
+    "target_health_expect_status": {"type": "string"},
+    "directory": {"type": "string"},
+    "mode": {"type": "string"},
+    "dry_run": {"type": "boolean"},
+    "confirm_token": {"type": "string"},
+    "critical": {"type": "boolean"},
+    "postgres": {"type": "boolean"},
+    "include_postgres": {"type": "boolean"},
+    "redis": {"type": "boolean"},
+    "uploads": {"type": "boolean"},
+    "completion_callback_url": {"type": "string"},
+    "prism_task_id": {"type": "string"},
+    "prism_run_id": {"type": "string"},
+    "source_artifact_id": {"type": "string"},
+    "result_artifact_id": {"type": "string"},
+}
+
+_WRAPPER_FIELDS = [
+    "runtime_root",
+    "completion_callback_url",
+    "prism_task_id",
+    "prism_run_id",
+    "source_artifact_id",
+    "result_artifact_id",
+]
+
+_ACTION_OPTIONAL_FIELDS: Dict[str, List[str]] = {
+    "manifest.diff": ["runtime_root"],
+    "manifest.conflicts": ["manifest_dir"],
+    "pack.init.preview": ["environment", "critical", "postgres", "redis", "uploads", "directory"],
+    "env.diff": ["environment", "manifest_path", "runtime_root"],
+    "deploy.plan": ["runtime_root"],
+    "deploy.apply": ["runtime_root"],
+    "deploy.rollback.plan": ["runtime_root"],
+    "deploy.rollback.apply": ["runtime_root"],
+    "runtime.status": ["runtime_root"],
+    "runtime.doctor": ["runtime_root"],
+    "runtime.drift": ["runtime_root"],
+    "backup.plan": ["runtime_root"],
+    "backup.status": ["environment", "manifest_path", "runtime_root"],
+    "backup.create": ["runtime_root"],
+    "restore.plan": ["runtime_root"],
+    "restore.apply": ["runtime_root"],
+    "release.list": ["runtime_root"],
+    "release.show": ["runtime_root"],
+    "app.readiness": ["environment", "manifest_path", "runtime_root"],
+    "app.runbook": ["environment", "manifest_path", "runtime_root"],
+    "app.export.plan": ["environment", "manifest_path", "runtime_root", "include_postgres"],
+    "app.export.create": ["environment", "manifest_path", "runtime_root", "include_postgres"],
+    "app.import.plan": ["runtime_root"],
+    "app.import.apply": ["runtime_root", "mode"],
+    "app.restore-drill.plan": ["environment", "manifest_path", "runtime_root", "source_path"],
+    "app.restore-drill.apply": ["environment", "manifest_path", "runtime_root"],
+    "app.cutover.plan": ["environment", "manifest_path", "runtime_root"],
+    "app.cutover.apply": ["environment", "manifest_path", "runtime_root"],
+    "app.traffic.plan": [
+        "environment",
+        "manifest_path",
+        "runtime_root",
+        "dns_provider",
+        "caddy_provider",
+        "ttl",
+        "provider_config",
+        "execute_provider_mutation",
+        "target_health_url",
+        "run_target_health",
+        "target_health_timeout",
+        "target_health_expect_status",
+    ],
+    "app.traffic.apply": [
+        "environment",
+        "manifest_path",
+        "runtime_root",
+        "dns_provider",
+        "caddy_provider",
+        "ttl",
+        "provider_config",
+        "execute_provider_mutation",
+        "target_health_url",
+        "run_target_health",
+        "target_health_timeout",
+        "target_health_expect_status",
+    ],
+    "app.traffic.rollback.plan": ["environment", "runtime_root"],
+    "app.traffic.rollback.apply": ["environment", "runtime_root"],
+    "app.isolation.plan": ["environment", "manifest_path", "runtime_root"],
+    "receipts.list": ["app", "environment", "runtime_root"],
+    "receipts.show": ["runtime_root"],
+}
+
+
+def _input_schema(action_id: str, required: List[str], dry_run: bool, confirm: bool) -> Dict[str, Any]:
+    names = list(required)
+    names.extend(_ACTION_OPTIONAL_FIELDS.get(action_id, []))
+    if dry_run and "dry_run" not in names:
+        names.append("dry_run")
+    if confirm and "confirm_token" not in names:
+        names.append("confirm_token")
+    names.extend(_WRAPPER_FIELDS)
+
+    properties: Dict[str, Dict[str, str]] = {}
+    for name in names:
+        if name not in properties:
+            properties[name] = dict(_PROPERTY_SCHEMAS[name])
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": False,
+    }
+
+
 def _action(
     action_id: str,
     description: str,
@@ -586,53 +722,13 @@ def _action(
     dry_run: bool = False,
     confirm: bool = False,
 ) -> Dict[str, Any]:
-    properties: Dict[str, Dict[str, str]] = {
-        "app": {"type": "string"},
-        "environment": {"type": "string"},
-        "manifest_path": {"type": "string"},
-        "manifest_dir": {"type": "string"},
-        "runtime_root": {"type": "string"},
-        "release_id": {"type": "string"},
-        "backup_id": {"type": "string"},
-        "receipt_id": {"type": "string"},
-        "source_path": {"type": "string"},
-        "source_host": {"type": "string"},
-        "target_host": {"type": "string"},
-        "target_origin": {"type": "string"},
-        "dns_provider": {"type": "string"},
-        "caddy_provider": {"type": "string"},
-        "ttl": {"type": "string"},
-        "provider_config": {"type": "string"},
-        "execute_provider_mutation": {"type": "boolean"},
-        "target_health_url": {"type": "string"},
-        "run_target_health": {"type": "boolean"},
-        "target_health_timeout": {"type": "string"},
-        "target_health_expect_status": {"type": "string"},
-        "directory": {"type": "string"},
-        "mode": {"type": "string"},
-        "dry_run": {"type": "boolean"},
-        "confirm_token": {"type": "string"},
-        "critical": {"type": "boolean"},
-        "postgres": {"type": "boolean"},
-        "include_postgres": {"type": "boolean"},
-        "redis": {"type": "boolean"},
-        "uploads": {"type": "boolean"},
-        "idempotency_key": {"type": "string"},
-        "requested_by": {"type": "string"},
-        "source": {"type": "string"},
-        "prism_task_id": {"type": "string"},
-        "prism_run_id": {"type": "string"},
-        "source_artifact_id": {"type": "string"},
-        "result_artifact_id": {"type": "string"},
-        "completion_callback_url": {"type": "string"},
-    }
     return {
         "id": action_id,
         "description": description,
         "category": category,
         "mutation_level": mutation_level,
         "allowed_environments": ["dev", "staging", "production"],
-        "input_schema": {"type": "object", "properties": properties, "required": required, "additionalProperties": False},
+        "input_schema": _input_schema(action_id, required, dry_run, confirm),
         "dry_run_support": dry_run,
         "confirmation_requirement": "required" if confirm else "none",
         "output_schema": {"type": "object", "required": ["summary", "payload", "report_markdown"]},
@@ -705,7 +801,13 @@ def _load_action_config() -> Dict[str, Any]:
     path = Path(os.environ.get("OPHELIA_ACTION_CONFIG", REPO_ROOT / "config" / "ophelia-actions.json"))
     if not path.exists():
         return {}
-    return json.loads(path.read_text())
+    try:
+        config = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Action config JSON is invalid: {path}") from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"Action config must be a JSON object: {path}")
+    return config
 
 
 def _action_enabled(action_id: str, config: Dict[str, Any]) -> bool:
@@ -744,7 +846,7 @@ def run_job(
     if idempotency_key:
         existing = _idempotent_job(jobs_root, action_id, idempotency_key, input_hash)
         if existing:
-            return JobResult(json.loads((jobs_root / f"{existing}.json").read_text()), existing=True)
+            return JobResult(_load_job(jobs_root / f"{existing}.json", existing), existing=True)
 
     job_id = _job_id(action_id, input_hash)
     job = {
@@ -813,7 +915,7 @@ def cancel_job(runtime_root: Path, job_id: str) -> Dict[str, Any]:
     job_path = runtime_root / "jobs" / f"{job_id}.json"
     if not job_path.exists():
         raise ActionError(f"Job not found: {job_id}")
-    job = json.loads(job_path.read_text())
+    job = _load_job(job_path, job_id)
     if job["state"] in {"queued", "waiting_for_confirmation"}:
         job["state"] = "cancelled"
         job["completed_at"] = _utc_now()
@@ -857,18 +959,43 @@ def _idempotent_job(jobs_root: Path, action_id: str, key: str, input_hash: str) 
     index_path = jobs_root / "idempotency.json"
     if not index_path.exists():
         return None
-    index = json.loads(index_path.read_text())
+    try:
+        index = json.loads(index_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ActionError(f"Idempotency index is unreadable: {index_path}") from exc
+    if not isinstance(index, dict):
+        raise ActionError(f"Idempotency index must be a JSON object: {index_path}")
     record = index.get(key)
     if record is None:
         return None
-    if record["action_id"] != action_id or record["input_hash"] != input_hash:
+    if not isinstance(record, dict):
+        raise ActionError(f"Idempotency record is invalid for key: {key}")
+    if record.get("action_id") != action_id or record.get("input_hash") != input_hash:
         raise ActionError("Idempotency key already exists with different action/input.")
-    return record["job_id"]
+    job_id = record.get("job_id")
+    if not isinstance(job_id, str) or not job_id:
+        raise ActionError(f"Idempotency record is missing a job_id for key: {key}")
+    return job_id
+
+
+def _load_job(path: Path, job_id: str) -> Dict[str, Any]:
+    try:
+        job = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ActionError(f"Job record is unreadable: {job_id}") from exc
+    if not isinstance(job, dict) or not isinstance(job.get("state"), str):
+        raise ActionError(f"Job record is invalid: {job_id}")
+    return job
 
 
 def _write_idempotency(jobs_root: Path, action_id: str, key: str, input_hash: str, job_id: str) -> None:
     index_path = jobs_root / "idempotency.json"
-    index = json.loads(index_path.read_text()) if index_path.exists() else {}
+    try:
+        index = json.loads(index_path.read_text()) if index_path.exists() else {}
+    except json.JSONDecodeError as exc:
+        raise ActionError(f"Idempotency index is unreadable: {index_path}") from exc
+    if not isinstance(index, dict):
+        raise ActionError(f"Idempotency index must be a JSON object: {index_path}")
     index[key] = {"action_id": action_id, "input_hash": input_hash, "job_id": job_id}
     index_path.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
 
@@ -883,7 +1010,7 @@ def _lock_path(runtime_root: Path, action_id: str, inputs: Dict[str, Any]) -> Pa
             manifest = load_manifest(Path(inputs["manifest_path"]))
             app = manifest.app
             environment = environment or manifest.environment
-        except Exception:
+        except (ManifestError, OSError, ValueError):
             app = "unknown"
     environment = environment or "unknown"
     lock_root = runtime_root / "locks"
@@ -1003,6 +1130,10 @@ def _maybe_send_completion_callback(
         job.setdefault("warnings", []).append("Completion callback requested but callbacks are disabled by policy.")
         _event(events, "warning", warning="completion_callback_disabled")
         return
+    if not _callback_destination_allowed(str(callback_url), config):
+        job.setdefault("warnings", []).append("Completion callback requested but destination is not allowlisted.")
+        _event(events, "warning", warning="completion_callback_not_allowlisted")
+        return
     body = json.dumps(job, sort_keys=True).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     secret_name = config.get("callback_secret_env")
@@ -1015,9 +1146,22 @@ def _maybe_send_completion_callback(
         with request.urlopen(req, timeout=5) as response:
             _event(events, "command.completed", command="completion_callback", status=response.status)
     except (OSError, URLError) as exc:
-        warning = f"Completion callback failed: {exc}"
+        warning = f"Completion callback failed for {redact_url(str(callback_url))}: {exc.__class__.__name__}"
         job.setdefault("warnings", []).append(warning)
         _event(events, "warning", warning=warning)
+
+
+def _callback_destination_allowed(callback_url: str, config: Dict[str, Any]) -> bool:
+    allowed = config.get("callback_allowed_hosts", [])
+    if not isinstance(allowed, list) or not all(isinstance(item, str) and item.strip() for item in allowed):
+        return False
+    parsed = urlparse(callback_url)
+    if not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    host_port = f"{host}:{parsed.port}" if parsed.port is not None else host
+    allowed_hosts = {item.strip().lower() for item in allowed}
+    return host in allowed_hosts or host_port in allowed_hosts
 
 
 def _artifact_links(inputs: Dict[str, Any]) -> Dict[str, Any]:

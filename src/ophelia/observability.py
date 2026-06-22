@@ -33,8 +33,8 @@ from urllib.error import HTTPError
 from urllib.error import URLError
 from urllib.parse import urlparse
 
-from .config import DEFAULT_RUNTIME_ROOT
-from .operation_schema import SCHEMA_VERSION, issue as schema_issue
+from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from .operation_schema import SCHEMA_VERSION, artifact, issue as schema_issue, receipt_envelope, utc_now
 from .portability import (
     _receipt_records,
     _restore_drill_receipts,
@@ -47,6 +47,7 @@ from .runtime import active_release
 STATUS_KIND = "ophelia.observability_status"
 PLAN_KIND = "ophelia.observability_plan"
 EXPORT_KIND = "ophelia.observability_export"
+SCHEDULE_RUN_KIND = "ophelia.observability_schedule_run"
 
 # Receipt statuses that count as a failure for the rolled-up failure count.
 _FAILURE_STATUSES = {"failed", "error", "blocked"}
@@ -254,6 +255,137 @@ def observability_export(
         "secrets_redacted": True,
     }
     return deep_redact(payload, safe_keys={"secrets_redacted"})
+
+
+def observability_schedule_run(
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    *,
+    probe_http: bool = False,
+    check_docker: bool = False,
+    http_timeout: float = _DEFAULT_HTTP_TIMEOUT,
+) -> Dict[str, Any]:
+    """Run a cron-friendly observability sweep across all registered manifests.
+
+    This is not a daemon or scheduler. It is a deterministic command target for
+    cron/systemd/Lumen: scan the manifest registry, call
+    :func:`observability_status` for each app, write a timestamped run artifact
+    plus ``latest.json``, and return a compact aggregate receipt.
+    """
+    started_at = utc_now()
+    runtime_root = Path(runtime_root)
+    manifests_dir = Path(manifests_dir)
+    warnings: List[Dict[str, str]] = []
+    blockers: List[Dict[str, str]] = []
+    entries: List[Dict[str, Any]] = []
+
+    try:
+        from .operator_reports import manifest_registry
+
+        registry = manifest_registry(manifests_dir, runtime_root)
+    except Exception as exc:  # noqa: BLE001 - schedule run should report, not crash
+        registry = {"manifests": [], "errors": [{"path": str(manifests_dir), "error": type(exc).__name__}]}
+
+    for error in registry.get("errors", []) if isinstance(registry, dict) else []:
+        if isinstance(error, dict):
+            warnings.append(
+                schema_issue(
+                    "manifest_registry_error",
+                    str(error.get("error") or "Manifest could not be loaded."),
+                    str(error.get("path")) if error.get("path") else None,
+                )
+            )
+
+    manifests = registry.get("manifests", []) if isinstance(registry, dict) else []
+    for manifest_entry in manifests if isinstance(manifests, list) else []:
+        if not isinstance(manifest_entry, dict):
+            continue
+        app = manifest_entry.get("app")
+        if not isinstance(app, str) or not app:
+            continue
+        environment = manifest_entry.get("environment") if isinstance(manifest_entry.get("environment"), str) else None
+        manifest_path_value = manifest_entry.get("manifest_path")
+        manifest_path = Path(manifest_path_value) if isinstance(manifest_path_value, str) else None
+        status = observability_status(
+            app,
+            environment=environment,
+            runtime_root=runtime_root,
+            manifest_path=manifest_path,
+            probe_http=probe_http,
+            check_docker=check_docker,
+            http_timeout=http_timeout,
+        )
+        compact = compact_observability_summary(status)
+        entries.append(
+            {
+                "app": app,
+                "environment": status.get("environment"),
+                "manifest_path": str(manifest_path) if manifest_path is not None else None,
+                "status": status.get("status"),
+                "summary": status.get("summary"),
+                "snapshot": compact,
+            }
+        )
+        for blocker in status.get("blockers", []) if isinstance(status.get("blockers"), list) else []:
+            if isinstance(blocker, dict):
+                blockers.append(
+                    schema_issue(
+                        str(blocker.get("code") or "observability_blocker"),
+                        f"{app}: {blocker.get('message') or 'Observability blocker.'}",
+                        str(blocker.get("path")) if blocker.get("path") else None,
+                    )
+                )
+
+    warning_apps = sum(1 for entry in entries if entry.get("status") == "warning")
+    blocked_apps = sum(1 for entry in entries if entry.get("status") == "blocked")
+    receipt_status = "blocked" if blocked_apps or blockers else "warning" if warning_apps or warnings else "succeeded"
+    receipt = receipt_envelope(
+        operation="observability.schedule.run",
+        app=None,
+        environment=None,
+        status=receipt_status,
+        started_at=started_at,
+        completed_at=utc_now(),
+        artifacts=[],
+        checks=[
+            {
+                "name": "observability_sweep",
+                "ok": receipt_status == "succeeded",
+                "message": f"{len(entries)} app(s) checked; {blocked_apps} blocked, {warning_apps} warning.",
+            }
+        ],
+        rollback={"available": False, "note": "Schedule run is read/probe oriented; only local run artifacts were written."},
+        kind=SCHEDULE_RUN_KIND,
+        manifests_dir=str(manifests_dir),
+        probed_http=bool(probe_http),
+        checked_docker=bool(check_docker),
+        apps=entries,
+        totals={
+            "app_count": len(entries),
+            "ok": sum(1 for entry in entries if entry.get("status") == "ok"),
+            "warning": warning_apps,
+            "blocked": blocked_apps,
+        },
+        blockers=blockers,
+        warnings=warnings,
+        summary=f"Observability schedule run checked {len(entries)} app(s): {blocked_apps} blocked, {warning_apps} warning.",
+        secrets_redacted=True,
+    )
+    run_path = runtime_root / "observability" / "runs" / f"{receipt['operation_id']}.json"
+    latest_path = runtime_root / "observability" / "latest.json"
+    receipt["artifacts"] = [
+        artifact(str(run_path), "observability-schedule-run", "Timestamped observability schedule run.", present=True),
+        artifact(str(latest_path), "observability-latest", "Latest observability schedule run.", present=True),
+    ]
+    redacted = deep_redact(receipt, safe_keys={"secrets_redacted", "inputs_redacted"}, propagate=True)
+    try:
+        _write_json(run_path, redacted)
+        _write_json(latest_path, redacted)
+    except OSError:
+        redacted.setdefault("warnings", []).append(
+            schema_issue("observability_schedule_write_failed", f"Could not write observability run under {runtime_root}.")
+        )
+    return redacted
 
 
 def compact_observability_summary(status: Dict[str, Any]) -> Dict[str, Any]:
@@ -522,3 +654,10 @@ def _looks_like_timeout(exc: BaseException) -> bool:
     if isinstance(exc, subprocess.TimeoutExpired):
         return True
     return "timed out" in str(exc).lower()
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
+    path.write_text(_json.dumps(payload, indent=2, sort_keys=True) + "\n")

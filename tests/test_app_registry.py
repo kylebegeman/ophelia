@@ -7,11 +7,25 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ophelia.app_registry import app_health, load_app_registry, registry_conflicts
+from ophelia.app_registry import HealthURL, _check_url, app_health, load_app_registry, registry_conflicts
+
+
+class _FakeResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, _size: int = -1) -> bytes:
+        return b"ok"
 
 
 class AppRegistryTests(unittest.TestCase):
@@ -34,6 +48,23 @@ class AppRegistryTests(unittest.TestCase):
 
             self.assertEqual(["apollo-staging", "duplicate"], [entry.name for entry in entries])
             self.assertEqual(["ops-staging.begam.in"], conflicts["domains"])
+
+    def test_loads_direct_list_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            registry_path = Path(temp_dir) / "apps.json"
+            registry_path.write_text(json.dumps([_app("apollo-staging", [], [])]))
+
+            entries = load_app_registry(registry_path)
+
+            self.assertEqual(["apollo-staging"], [entry.name for entry in entries])
+
+    def test_invalid_registry_json_has_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            registry_path = Path(temp_dir) / "apps.json"
+            registry_path.write_text("{")
+
+            with self.assertRaisesRegex(ValueError, "App registry JSON is invalid"):
+                load_app_registry(registry_path)
 
     def test_health_without_urls_and_docker_is_ok(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -77,6 +108,37 @@ class AppRegistryTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 load_app_registry(registry_path)
+
+    def test_health_result_redacts_secret_shaped_url(self) -> None:
+        url = "https://user:secret@example.com/health?token=abc#frag"
+        with mock.patch("ophelia.app_registry.urllib.request.urlopen", return_value=_FakeResponse()):
+            result = _check_url(HealthURL(name=url, url=url), timeout=1)
+
+        self.assertEqual("https://<redacted>@example.com/health?<redacted>#<redacted>", result["url"])
+        self.assertEqual(result["url"], result["name"])
+        self.assertNotIn("secret", json.dumps(result))
+        self.assertNotIn("token=abc", json.dumps(result))
+
+    def test_health_url_validation_rejects_secret_shaped_url(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            registry_path = Path(temp_dir) / "apps.json"
+            app = _app("apollo-staging", [], [])
+            app["health_urls"] = [
+                {
+                    "name": "bad",
+                    "url": "https://user:secret@example.com/health?token=abc",
+                    "expect_status": "nope",
+                }
+            ]
+            registry_path.write_text(json.dumps({"apps": [app]}))
+
+            with self.assertRaises(ValueError) as context:
+                load_app_registry(registry_path)
+
+            message = str(context.exception)
+            self.assertIn("must not contain credentials", message)
+            self.assertNotIn("secret", message)
+            self.assertNotIn("token=abc", message)
 
     def test_registry_rejects_malformed_entries_with_clear_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

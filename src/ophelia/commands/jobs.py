@@ -6,6 +6,8 @@ from pathlib import Path
 
 from ..actions import ActionError, cancel_job, run_job
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..operation_schema import error_envelope
+from ._output import print_json
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -48,7 +50,7 @@ def run_action_job(args: Namespace) -> int:
             events_json=args.events_json,
         )
     except (ValueError, ActionError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
+        print_json({"ok": False, **error_envelope(str(exc), "job_run_error")})
         return 1
     print(json.dumps(result.job, indent=2, sort_keys=True))
     return 0 if result.job["state"] not in {"failed", "cancelled"} else 1
@@ -57,7 +59,7 @@ def run_action_job(args: Namespace) -> int:
 def show_job(args: Namespace) -> int:
     path = args.runtime_root / "jobs" / f"{args.job_id}.json"
     if not path.exists():
-        print(json.dumps({"ok": False, "error": f"Job not found: {args.job_id}"}, indent=2, sort_keys=True))
+        print_json({"ok": False, **error_envelope(f"Job not found: {args.job_id}", "job_not_found")})
         return 1
     print(path.read_text().strip())
     return 0
@@ -67,7 +69,7 @@ def cancel_action_job(args: Namespace) -> int:
     try:
         job = cancel_job(args.runtime_root, args.job_id)
     except ActionError as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
+        print_json({"ok": False, **error_envelope(str(exc), "job_cancel_error")})
         return 1
     print(json.dumps(job, indent=2, sort_keys=True))
     return 0

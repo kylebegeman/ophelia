@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..manifest import ManifestError, load_manifest
 from ..runtime import render_bundle, write_bundle
+from ._output import print_error
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -22,10 +23,7 @@ def run(args: Namespace) -> int:
     try:
         manifest = load_manifest(args.manifest)
     except ManifestError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
-            return 1
-        print(f"Manifest invalid: {exc}")
+        print_error(f"Manifest invalid: {exc}", "manifest_invalid", json_output=args.json)
         return 1
 
     output_dir = args.output_dir or (Path.cwd() / "build" / manifest.app)

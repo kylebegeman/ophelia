@@ -287,6 +287,28 @@ class TrafficHardeningTests(unittest.TestCase):
         self.assertIsNotNone(plan["confirmation_token"])
         self.assertTrue(plan["target_health_present"])
 
+    def test_production_configured_but_unexecuted_health_url_does_not_satisfy_gate(self) -> None:
+        with _skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                runtime_root = root / "runtime"
+                manifest_path = _prepare_app(root, environment="production")
+                plan = traffic_plan(
+                    "static-portable",
+                    "source-host",
+                    "target-host",
+                    "target.example.net",
+                    "production",
+                    runtime_root,
+                    manifest_path,
+                    target_health_url="https://target.example.net/health",
+                    run_target_health=False,
+                )
+
+        self.assertFalse(plan["target_health_present"])
+        self.assertIsNone(plan["confirmation_token"])
+        self.assertIn("traffic_policy_blocked", {item["code"] for item in plan["blockers"]})
+
     def test_cloudflare_provider_never_stores_token_value(self) -> None:
         canary = "cf-canary-token-value-do-not-store"
         with _skip_docker_status(), _env("OPHELIA_TEST_CF_TOKEN", canary):

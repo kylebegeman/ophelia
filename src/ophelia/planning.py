@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .manifest import Manifest
-from .operation_schema import diff_artifact, operation_id
+from .operation_schema import attach_digest, diff_artifact, operation_id
 from .policy import policy_check_entry
-from .redaction import redacted_compose_text
+from .redaction import redact_url, redacted_compose_text
 from .runtime import bundle_hash, image_digests, image_references, render_bundle
 from .verify import verification_checks
 
@@ -62,8 +62,8 @@ def deploy_plan(
         "compose_changes": diff["compose_changes"],
         "verification_checks": [
             {
-                "name": check.name or check.url,
-                "url": check.url,
+                "name": check.name or redact_url(check.url),
+                "url": redact_url(check.url),
                 "expect_status": check.expect_status,
                 "contains_required": check.contains is not None,
             }
@@ -112,7 +112,7 @@ def deploy_plan(
         )
         if artifact_entry is not None:
             plan["artifacts"] = [artifact_entry]
-    return plan
+    return attach_digest(plan, operation="deploy.plan", risk="high" if plan["confirmation_required"] else "medium")
 
 
 def _classify_target(path: str) -> str:

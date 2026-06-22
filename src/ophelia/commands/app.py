@@ -4,11 +4,19 @@ import json
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
-from ..app_factory import create_apply, create_plan, templates_explain, templates_list
+from ..app_factory import (
+    create_apply,
+    create_plan,
+    github_provision_apply,
+    github_provision_plan,
+    templates_explain,
+    templates_list,
+)
 from ..app_registry import app_health, app_logs, find_app
 from ..command_catalog import RECEIPT_SCHEMA_REF, CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
-from ..operation_schema import error_envelope
+from ..operation_refs import public_resolution, resolve_receipt_ref
+from ..operation_schema import error_envelope, plan_envelope, receipt_envelope, utc_now
 from ..portability import (
     app_readiness_report,
     app_runbook_report,
@@ -258,9 +266,27 @@ def register(subparsers: _SubParsersAction) -> None:
     create_apply_parser.add_argument(
         "--target-dir", type=Path, required=True, help="Workdir to scaffold into (outside runtime root and repo)"
     )
+    create_apply_parser.add_argument("--force", action="store_true", help="Overwrite generated target files if they already exist")
     create_apply_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     create_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     create_apply_parser.set_defaults(handler=run_create_apply)
+
+    github = app_subparsers.add_parser("github", help="Plan or apply GitHub repo provisioning")
+    github_subparsers = github.add_subparsers(dest="app_github_command")
+    github_plan_parser = github_subparsers.add_parser(
+        "plan", help="Plan GitHub repository, environment, and branch protection provisioning"
+    )
+    _add_github_common_args(github_plan_parser)
+    github_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    github_plan_parser.set_defaults(handler=run_github_plan)
+    github_apply_parser = github_subparsers.add_parser(
+        "apply", help="Apply GitHub provisioning with gh, gated by a confirmation token"
+    )
+    _add_github_common_args(github_apply_parser)
+    github_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from app github plan")
+    github_apply_parser.add_argument("--timeout", type=float, default=60.0, help="Per-command timeout in seconds")
+    github_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    github_apply_parser.set_defaults(handler=run_github_apply)
 
     templates = app_subparsers.add_parser("templates", help="List and explain app scaffold templates")
     templates_subparsers = templates.add_subparsers(dest="app_templates_command")
@@ -271,6 +297,23 @@ def register(subparsers: _SubParsersAction) -> None:
     templates_explain_parser.add_argument("template", help="Template name")
     templates_explain_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     templates_explain_parser.set_defaults(handler=run_templates_explain)
+
+
+def _add_github_common_args(parser) -> None:
+    parser.add_argument("--app", required=True, help="App id")
+    parser.add_argument("--template", required=True, help="Template name (see `app templates list`)")
+    parser.add_argument("--owner", default="personal", help="GitHub owner/org and Ophelia owner label")
+    parser.add_argument(
+        "--environment", choices=["dev", "staging", "production"], default="production"
+    )
+    parser.add_argument("--repo", help="GitHub repository in OWNER/REPO form; defaults to owner/app")
+    parser.add_argument(
+        "--phase",
+        choices=["all", "repo", "environments", "protection"],
+        default="all",
+        help="Provision all steps or only one step group",
+    )
+    parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
 
 
 def run_health(args: Namespace) -> int:
@@ -533,13 +576,38 @@ def run_traffic_apply(args: Namespace) -> int:
 
 
 def run_traffic_rollback_plan(args: Namespace) -> int:
+    resolved_receipt, resolution = _resolve_traffic_receipt_arg(args)
+    if resolved_receipt is None:
+        plan = plan_envelope(
+            "app.traffic.rollback.plan",
+            args.app,
+            args.environment,
+            f"Traffic rollback receipt reference unresolved: {args.receipt}.",
+            blockers=list(resolution.get("blockers", [])) if isinstance(resolution.get("blockers"), list) else [],
+            warnings=list(resolution.get("warnings", [])) if isinstance(resolution.get("warnings"), list) else [],
+            checks=[],
+            artifacts=[],
+            confirmation_required=False,
+            confirmation_token=None,
+            risk="high",
+            receipt_id=args.receipt,
+            requested_ref=args.receipt,
+            resolved_ref=public_resolution(resolution),
+        )
+        if args.json:
+            print(json.dumps(plan, indent=2, sort_keys=True))
+        else:
+            _print_import_plan(plan)
+        return 1
     plan = traffic_rollback_plan(
         args.app,
-        receipt_id=args.receipt,
+        receipt_id=resolved_receipt,
         environment=args.environment,
         runtime_root=args.runtime_root,
         approve_unsafe_delete=getattr(args, "approve_unsafe_delete", False),
     )
+    plan["requested_ref"] = args.receipt
+    plan["resolved_ref"] = public_resolution(resolution)
     if args.json:
         print(json.dumps(plan, indent=2, sort_keys=True))
     else:
@@ -548,14 +616,42 @@ def run_traffic_rollback_plan(args: Namespace) -> int:
 
 
 def run_traffic_rollback_apply(args: Namespace) -> int:
+    resolved_receipt, resolution = _resolve_traffic_receipt_arg(args)
+    if resolved_receipt is None:
+        started_at = utc_now()
+        receipt = receipt_envelope(
+            "app.traffic.rollback.apply",
+            args.app,
+            args.environment,
+            "blocked",
+            started_at,
+            utc_now(),
+            artifacts=[],
+            checks=[],
+            rollback={"available": False, "note": "Traffic rollback was blocked before provider mutation."},
+            blockers=list(resolution.get("blockers", [])) if isinstance(resolution.get("blockers"), list) else [],
+            warnings=list(resolution.get("warnings", [])) if isinstance(resolution.get("warnings"), list) else [],
+            receipt_id=args.receipt,
+            requested_ref=args.receipt,
+            resolved_ref=public_resolution(resolution),
+            summary=f"Traffic rollback receipt reference unresolved: {args.receipt}.",
+        )
+        if args.json:
+            print(json.dumps(receipt, indent=2, sort_keys=True))
+        else:
+            print(receipt["summary"])
+            _print_string_items("Blockers", receipt.get("blockers", []))
+        return 1
     receipt = traffic_rollback_apply(
         args.app,
-        receipt_id=args.receipt,
+        receipt_id=resolved_receipt,
         environment=args.environment,
         runtime_root=args.runtime_root,
         confirm=args.confirm,
         approve_unsafe_delete=getattr(args, "approve_unsafe_delete", False),
     )
+    receipt["requested_ref"] = args.receipt
+    receipt["resolved_ref"] = public_resolution(resolution)
     if args.json:
         print(json.dumps(receipt, indent=2, sort_keys=True))
     else:
@@ -565,6 +661,19 @@ def run_traffic_rollback_apply(args: Namespace) -> int:
         _print_string_items("Blockers", receipt.get("blockers", []))
         _print_string_items("Warnings", receipt.get("warnings", []))
     return 0 if receipt["status"] == "succeeded" else 1
+
+
+def _resolve_traffic_receipt_arg(args: Namespace) -> tuple:
+    resolution = resolve_receipt_ref(
+        args.receipt,
+        runtime_root=args.runtime_root,
+        app=args.app,
+        environment=args.environment,
+        operation="app.traffic.apply",
+    )
+    if not resolution.get("ok"):
+        return None, resolution
+    return str(resolution.get("path") or resolution.get("resolved_id")), resolution
 
 
 def run_isolation_plan(args: Namespace) -> int:
@@ -660,6 +769,7 @@ def run_create_apply(args: Namespace) -> int:
         confirm=args.confirm,
         target_dir=args.target_dir,
         runtime_root=args.runtime_root,
+        force=args.force,
     )
     if args.json:
         print(json.dumps(receipt, indent=2, sort_keys=True))
@@ -671,6 +781,59 @@ def run_create_apply(args: Namespace) -> int:
             for path in receipt.get("written_paths", []):
                 print(f"  - {path}")
         _print_string_items("Blockers", receipt.get("blockers", []))
+    return 0 if receipt["status"] == "succeeded" else 1
+
+
+def run_github_plan(args: Namespace) -> int:
+    plan = github_provision_plan(
+        app=args.app,
+        template=args.template,
+        owner=args.owner,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+        repo=args.repo,
+        phase=args.phase,
+    )
+    if args.json:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    else:
+        print(plan["summary"])
+        print(f"Repo: {plan.get('repo')}")
+        print(f"Phase: {plan.get('phase')}")
+        _print_string_items("Blockers", plan.get("blockers", []))
+        _print_string_items("Warnings", plan.get("warnings", []))
+        for command in plan.get("commands", []):
+            if isinstance(command, dict):
+                print(f"  - {command.get('id')}: {command.get('gh')}")
+        print(f"Confirmation token: {plan.get('confirmation_token')}")
+    return 0 if not plan["blockers"] else 1
+
+
+def run_github_apply(args: Namespace) -> int:
+    receipt = github_provision_apply(
+        app=args.app,
+        template=args.template,
+        owner=args.owner,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+        repo=args.repo,
+        phase=args.phase,
+        confirm=args.confirm,
+        timeout=args.timeout,
+    )
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        print(receipt.get("summary") or f"GitHub provisioning {receipt['status']}.")
+        counts = receipt.get("step_counts") if isinstance(receipt.get("step_counts"), dict) else {}
+        print(
+            "  steps: "
+            f"{counts.get('succeeded', 0)} succeeded, "
+            f"{counts.get('failed', 0)} failed, "
+            f"{counts.get('skipped', 0)} skipped"
+        )
+        _print_string_items("Blockers", receipt.get("blockers", []))
+        _print_string_items("Warnings", receipt.get("warnings", []))
     return 0 if receipt["status"] == "succeeded" else 1
 
 
@@ -822,6 +985,7 @@ register_cli_descriptor(
                 "plan_id": {"type": "string"},
                 "confirm": {"type": "string"},
                 "target_dir": {"type": "string"},
+                "force": {"type": "boolean"},
                 "runtime_root": {"type": "string"},
                 "json": {"type": "boolean"},
             },
@@ -832,7 +996,81 @@ register_cli_descriptor(
         artifacts=["scaffolded app files under the target dir", "apply receipt"],
         safety_notes=[
             "Writes only inside the explicit --target-dir; refuses targets inside the runtime root or repo.",
+            "Refuses to overwrite generated target files unless --force is passed.",
             "No VPS, SSH, or GitHub mutation. Secrets referenced by name only.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app github plan",
+        operation="app.github.provision.plan",
+        summary="Plan GitHub repo, environment, and branch protection provisioning with typed gh commands.",
+        risk="medium",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command="ship app github plan",
+        apply_command="ship app github apply",
+        json_kind="ophelia.github_provision_plan",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "template": {"type": "string"},
+                "owner": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "repo": {"type": "string"},
+                "phase": {"enum": ["all", "repo", "environments", "protection"]},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app", "template"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.github_provision_plan.v1",
+        artifacts=[],
+        safety_notes=[
+            "Read-only. Builds exact argv arrays for gh; does not call GitHub.",
+            "Branch protection steps require target branches to exist before apply.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app github apply",
+        operation="app.github.provision.apply",
+        summary="Apply GitHub repo provisioning with gh, gated by a confirmation token and recorded as a receipt.",
+        risk="high",
+        mutates_state=True,
+        requires_confirmation=True,
+        plan_command="ship app github plan",
+        apply_command="ship app github apply",
+        json_kind="ophelia.receipt",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "template": {"type": "string"},
+                "owner": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "repo": {"type": "string"},
+                "phase": {"enum": ["all", "repo", "environments", "protection"]},
+                "confirm": {"type": "string"},
+                "timeout": {"type": "number"},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app", "template", "confirm"],
+            "additionalProperties": False,
+        },
+        output_schema_ref=RECEIPT_SCHEMA_REF,
+        artifacts=["GitHub provisioning receipt", "app receipt timeline entry"],
+        safety_notes=[
+            "Calls gh and mutates GitHub only after a matching confirmation token.",
+            "Commands are argv arrays with optional JSON stdin, never shell strings.",
+            "Stops on the first failed GitHub command and marks the rest skipped.",
         ],
     )
 )

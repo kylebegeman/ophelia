@@ -6,6 +6,8 @@ from pathlib import Path
 
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..operation_refs import public_resolution, resolve_receipt_ref
+from ..operation_schema import report_envelope
 from ..restore_verification import restore_drills_list, restore_drills_show
 
 
@@ -40,7 +42,26 @@ def run_restore_drills_list(args: Namespace) -> int:
 
 
 def run_restore_drills_show(args: Namespace) -> int:
-    report = restore_drills_show(args.drill_id, runtime_root=args.runtime_root)
+    resolution = resolve_receipt_ref(args.drill_id, runtime_root=args.runtime_root)
+    if resolution.get("ok"):
+        report = restore_drills_show(str(resolution.get("path") or resolution.get("resolved_id")), runtime_root=args.runtime_root)
+        report["requested_ref"] = args.drill_id
+        report["resolved_ref"] = public_resolution(resolution)
+    else:
+        report = report_envelope(
+            "restore.drills.show",
+            None,
+            None,
+            f"Restore drill / verification receipt reference unresolved: {args.drill_id}.",
+            blockers=list(resolution.get("blockers", [])) if isinstance(resolution.get("blockers"), list) else [],
+            warnings=list(resolution.get("warnings", [])) if isinstance(resolution.get("warnings"), list) else [],
+            checks=[],
+            artifacts=[],
+            kind="ophelia.restore_drill",
+            drill_id=args.drill_id,
+            requested_ref=args.drill_id,
+            resolved_ref=public_resolution(resolution),
+        )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 
 class ManifestError(ValueError):
@@ -556,6 +557,11 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
         url = _optional_str(item.get("url"), f"verify[{index}].url")
         if url is None or not url.startswith(("http://", "https://")):
             raise ManifestError(f"`verify[{index}].url` must start with `http://` or `https://`.")
+        parsed_url = urlparse(url)
+        if parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
+            raise ManifestError(
+                f"`verify[{index}].url` must not contain credentials, query strings, or fragments."
+            )
         expect_status = item.get("expect_status", 200)
         if not isinstance(expect_status, int) or expect_status < 100 or expect_status > 599:
             raise ManifestError(f"`verify[{index}].expect_status` must be a valid HTTP status code.")
@@ -1308,6 +1314,8 @@ def _export_manifest_value(value: Any) -> Any:
             if item.name == "extra":
                 if isinstance(exported, dict):
                     result.update(exported)
+                continue
+            if exported is None:
                 continue
             key = item.name
             if key == "import_config":

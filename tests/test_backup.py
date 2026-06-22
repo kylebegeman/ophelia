@@ -48,6 +48,49 @@ class BackupTests(unittest.TestCase):
             self.assertTrue((Path(str(report["preview_path"])) / "restore-report.json").exists())
             self.assertIn("super-secret", (Path(str(backup["backup_path"])) / "runtime" / "env").read_text())
 
+    def test_backup_blocks_external_symlinked_runtime_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_manifest())
+            app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
+            external_secret = root / "outside-secret.env"
+            external_secret.write_text("SECRET_TOKEN=outside\n")
+            env_path = app_root / "env"
+            if env_path.exists():
+                env_path.unlink()
+            env_path.symlink_to(external_secret)
+
+            plan = backup_plan(runtime_root, "backup-test")
+            backup = create_backup(runtime_root, "backup-test", str(plan["confirmation_token"]))
+
+            self.assertFalse(plan["can_apply"])
+            self.assertIn("External symlink", str(plan["blockers"]))
+            self.assertEqual("blocked", backup["status"])
+
+    def test_backup_preserves_internal_symlinked_runtime_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_manifest())
+            app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
+            internal_env = app_root / "env.actual"
+            internal_env.write_text("SECRET_TOKEN=inside\n")
+            env_path = app_root / "env"
+            if env_path.exists():
+                env_path.unlink()
+            env_path.symlink_to(internal_env.name)
+
+            plan = backup_plan(runtime_root, "backup-test")
+            backup = create_backup(runtime_root, "backup-test", str(plan["confirmation_token"]))
+            backed_up_env = Path(str(backup["backup_path"])) / "runtime" / "env"
+
+            self.assertTrue(plan["can_apply"])
+            self.assertTrue(backed_up_env.is_symlink())
+            self.assertEqual(Path(internal_env.name), backed_up_env.readlink())
+
 
 def _manifest() -> str:
     return """

@@ -12,7 +12,8 @@ from typing import Dict, List
 
 from .addons import ensure_addons
 from .config import DEFAULT_RUNTIME_ROOT
-from .manifest import Manifest
+from .manifest import Manifest, ManifestError
+from .path_safety import assert_no_external_symlinks
 from .templates import (
     bundle_env_file_path,
     bundle_mount_path,
@@ -80,6 +81,7 @@ def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_di
         _copy_support_path(
             _resolve_support_path(manifest_dir, source),
             output_dir / bundle_env_file_path(source, index=index),
+            allowed_root=manifest_dir,
         )
 
     for service in manifest.services.values():
@@ -87,6 +89,7 @@ def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_di
             _copy_support_path(
                 _resolve_support_path(manifest_dir, source),
                 output_dir / bundle_env_file_path(source, service_name=service.name, index=index),
+                allowed_root=manifest_dir,
             )
         for index, mount in enumerate(service.mounts):
             if mount.bind:
@@ -94,6 +97,7 @@ def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_di
             _copy_support_path(
                 _resolve_support_path(manifest_dir, mount.source),
                 output_dir / bundle_mount_path(service.name, mount.source, index),
+                allowed_root=manifest_dir,
             )
 
 
@@ -188,7 +192,7 @@ def copy_staged_support_files(source_root: Path, support_paths: set[Path], outpu
         source = source_root / relative_path
         if not source.exists():
             raise FileNotFoundError(f"Support file missing from staged bundle: {source}")
-        _copy_support_path(source, output_dir / relative_path)
+        _copy_support_path(source, output_dir / relative_path, allowed_root=source_root)
 
 
 def active_support_paths(runtime_root: Path, app: str) -> set[Path]:
@@ -511,7 +515,10 @@ def list_deployments(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> List[Deployme
         if not release_path.exists():
             continue
 
-        payload = json.loads(release_path.read_text())
+        payload = _load_release_json(release_path)
+        required = {"app", "kind", "runtime_path", "deployed_at", "source_manifest"}
+        if not payload or not required.issubset(payload):
+            continue
         active = active_release(runtime_root, payload["app"])
         deployments.append(
             DeploymentRecord(
@@ -538,10 +545,7 @@ def latest_release_id(runtime_root: Path, app: str) -> str | None:
     release_path = runtime_root / "apps" / app / "release.json"
     if not release_path.exists():
         return None
-    try:
-        payload = json.loads(release_path.read_text())
-    except json.JSONDecodeError:
-        return None
+    payload = _load_release_json(release_path)
     release_id = payload.get("release_id")
     return release_id if isinstance(release_id, str) and release_id else None
 
@@ -556,19 +560,13 @@ def active_release(runtime_root: Path, app: str) -> Dict[str, object]:
     app_root = runtime_root / "apps" / app
     active_path = app_root / "active_release.json"
     if active_path.exists():
-        try:
-            payload = json.loads(active_path.read_text())
-        except json.JSONDecodeError:
-            payload = {}
+        payload = _load_release_json(active_path)
         if isinstance(payload, dict) and payload:
             return payload
 
     legacy_path = app_root / "release.json"
     if legacy_path.exists():
-        try:
-            payload = json.loads(legacy_path.read_text())
-        except json.JSONDecodeError:
-            payload = {}
+        payload = _load_release_json(legacy_path)
         if isinstance(payload, dict) and payload.get("applied") is True:
             return payload
     return {}
@@ -580,10 +578,7 @@ def list_releases(runtime_root: Path, app: str) -> List[Dict[str, object]]:
 
     if releases_root.exists():
         for release_path in sorted(releases_root.glob("*.json")):
-            try:
-                payload = json.loads(release_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
+            payload = _load_release_json(release_path)
             if not isinstance(payload, dict):
                 continue
             payload.setdefault("release_id", release_path.stem)
@@ -592,10 +587,7 @@ def list_releases(runtime_root: Path, app: str) -> List[Dict[str, object]]:
     if not records:
         legacy_path = runtime_root / "apps" / app / "release.json"
         if legacy_path.exists():
-            try:
-                payload = json.loads(legacy_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                payload = {}
+            payload = _load_release_json(legacy_path)
             if isinstance(payload, dict) and payload:
                 payload.setdefault("release_id", "legacy-current")
                 records.append(payload)
@@ -612,17 +604,17 @@ def list_releases(runtime_root: Path, app: str) -> List[Dict[str, object]]:
 def load_release(runtime_root: Path, app: str, release_id: str) -> Dict[str, object]:
     active_path = runtime_root / "apps" / app / "active_release.json"
     if release_id == "active" and active_path.exists():
-        return json.loads(active_path.read_text())
+        return _load_release_json_or_raise(active_path, f"{app}/active")
 
     release_path = runtime_root / "apps" / app / "releases" / f"{release_id}.json"
     if release_path.exists():
-        return json.loads(release_path.read_text())
+        return _load_release_json_or_raise(release_path, f"{app}/{release_id}")
 
     legacy_path = runtime_root / "apps" / app / "release.json"
     if release_id == "current" and legacy_path.exists():
-        return json.loads(legacy_path.read_text())
+        return _load_release_json_or_raise(legacy_path, f"{app}/current")
     if release_id == "legacy-current" and legacy_path.exists():
-        payload = json.loads(legacy_path.read_text())
+        payload = _load_release_json_or_raise(legacy_path, f"{app}/legacy-current")
         payload.setdefault("release_id", "legacy-current")
         return payload
 
@@ -663,12 +655,12 @@ def _write_active_release(runtime_root: Path, app: str, release: Dict[str, objec
     if isinstance(release_id, str):
         historical_path = app_root / "releases" / f"{release_id}.json"
         if historical_path.exists():
-            historical = json.loads(historical_path.read_text())
+            historical = _load_release_json(historical_path)
             historical.update(release)
             historical_path.write_text(json.dumps(historical, indent=2, sort_keys=True) + "\n")
     latest_path = app_root / "release.json"
     if latest_path.exists():
-        latest = json.loads(latest_path.read_text())
+        latest = _load_release_json(latest_path)
         if latest.get("release_id") == release_id:
             latest.update(release)
             latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
@@ -680,7 +672,9 @@ def _update_current_release(runtime_root: Path, app: str, updates: Dict[str, obj
     if not release_path.exists():
         return None
 
-    payload = json.loads(release_path.read_text())
+    payload = _load_release_json(release_path)
+    if not payload:
+        return None
     payload.update(updates)
     release_id = payload.get("release_id")
     if isinstance(release_id, str):
@@ -688,6 +682,24 @@ def _update_current_release(runtime_root: Path, app: str, updates: Dict[str, obj
         if historical_path.exists():
             historical_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     release_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return payload
+
+
+def _load_release_json(path: Path) -> Dict[str, object]:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _load_release_json_or_raise(path: Path, label: str) -> Dict[str, object]:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Release record is unreadable: {label}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Release record must be a JSON object: {label}")
     return payload
 
 
@@ -773,7 +785,7 @@ def _load_manifest_from_bundle(bundle_root: Path) -> Manifest | None:
         from .manifest import load_manifest
 
         return load_manifest(lock_path)
-    except Exception:
+    except (ManifestError, OSError, ValueError):
         return None
 
 
@@ -901,14 +913,18 @@ def _resolve_support_path(manifest_dir: Path, source: str) -> Path:
     return raw if raw.is_absolute() else (manifest_dir / raw)
 
 
-def _copy_support_path(source: Path, destination: Path) -> None:
+def _copy_support_path(source: Path, destination: Path, *, allowed_root: Path) -> None:
     if source.resolve(strict=False) == destination.resolve(strict=False):
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, destination, dirs_exist_ok=True)
+    assert_no_external_symlinks(source, allowed_root)
+    if source.is_symlink():
+        shutil.copy2(source, destination, follow_symlinks=False)
         return
-    shutil.copy2(source, destination)
+    if source.is_dir():
+        shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
+        return
+    shutil.copy2(source, destination, follow_symlinks=False)
 
 
 def _preserves_support_path(relative_path: Path, preserve_paths: set[Path]) -> bool:

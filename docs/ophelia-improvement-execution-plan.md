@@ -1,11 +1,16 @@
 # Ophelia Improvement Execution Plan
 
-Status: planning handoff
+Status: completed baseline roadmap
 
 Date: 2026-06-21
 
 Audience: implementation agents building the next Ophelia product improvement
 batch after the Ophelia 2.0 portability foundation.
+
+Note: this roadmap describes the completed Ophelia improvement foundation. New
+strategic product work should start from
+[Product Improvement Findings](product-improvement-findings.md) and
+[Strategic Implementation Roadmap](ophelia-strategic-implementation-roadmap.md).
 
 This plan turns the selected brainstorm items into a dependency-ordered
 implementation roadmap. It is intentionally detailed so an agent can work

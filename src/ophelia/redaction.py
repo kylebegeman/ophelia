@@ -17,7 +17,9 @@ Rules:
 
 from __future__ import annotations
 
+import shlex
 from typing import Any, Dict, Iterable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 REDACTED = "<redacted>"
 
@@ -30,6 +32,7 @@ SENSITIVE_KEY_PATTERNS = (
     "DATABASE_URL",
     "REDIS_URL",
     "API_KEY",
+    "CREDENTIAL",
 )
 
 # Compose env keys that are structural, not secret, and safe to surface.
@@ -60,6 +63,28 @@ _SECRET_VALUE_PREFIXES = (
     "amqps://",
 )
 
+_COMMAND_STRING_KEYS = {
+    "command",
+    "commands",
+    "exact_command",
+    "recommended_command",
+}
+
+_SENSITIVE_COMMAND_FLAGS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api-key",
+    "apikey",
+    "private-key",
+    "private_key",
+    "database-url",
+    "database_url",
+    "redis-url",
+    "redis_url",
+)
+
 
 def is_sensitive_key(name: object) -> bool:
     """True when a key name looks like it holds a secret value."""
@@ -88,6 +113,91 @@ def looks_like_secret_value(value: object) -> bool:
         if "@" in authority and ":" in authority.split("@", 1)[0]:
             return True
     return False
+
+
+def looks_like_command_key(name: object) -> bool:
+    """True when a key conventionally carries a runnable command string."""
+    if not isinstance(name, str):
+        return False
+    lowered = name.lower()
+    return lowered in _COMMAND_STRING_KEYS or lowered.endswith("_command") or lowered.endswith("_commands")
+
+
+def redact_command_string(command: str, marker: str = REDACTED) -> str:
+    """Mask secret-shaped command arguments while preserving useful argv shape.
+
+    Manifest restore/verify hooks are intentionally free-form strings, so a
+    caller cannot know whether they contain literal credentials. This scrubber is
+    conservative: it masks values after sensitive option names, ``KEY=value``
+    assignments whose key is sensitive, and any token whose value shape already
+    looks like a credential (for example a URL with ``user:pass@host``).
+    """
+    if not isinstance(command, str) or not command:
+        return command
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        # Malformed shell syntax is still displayable; fall back to whitespace
+        # splitting so obvious credentials are still removed.
+        parts = command.split()
+
+    redacted = []
+    redact_next = False
+    for part in parts:
+        if redact_next:
+            redacted.append(marker)
+            redact_next = False
+            continue
+
+        option, separator, option_value = part.partition("=")
+        option_name = option.lstrip("-").lower()
+        if separator and any(flag in option_name for flag in _SENSITIVE_COMMAND_FLAGS):
+            redacted.append(f"{option}={marker}")
+            continue
+        if separator and (is_sensitive_key(option) or looks_like_secret_value(option_value)):
+            redacted.append(f"{option}={marker}")
+            continue
+        if part.startswith("-") and any(flag in option_name for flag in _SENSITIVE_COMMAND_FLAGS):
+            redacted.append(part)
+            redact_next = True
+            continue
+        if looks_like_secret_value(part):
+            redacted.append(str(marker))
+            continue
+        redacted.append(part)
+
+    if redact_next:
+        redacted.append(marker)
+    return " ".join(shlex.quote(part) for part in redacted)
+
+
+def redact_url(url: str, marker: str = REDACTED) -> str:
+    """Mask URL credentials, query strings, and fragments for emitted metadata."""
+    if not isinstance(url, str) or not url:
+        return url
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return marker
+    if not parsed.scheme or not parsed.netloc:
+        return url
+
+    try:
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return marker
+    host = hostname or parsed.netloc.rsplit("@", 1)[-1]
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if port is not None:
+        host = f"{host}:{port}"
+    if parsed.username is not None or parsed.password is not None:
+        host = f"{marker}@{host}"
+
+    query = marker if parsed.query else ""
+    fragment = marker if parsed.fragment else ""
+    return urlunsplit((parsed.scheme, host, parsed.path, query, fragment))
 
 
 def redact_value(value: object, marker: str = REDACTED) -> object:
@@ -130,7 +240,13 @@ def redact_mapping(
     return result
 
 
-def deep_redact(obj: Any, *, marker: str = REDACTED, safe_keys: Iterable[str] = ()) -> Any:
+def deep_redact(
+    obj: Any,
+    *,
+    marker: str = REDACTED,
+    safe_keys: Iterable[str] = (),
+    propagate: bool = False,
+) -> Any:
     """Recursively mask secret-bearing scalars in nested dicts/lists.
 
     A scalar is masked when its immediately-enclosing key is sensitive
@@ -142,21 +258,30 @@ def deep_redact(obj: Any, *, marker: str = REDACTED, safe_keys: Iterable[str] = 
     backup manifests, provider configs) before they reach a report, the state DB,
     or an API response.
 
-    Note: sensitivity is decided per-key, not propagated into a whole subtree
-    under a sensitive key, so a secret scalar held under a sensitive-named
-    *container* with a benign inner key (``{"secret": {"x": "v"}}``) is not
-    masked. Propagation was considered but over-redacts legitimate metadata
-    payloads (e.g. JSON-schema descriptors keyed by names like ``confirm_token``);
-    see the deferred audit item.
+    By default sensitivity is decided per-key, not propagated into a whole
+    subtree under a sensitive key. Data-bearing call sites can opt into
+    ``propagate=True`` so a sensitive-named container masks all nested scalars
+    without applying that aggressive behavior to metadata/schema descriptors.
     """
     safe = set(safe_keys)
 
-    def _walk(value: Any, key_is_sensitive: bool) -> Any:
+    def _walk(value: Any, key_is_sensitive: bool, key_name: object = None) -> Any:
         if isinstance(value, dict):
-            return {key: _walk(item, (key not in safe) and is_sensitive_key(key)) for key, item in value.items()}
+            return {
+                key: _walk(
+                    item,
+                    ((key not in safe) and is_sensitive_key(key)) or (propagate and key_is_sensitive),
+                    key,
+                )
+                for key, item in value.items()
+            }
         if isinstance(value, (list, tuple)):
-            return [_walk(item, key_is_sensitive) for item in value]
-        if key_is_sensitive or looks_like_secret_value(value):
+            return [_walk(item, key_is_sensitive, key_name) for item in value]
+        if key_is_sensitive:
+            return redact_value(value, marker)
+        if isinstance(value, str) and looks_like_command_key(key_name):
+            return redact_command_string(value, marker)
+        if looks_like_secret_value(value):
             return redact_value(value, marker)
         return value
 

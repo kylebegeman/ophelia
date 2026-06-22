@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
-from ..workflows import list_workflow_templates, plan_workflow, show_workflow
+from ..workflows import list_workflow_templates, plan_workflow, preview_workflow, run_workflow, show_workflow
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -31,6 +31,24 @@ def register(subparsers: _SubParsersAction) -> None:
     show_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     show_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     show_parser.set_defaults(handler=run_show)
+
+    run_parser = workflow_subparsers.add_parser(
+        "run", help="Execute runnable nodes in a stored operation graph"
+    )
+    run_parser.add_argument("workflow_id", help="Workflow id from `ship workflow plan`")
+    run_parser.add_argument("--preview", action="store_true", help="Preview resolved nodes without executing anything")
+    run_parser.add_argument(
+        "--set",
+        dest="substitutions",
+        action="append",
+        default=[],
+        metavar="TOKEN=VALUE",
+        help="Substitute a TOKEN_CASE placeholder in node commands; repeatable.",
+    )
+    run_parser.add_argument("--timeout", type=float, default=300.0, help="Per-node timeout in seconds")
+    run_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    run_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    run_parser.set_defaults(handler=run_run)
 
     list_parser = workflow_subparsers.add_parser("list", help="List available workflow templates")
     list_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
@@ -81,6 +99,67 @@ def run_show(args: Namespace) -> int:
     return 1 if report["blockers"] else 0
 
 
+def run_run(args: Namespace) -> int:
+    substitutions, errors = _parse_substitutions(args.substitutions)
+    if errors:
+        report = {
+            "schema_version": 1,
+            "kind": "ophelia.error",
+            "status": "failed",
+            "error": "Invalid workflow substitution.",
+            "blockers": errors,
+            "warnings": [],
+        }
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(report["error"])
+            for blocker in errors:
+                print(f"  ! {blocker.get('code')}: {blocker.get('message')}")
+        return 1
+
+    receipt = (
+        preview_workflow(
+            args.workflow_id,
+            runtime_root=args.runtime_root,
+            substitutions=substitutions,
+        )
+        if args.preview
+        else run_workflow(
+            args.workflow_id,
+            runtime_root=args.runtime_root,
+            substitutions=substitutions,
+            timeout=args.timeout,
+        )
+    )
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        print(receipt.get("summary") or f"Workflow {'preview' if args.preview else 'run'} {receipt.get('status')}.")
+        counts = receipt.get("node_counts") if isinstance(receipt.get("node_counts"), dict) else {}
+        if args.preview:
+            print(
+                "  nodes: "
+                f"{counts.get('ready', 0)} ready, "
+                f"{counts.get('blocked', 0)} blocked, "
+                f"{counts.get('skipped', 0)} skipped"
+            )
+        else:
+            print(
+                "  nodes: "
+                f"{counts.get('succeeded', 0)} succeeded, "
+                f"{counts.get('failed', 0)} failed, "
+                f"{counts.get('blocked', 0)} blocked, "
+                f"{counts.get('skipped', 0)} skipped"
+            )
+        for blocker in receipt.get("blockers", []):
+            print(f"  ! {blocker.get('code')}: {blocker.get('message')}")
+        for warning in receipt.get("warnings", []):
+            print(f"  ~ {warning.get('code')}: {warning.get('message')}")
+    success_status = "ready" if args.preview else "succeeded"
+    return 0 if receipt.get("status") == success_status else 1
+
+
 def run_list(args: Namespace) -> int:
     report = list_workflow_templates()
     if args.json:
@@ -90,6 +169,23 @@ def run_list(args: Namespace) -> int:
         for template in report["templates"]:
             print(f"  {template['name']}\t{template['node_count']} node(s)\t{template['summary']}")
     return 0
+
+
+def _parse_substitutions(values: list[str]) -> tuple[dict[str, str], list[dict[str, str]]]:
+    substitutions: dict[str, str] = {}
+    errors: list[dict[str, str]] = []
+    for raw in values:
+        key, sep, value = str(raw).partition("=")
+        if not sep or not key or not value:
+            errors.append(
+                {
+                    "code": "workflow_substitution_invalid",
+                    "message": "--set values must use TOKEN=VALUE with both sides present.",
+                }
+            )
+            continue
+        substitutions[key] = value
+    return substitutions, errors
 
 
 register_cli_descriptor(
@@ -150,6 +246,75 @@ register_cli_descriptor(
         output_schema_ref="ophelia.workflow_report.v1",
         artifacts=[],
         safety_notes=["Read-only graph inspection. No mutation."],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship workflow run",
+        operation="workflow.run",
+        summary="Execute runnable non-mutating nodes in a stored operation graph and write a workflow receipt.",
+        risk="low",
+        mutates_state=True,
+        requires_confirmation=False,
+        plan_command="ship workflow plan",
+        apply_command=None,
+        json_kind="ophelia.receipt",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "substitutions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "preview": {"type": "boolean"},
+                "timeout": {"type": "number"},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["workflow_id"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.receipt.v1",
+        artifacts=["updated workflow graph JSON", "workflow run receipt"],
+        safety_notes=[
+            "Executes only stored nodes marked non-mutating; mutating nodes are refused.",
+            "Commands are argv arrays, never shell strings; raw stdout/stderr is not stored.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship workflow run --preview",
+        operation="workflow.preview",
+        summary="Preview resolved workflow run nodes without executing them.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command="ship workflow plan",
+        apply_command="ship workflow run",
+        json_kind="ophelia.workflow_preview",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "substitutions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["workflow_id"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.workflow_preview.v1",
+        artifacts=["referenced workflow graph JSON"],
+        safety_notes=[
+            "Preview-only. Resolves substitutions, dependencies, and local executables without running nodes.",
+        ],
     )
 )
 

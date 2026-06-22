@@ -48,7 +48,7 @@ from .portability import (
     _utc_now,
     resolve_app_manifest,
 )
-from .redaction import deep_redact
+from .redaction import deep_redact, redact_command_string
 
 VERIFY_PLAN_OPERATION = "backup.verify.plan"
 VERIFY_APPLY_OPERATION = "backup.verify.apply"
@@ -142,8 +142,8 @@ def backup_verify_plan(
             "backup_id": selected_id,
             "path": selected_path,
             "created_at": selected.get("created_at") if selected else None,
-            "coverage": deep_redact(selected.get("coverage", {})) if selected else {},
-            "database": deep_redact(selected.get("database", {})) if selected else {},
+            "coverage": deep_redact(selected.get("coverage", {}), propagate=True) if selected else {},
+            "database": deep_redact(selected.get("database", {}), propagate=True) if selected else {},
             "digest": backup_digest,
         },
         freshness=freshness,
@@ -168,7 +168,7 @@ def backup_verify_plan(
     )
     # ``confirmation_token`` is a non-secret SHA digest of the canonical apply
     # input; it must survive redaction or the apply gate cannot match it.
-    return deep_redact(plan, safe_keys=("secrets_redacted", "confirmation_token"))
+    return deep_redact(plan, safe_keys=("secrets_redacted", "confirmation_token"), propagate=True)
 
 
 def backup_verify_apply(
@@ -301,6 +301,7 @@ def backup_verify_apply(
     receipt = deep_redact(
         receipt,
         safe_keys=("secrets_redacted", "inputs_redacted", "production_data_modified", "deleted_anything"),
+        propagate=True,
     )
     receipt_dir.mkdir(parents=True, exist_ok=True)
     receipt_path.write_text(_dumps(receipt))
@@ -331,6 +332,32 @@ def restore_drills_show(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
 ) -> Dict[str, object]:
     """Show one restore-drill / verification receipt by id (read-only)."""
+    drill_path = Path(str(drill_id)).expanduser()
+    if drill_path.exists() and drill_path.is_file():
+        payload = _read_json(drill_path)
+        if payload:
+            resolved_id = str(payload.get("verify_id") or payload.get("operation_id") or payload.get("receipt_id") or drill_path.stem)
+            return report_envelope(
+                "restore.drills.show",
+                payload.get("app") if isinstance(payload.get("app"), str) else None,
+                payload.get("environment") if isinstance(payload.get("environment"), str) else None,
+                f"Restore drill / verification receipt {resolved_id}.",
+                artifacts=[artifact(str(drill_path), "restore-drill", present=True)],
+                kind="ophelia.restore_drill",
+                drill=deep_redact(payload, propagate=True),
+                drill_id=resolved_id,
+                requested_ref=drill_id,
+                secrets_redacted=True,
+            )
+        return report_envelope(
+            "restore.drills.show",
+            None,
+            None,
+            f"Restore drill / verification receipt path is unreadable: {drill_id}.",
+            blockers=[schema_issue("restore_drill_unreadable", f"Could not read restore drill JSON: {drill_path}")],
+            kind="ophelia.restore_drill",
+            drill_id=drill_id,
+        )
     apps_root = runtime_root / "apps"
     if apps_root.exists():
         for app_root in sorted(path for path in apps_root.iterdir() if path.is_dir()):
@@ -353,7 +380,7 @@ def restore_drills_show(
                             f"Restore drill / verification receipt {drill_id}.",
                             artifacts=[artifact(str(path), "restore-drill", present=True)],
                             kind="ophelia.restore_drill",
-                            drill=deep_redact(payload),
+                            drill=deep_redact(payload, propagate=True),
                             drill_id=drill_id,
                             secrets_redacted=True,
                         )
@@ -483,7 +510,7 @@ def _restore_rehearsal_command(manifest: Optional[Manifest], rehearsal_target: O
     base = import_config.get("command") if isinstance(import_config, dict) else None
     if not base:
         return None
-    return f"{base} --isolated-target {rehearsal_target or '<rehearsal-target>'}"
+    return redact_command_string(f"{base} --isolated-target {rehearsal_target or 'REHEARSAL_TARGET'}")
 
 
 def _data_verify_hook(manifest: Optional[Manifest]) -> Optional[str]:
@@ -492,7 +519,7 @@ def _data_verify_hook(manifest: Optional[Manifest]) -> Optional[str]:
     verify = manifest.data.postgres.verify or {}
     if isinstance(verify, dict):
         command = verify.get("command")
-        return str(command) if command else None
+        return redact_command_string(str(command)) if command else None
     return None
 
 

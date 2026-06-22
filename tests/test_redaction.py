@@ -8,9 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.redaction import (
     REDACTED,
+    deep_redact,
     is_sensitive_key,
     looks_like_secret_value,
+    redact_command_string,
     redact_mapping,
+    redact_url,
     redact_value,
     redacted_cloudflare_record,
     redacted_compose_text,
@@ -47,6 +50,31 @@ class RedactionValueTests(unittest.TestCase):
         self.assertIsNone(redact_value(None))
         self.assertEqual("", redact_value(""))
         self.assertEqual(REDACTED, redact_value("super-secret"))
+
+    def test_command_string_masks_secret_literals(self) -> None:
+        command = "pg_restore --password hunter2 --api-token sk-live-secret DATABASE_URL=postgres://u:p@db/app"
+        redacted = redact_command_string(command)
+        self.assertNotIn("hunter2", redacted)
+        self.assertNotIn("sk-live-secret", redacted)
+        self.assertNotIn("postgres://u:p@db/app", redacted)
+        self.assertIn("--password", redacted)
+        self.assertIn("--api-token", redacted)
+
+    def test_url_redaction_masks_userinfo_query_and_fragment(self) -> None:
+        redacted = redact_url("https://user:secret@example.com/health?token=abc#frag")
+        self.assertEqual("https://<redacted>@example.com/health?<redacted>#<redacted>", redacted)
+
+    def test_deep_redact_masks_command_keys_and_can_propagate_sensitive_containers(self) -> None:
+        payload = {
+            "verify_command": "check --token sk-live-secret",
+            "credentials": {"username": "alice", "region": "us-east-1"},
+        }
+        shallow = deep_redact(payload)
+        propagated = deep_redact(payload, propagate=True)
+        self.assertNotIn("sk-live-secret", str(shallow))
+        self.assertEqual("alice", shallow["credentials"]["username"])
+        self.assertEqual(REDACTED, propagated["credentials"]["username"])
+        self.assertEqual(REDACTED, propagated["credentials"]["region"])
 
 
 class RedactMappingTests(unittest.TestCase):

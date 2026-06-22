@@ -17,6 +17,7 @@ import tempfile  # noqa: E402
 import unittest  # noqa: E402
 
 from ophelia import command_catalog  # noqa: E402
+from ophelia.api_routes import HTTP_ROUTE_PATTERNS  # noqa: E402
 from ophelia.manifest import load_manifest  # noqa: E402
 from ophelia.runtime import deploy_bundle  # noqa: E402
 
@@ -64,7 +65,7 @@ class LumenContractTests(unittest.TestCase):
         self.assertIn("catalog", round_tripped["commands"])
         self.assertEqual(round_tripped["commands"]["count"], len(round_tripped["commands"]["catalog"]))
         self.assertIsInstance(round_tripped["http_endpoints"], list)
-        self.assertTrue(round_tripped["http_endpoints"])
+        self.assertEqual(HTTP_ROUTE_PATTERNS, round_tripped["http_endpoints"])
         for surface in (
             "catalog",
             "schema",
@@ -99,9 +100,10 @@ class LumenContractTests(unittest.TestCase):
         self.assertIn("apps", round_tripped)
         self.assertIn("warnings", round_tripped)
         self.assertIn("totals", round_tripped)
-        # Reserved placeholder keys later phases will fill.
-        self.assertIsNone(round_tripped["traffic_status"])
-        self.assertIsNone(round_tripped["observability"])
+        self.assertIsInstance(round_tripped["traffic_status"], dict)
+        self.assertIsInstance(round_tripped["observability"], dict)
+        self.assertEqual(0, round_tripped["traffic_status"]["app_count"])
+        self.assertEqual(0, round_tripped["observability"]["app_count"])
 
 
 class LumenDashboardSafetyTests(unittest.TestCase):

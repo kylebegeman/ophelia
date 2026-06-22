@@ -106,14 +106,14 @@ def _ensure_postgres_database(
         [
             (
                 "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', "
-                f"'{user}', '{password}') "
-                f"WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{user}') \\gexec"
+                f"{_sql_literal(user)}, {_sql_literal(password)}) "
+                f"WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {_sql_literal(user)}) \\gexec"
             ),
-            f"SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', '{user}', '{password}') \\gexec",
+            f"SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', {_sql_literal(user)}, {_sql_literal(password)}) \\gexec",
             (
                 "SELECT format('CREATE DATABASE %I OWNER %I', "
-                f"'{database}', '{user}') "
-                f"WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{database}') \\gexec"
+                f"{_sql_literal(database)}, {_sql_literal(user)}) "
+                f"WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = {_sql_literal(database)}) \\gexec"
             ),
             "",
         ]
@@ -265,11 +265,18 @@ def _load_state(path: Path) -> Dict[str, Dict[str, str]]:
     if not path.exists():
         return {}
 
-    raw = json.loads(path.read_text())
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
     if not isinstance(raw, dict):
         return {}
-    return raw
+    return {key: value for key, value in raw.items() if isinstance(key, str) and isinstance(value, dict)}
 
 
 def _write_state(path: Path, state: Dict[str, Dict[str, str]]) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+def _sql_literal(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"

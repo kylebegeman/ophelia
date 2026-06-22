@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from .manifest import Manifest
+from .redaction import redact_url
 from .runtime import image_digests, image_references
 from .templates import render_env_example
 from .verify import verification_checks
@@ -77,8 +78,8 @@ def explain_manifest(manifest: Manifest, manifest_path: Path) -> Dict[str, objec
         ],
         "verification_checks": [
             {
-                "name": check.name or check.url,
-                "url": check.url,
+                "name": check.name or redact_url(check.url),
+                "url": redact_url(check.url),
                 "expect_status": check.expect_status,
                 "contains_required": check.contains is not None,
             }

@@ -118,6 +118,32 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual("warning", payload["status"])
         self.assertFalse(verification_blocks_release(payload))
 
+    def test_verification_results_redact_secret_shaped_urls(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="redact-url-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="health",
+                    url="https://user:secret@example.com/health?token=abc#frag",
+                )
+            ],
+        )
+
+        with mock.patch("ophelia.verify.urllib.request.urlopen", return_value=_FakeResponse()):
+            payload = run_verifications(manifest, wait_for_tls=False)
+
+        result_url = payload["results"][0]["url"]
+        self.assertEqual("https://<redacted>@example.com/health?<redacted>#<redacted>", result_url)
+        self.assertNotIn("secret", json.dumps(payload))
+        self.assertNotIn("token=abc", json.dumps(payload))
+
     def test_cli_verify_app_name_updates_current_release(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 
@@ -65,6 +66,25 @@ class RollbackTests(unittest.TestCase):
 
             with self.assertRaises(RuntimeError):
                 apply_rollback(runtime_root, "rollback-test", release_id, "wrong-token")
+
+    def test_plan_blocks_external_symlink_in_release_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_manifest("ghcr.io/example/rollback-test:v1"))
+            app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
+            release = json.loads((app_root / "release.json").read_text())
+            bundle_root = Path(release["bundle_path"])
+            external_compose = root / "outside-compose.yml"
+            external_compose.write_text("services: {}\n")
+            (bundle_root / "compose.yml").unlink()
+            (bundle_root / "compose.yml").symlink_to(external_compose)
+
+            plan = rollback_plan(runtime_root, "rollback-test", release["release_id"])
+
+            self.assertFalse(plan["can_apply"])
+            self.assertIn("External symlink", str(plan["blockers"]))
 
 
 def _manifest(image: str) -> str:

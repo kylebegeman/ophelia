@@ -14,6 +14,7 @@ from .explain import explain_manifest
 from .inspection import status_report
 from .manifest import Manifest, ManifestError, load_manifest
 from .planning import bundle_diff
+from .redaction import redact_url
 from .runtime import active_release_id, list_releases
 from .templates import render_env_example
 from .verify import verification_checks
@@ -133,7 +134,7 @@ def preflight_report(manifest_path: Path, runtime_root: Path, manifest_dir: Path
         "disk_check": status["disk_usage"],
         "backup_readiness": backup,
         "verification_checks": [
-            {"name": check.name or check.url, "url": check.url, "expect_status": check.expect_status}
+            {"name": check.name or redact_url(check.url), "url": redact_url(check.url), "expect_status": check.expect_status}
             for check in checks
         ],
         "warnings": warnings,
@@ -194,7 +195,7 @@ def _current_release(runtime_root: Path, app: str) -> Dict[str, object]:
         return {}
     try:
         payload = json.loads(path.read_text())
-    except json.JSONDecodeError:
+    except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 

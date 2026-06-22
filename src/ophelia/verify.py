@@ -10,6 +10,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 from .manifest import Manifest, VerificationCheck, VerificationPolicy
+from .redaction import redact_url
 
 
 TLS_PHASE = "certificate_obtain"
@@ -180,7 +181,8 @@ def _verification_payload(
 
 
 def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLContext) -> Dict[str, Any]:
-    name = check.name or check.url
+    display_url = redact_url(check.url)
+    name = check.name or display_url
     request = urllib.request.Request(check.url, headers={"User-Agent": "ophelia-verify/1.0"})
     try:
         with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
@@ -192,7 +194,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
 
             return {
                 "name": name,
-                "url": check.url,
+                "url": display_url,
                 "phase": ROUTE_PHASE,
                 "status_code": status,
                 "expected_status": check.expect_status,
@@ -206,7 +208,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
             matched = check.contains in body
         result = {
             "name": name,
-            "url": check.url,
+            "url": display_url,
             "phase": ROUTE_PHASE,
             "status_code": exc.code,
             "expected_status": check.expect_status,
@@ -220,7 +222,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
     except Exception as exc:  # pragma: no cover - network failures vary by environment.
         return {
             "name": name,
-            "url": check.url,
+            "url": display_url,
             "phase": ROUTE_PHASE,
             "status_code": None,
             "expected_status": check.expect_status,
@@ -283,12 +285,13 @@ def _tls_results_for_checks(
     results: List[Dict[str, Any]] = []
     for check in checks:
         parsed = urllib.parse.urlparse(check.url)
-        name = check.name or check.url
+        display_url = redact_url(check.url)
+        name = check.name or display_url
         if parsed.scheme != "https" or parsed.hostname is None:
             results.append(
                 {
                     "name": name,
-                    "url": check.url,
+                    "url": display_url,
                     "phase": TLS_PHASE,
                     "status_code": None,
                     "expected_status": check.expect_status,
@@ -301,7 +304,7 @@ def _tls_results_for_checks(
         tls_result = by_host.get((parsed.hostname, parsed.port or 443), {})
         result = {
             "name": name,
-            "url": check.url,
+            "url": display_url,
             "phase": TLS_PHASE,
             "status_code": None,
             "expected_status": check.expect_status,

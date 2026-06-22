@@ -190,6 +190,25 @@ verify_policy:
         self.assertEqual(3.0, loaded.verify_policy.timeout)
         self.assertEqual("warn", loaded.verify_policy.failure_mode)
 
+    def test_verify_url_rejects_credentials_query_and_fragment(self) -> None:
+        for url in [
+            "https://user:secret@example.com/health",
+            "https://example.com/health?token=abc",
+            "https://example.com/health#fragment",
+        ]:
+            manifest = f"""
+version: 1
+app: verify-url
+kind: static
+static_root: /tmp/verify-url
+routes:
+  - domain: verify-url.example.com
+verify:
+  - url: {url}
+"""
+            with self.assertRaisesRegex(ManifestError, "must not contain credentials"):
+                self._load(manifest)
+
     def test_rejects_boolean_values_for_integer_fields(self) -> None:
         manifest = """
 version: 1

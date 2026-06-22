@@ -8,6 +8,7 @@ from ..config import DEFAULT_RUNTIME_ROOT
 from ..manifest import ManifestError, load_manifest
 from ..runtime import update_current_release_verification
 from ..verify import run_verifications, verification_blocks_release, verification_checks
+from ._output import print_error
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -26,19 +27,13 @@ def register(subparsers: _SubParsersAction) -> None:
 def run(args: Namespace) -> int:
     override_error = _validate_overrides(args)
     if override_error is not None:
-        if args.json:
-            print(json.dumps({"ok": False, "error": override_error}, indent=2, sort_keys=True))
-        else:
-            print(override_error)
+        print_error(override_error, "verification_override_invalid", json_output=args.json)
         return 1
 
     try:
         manifest, manifest_path = _load_target(args.target, args.runtime_root)
     except ManifestError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
-            return 1
-        print(f"Manifest invalid: {exc}")
+        print_error(f"Manifest invalid: {exc}", "manifest_invalid", json_output=args.json)
         return 1
 
     checks = verification_checks(manifest)
@@ -58,10 +53,7 @@ def run(args: Namespace) -> int:
             failure_mode=args.failure_mode,
         )
     except ValueError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
-        else:
-            print(str(exc))
+        print_error(str(exc), "verification_error", json_output=args.json)
         return 1
     update_current_release_verification(args.runtime_root, manifest.app, payload)
     if args.json:

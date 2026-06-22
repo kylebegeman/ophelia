@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .config import REPO_ROOT
+from .redaction import redact_url
 
 
 DEFAULT_APP_REGISTRY = REPO_ROOT / "config" / "hostinger-app-registry.json"
@@ -46,8 +47,11 @@ def default_registry_path() -> Path:
 
 def load_app_registry(path: Optional[Path] = None) -> List[AppRegistryEntry]:
     registry_path = path or default_registry_path()
-    payload = json.loads(registry_path.read_text())
-    entries = payload.get("apps", payload)
+    try:
+        payload = json.loads(registry_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"App registry JSON is invalid: {registry_path}") from exc
+    entries = payload.get("apps", payload) if isinstance(payload, dict) else payload
     if not isinstance(entries, list):
         raise ValueError(f"App registry must contain a list of apps: {registry_path}")
     return [_entry(item) for item in entries]
@@ -137,9 +141,9 @@ def _entry(raw: Dict[str, object]) -> AppRegistryEntry:
             try:
                 expect_status = int(item.get("expect_status", 200))
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"Health URL expect_status must be an HTTP status code: {url}") from exc
+                raise ValueError(f"Health URL expect_status must be an HTTP status code: {redact_url(url)}") from exc
             if expect_status < 100 or expect_status > 599:
-                raise ValueError(f"Health URL expect_status must be an HTTP status code: {url}")
+                raise ValueError(f"Health URL expect_status must be an HTTP status code: {redact_url(url)}")
             health_urls.append(
                 HealthURL(
                     name=str(item.get("name") or url),
@@ -202,7 +206,9 @@ def _string_list(raw: Dict[str, object], key: str) -> List[str]:
 def _validate_health_url(url: str) -> None:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"Health URL must be http(s): {url}")
+        raise ValueError(f"Health URL must be http(s): {redact_url(url)}")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Health URL must not contain credentials, query strings, or fragments.")
 
 
 def _duplicates(values: Dict[str, List[str]]) -> List[str]:
@@ -234,6 +240,8 @@ def _container_health(names: List[str]) -> List[Dict[str, object]]:
 
 
 def _check_url(check: HealthURL, timeout: int) -> Dict[str, object]:
+    display_url = redact_url(check.url)
+    display_name = redact_url(check.name)
     try:
         request = urllib.request.Request(check.url, headers={"User-Agent": "ophelia-health/1"})
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -244,16 +252,16 @@ def _check_url(check: HealthURL, timeout: int) -> Dict[str, object]:
         body = exc.read(65536).decode("utf-8", errors="replace")
     except (OSError, urllib.error.URLError) as exc:
         return {
-            "name": check.name,
-            "url": check.url,
+            "name": display_name,
+            "url": display_url,
             "ok": False,
             "status_code": None,
             "error": str(exc),
         }
     contains_ok = check.contains is None or check.contains in body
     return {
-        "name": check.name,
-        "url": check.url,
+        "name": display_name,
+        "url": display_url,
         "ok": status == check.expect_status and contains_ok,
         "status_code": status,
         "expect_status": check.expect_status,

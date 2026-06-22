@@ -130,13 +130,37 @@ class EvaluateTests(unittest.TestCase):
             "app.traffic.apply",
             "dragon-writer",
             "production",
-            {"target_health_check": True, "rollback_available": True},
+            {
+                "target_health_check": True,
+                "rollback_available": True,
+                "plan_exists": True,
+                "confirmation_required": True,
+                "json_receipts": True,
+            },
             policy=policy,
         )
         self.assertEqual("ok", result["status"])
         self.assertEqual([], result["blockers"])
         statuses = {rule["id"]: rule["status"] for rule in result["rules"]}
         self.assertEqual("ok", statuses["production-traffic-health-check"])
+        self.assertEqual("ok", statuses["default-production-requires-plan"])
+        self.assertEqual("ok", statuses["default-production-requires-confirmation"])
+        self.assertEqual("ok", statuses["default-require-json-receipts"])
+
+    def test_production_defaults_are_enforced_for_mutating_operations(self) -> None:
+        policy = load_policy(REPO_POLICY_PATH)
+        result = evaluate_policy(
+            "app.export.create",
+            "dragon-writer",
+            "production",
+            {},
+            policy=policy,
+        )
+        self.assertEqual("blocked", result["status"])
+        failing_ids = {rule["id"] for rule in result["rules"] if rule["status"] == "blocked"}
+        self.assertIn("default-production-requires-plan", failing_ids)
+        self.assertIn("default-production-requires-confirmation", failing_ids)
+        self.assertIn("default-require-json-receipts", failing_ids)
 
     def test_unknown_required_condition_fails_closed(self) -> None:
         # Fail-closed: a warning-severity rule whose required condition the engine

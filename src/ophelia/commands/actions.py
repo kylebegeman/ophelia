@@ -5,6 +5,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..actions import action_catalog
+from ._output import print_error
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -14,7 +15,11 @@ def register(subparsers: _SubParsersAction) -> None:
 
 
 def run(args: Namespace) -> int:
-    catalog = action_catalog()
+    try:
+        catalog = action_catalog()
+    except ValueError as exc:
+        print_error(str(exc), "actions_config_invalid", json_output=args.json)
+        return 1
     if args.json:
         print(json.dumps({"actions": catalog}, indent=2, sort_keys=True))
     else:

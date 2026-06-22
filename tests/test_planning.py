@@ -28,6 +28,9 @@ class PlanningTests(unittest.TestCase):
 
             self.assertEqual("plan-test", plan["app"])
             self.assertTrue(plan["changed_files"])
+            self.assertEqual("deploy.plan", plan["digest"]["operation"])
+            self.assertEqual("ready", plan["digest"]["status"])
+            self.assertEqual("medium", plan["digest"]["risk"])
             self.assertIn("SECRET_TOKEN", {item["key"] for item in plan["env_requirements"]})
             self.assertNotIn("super-secret-value", json.dumps(plan))
 

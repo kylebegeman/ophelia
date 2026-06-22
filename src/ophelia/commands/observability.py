@@ -9,6 +9,7 @@ from ..config import DEFAULT_RUNTIME_ROOT
 from ..observability import (
     observability_export,
     observability_plan,
+    observability_schedule_run,
     observability_status,
 )
 
@@ -53,6 +54,21 @@ def register(subparsers: _SubParsersAction) -> None:
     _add_common_args(export_parser)
     export_parser.set_defaults(handler=run_export)
 
+    schedule_parser = obs_subparsers.add_parser(
+        "schedule", help="Cron-friendly observability sweep commands"
+    )
+    schedule_subparsers = schedule_parser.add_subparsers(dest="observability_schedule_command")
+    schedule_run_parser = schedule_subparsers.add_parser(
+        "run", help="Run observability status for every registered manifest and write latest/run artifacts"
+    )
+    schedule_run_parser.add_argument("--manifests-dir", type=Path, default=None, help="Directory containing *.ophelia.yml manifests")
+    schedule_run_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    schedule_run_parser.add_argument("--probe-http", action="store_true", help="Opt in to bounded HTTP health probes for configured apps")
+    schedule_run_parser.add_argument("--check-docker", action="store_true", help="Opt in to bounded read-only docker ps checks")
+    schedule_run_parser.add_argument("--http-timeout", type=float, default=5.0)
+    schedule_run_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    schedule_run_parser.set_defaults(handler=run_schedule_run)
+
 
 def _add_common_args(parser) -> None:
     parser.add_argument("--app", required=True, help="App name")
@@ -95,6 +111,19 @@ def run_export(args: Namespace) -> int:
     return _emit(report, args.json, _print_export)
 
 
+def run_schedule_run(args: Namespace) -> int:
+    from ..config import REPO_ROOT
+
+    report = observability_schedule_run(
+        runtime_root=args.runtime_root,
+        manifests_dir=args.manifests_dir or REPO_ROOT / "manifests",
+        probe_http=args.probe_http,
+        check_docker=args.check_docker,
+        http_timeout=args.http_timeout,
+    )
+    return _emit(report, args.json, _print_schedule_run)
+
+
 def _emit(report, as_json: bool, printer) -> int:
     if as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -134,6 +163,21 @@ def _print_export(report) -> None:
     snapshot = report.get("snapshot", {})
     for key in sorted(snapshot):
         print(f"  {key}: {snapshot[key]}")
+
+
+def _print_schedule_run(report) -> None:
+    print(report.get("summary", ""))
+    totals = report.get("totals") if isinstance(report.get("totals"), dict) else {}
+    print(
+        "  apps: "
+        f"{totals.get('app_count', 0)} checked, "
+        f"{totals.get('blocked', 0)} blocked, "
+        f"{totals.get('warning', 0)} warning"
+    )
+    for blocker in report.get("blockers", []):
+        print(f"  ! {blocker.get('code')}: {blocker.get('message')}")
+    for warning in report.get("warnings", []):
+        print(f"  ~ {warning.get('code')}: {warning.get('message')}")
 
 
 _COMMON_ARGS_SCHEMA = {
@@ -219,5 +263,38 @@ register_cli_descriptor(
         output_schema_ref="ophelia.observability_export.v1",
         artifacts=[],
         safety_notes=["Read-only summary snapshot. No mutation; summaries only; secrets redacted."],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship observability schedule run",
+        operation="observability.schedule.run",
+        summary="Run a cron-friendly observability sweep across registered manifests and write latest/run artifacts.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.observability_schedule_run",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "manifests_dir": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "probe_http": {"type": "boolean"},
+                "check_docker": {"type": "boolean"},
+                "http_timeout": {"type": "number"},
+                "json": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.observability_schedule_run.v1",
+        artifacts=["runtime_root/observability/runs/*.json", "runtime_root/observability/latest.json"],
+        safety_notes=[
+            "Writes local observability run artifacts only.",
+            "No network/Docker call by default; probes are opt-in and timeout-bounded.",
+        ],
     )
 )

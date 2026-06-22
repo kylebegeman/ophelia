@@ -6,6 +6,8 @@ from pathlib import Path
 
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..operation_refs import public_resolution, resolve_receipt_ref
+from ..operation_schema import report_envelope
 from ..portability import receipt_list_report, receipt_show_report
 from ..receipt_index import receipt_timeline
 
@@ -53,7 +55,25 @@ def run_list(args: Namespace) -> int:
 
 
 def run_show(args: Namespace) -> int:
-    report = receipt_show_report(args.receipt_id, runtime_root=args.runtime_root)
+    resolution = resolve_receipt_ref(args.receipt_id, runtime_root=args.runtime_root)
+    if resolution.get("ok"):
+        report = receipt_show_report(str(resolution.get("path") or resolution.get("resolved_id")), runtime_root=args.runtime_root)
+        report["requested_ref"] = args.receipt_id
+        report["resolved_ref"] = public_resolution(resolution)
+    else:
+        report = report_envelope(
+            "receipts.show",
+            None,
+            None,
+            f"Receipt reference unresolved: {args.receipt_id}.",
+            blockers=list(resolution.get("blockers", [])) if isinstance(resolution.get("blockers"), list) else [],
+            warnings=list(resolution.get("warnings", [])) if isinstance(resolution.get("warnings"), list) else [],
+            checks=[],
+            artifacts=[],
+            receipt_id=args.receipt_id,
+            requested_ref=args.receipt_id,
+            resolved_ref=public_resolution(resolution),
+        )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

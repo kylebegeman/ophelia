@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ophelia.addons import _load_state, _sql_literal
 from ophelia.provider_config import explain_provider_config, validate_provider_config
 from ophelia.secrets_audit import secrets_audit
 
@@ -84,6 +85,18 @@ class SecretsAuditPlaceholderTests(unittest.TestCase):
         # The placeholder does not satisfy the requirement, so the check agrees
         # with the (blocked/warn) status instead of falsely reporting ok.
         self.assertFalse(present_check["ok"])
+
+
+class AddonStateRobustnessTests(unittest.TestCase):
+    def test_corrupt_addon_state_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "addons.json"
+            state_path.write_text("{")
+
+            self.assertEqual({}, _load_state(state_path))
+
+    def test_sql_literal_escapes_quotes(self) -> None:
+        self.assertEqual("'a''b'", _sql_literal("a'b"))
 
 
 if __name__ == "__main__":
