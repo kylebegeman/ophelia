@@ -55,3 +55,4 @@
 | [0051](0051-open-source-launch-prep.md) | 2026-06-22 | landed | Open source launch prep | open-source, docs, ci, manifests, examples, governance |
 | [0052](0052-public-warning-cleanup.md) | 2026-06-22 | landed | Public warning cleanup | open-source, manifests, docs, tests, audit |
 | [0053](0053-release-gate-polish.md) | 2026-06-22 | landed | Release gate polish | open-source, ci, packaging, docs, tests |
+| [0054](0054-doc-link-check.md) | 2026-06-22 | landed | Doc link check | docs, open-source, tests |

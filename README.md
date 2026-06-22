@@ -66,7 +66,7 @@ make open-source-audit-strict
 ## Quick Start
 
 ```bash
-git clone <your-ophelia-repo-url> ophelia
+git clone https://github.com/YOUR-ORG/ophelia.git ophelia
 cd ophelia
 
 python3 -m venv .venv
