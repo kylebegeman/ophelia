@@ -26,6 +26,7 @@ HTTP_ROUTE_PATTERNS: List[str] = [
     "/jobs/<id>",
     "/jobs/<id>/events",
     "/lumen/capabilities",
+    "/lumen/console-data",
     "/lumen/dashboard-data",
     "/lumen/action-descriptors",
     "/lumen/apps",

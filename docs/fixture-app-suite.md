@@ -58,6 +58,12 @@ Run the live-readiness aggregate against the fixture suite:
 make live-readiness-fixtures
 ```
 
+Run the Lumen console payload against the fixture suite:
+
+```bash
+make lumen-console-fixtures
+```
+
 Equivalent direct command:
 
 ```bash
@@ -86,6 +92,10 @@ A healthy fixture run should produce:
 - multiple drift findings, because fixture release metadata is a stored snapshot
   and not a freshly rendered runtime bundle
 - no raw env, database, token, or provider values in output
+
+The fixture Lumen console run should also show eight app rows, one fixture
+plugin, a non-empty approval queue, and the same one-blocked/seven-warning
+readiness mix.
 
 ## Maintenance Rules
 

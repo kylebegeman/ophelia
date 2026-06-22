@@ -29,3 +29,4 @@
 | [0025](0025-read-only-live-readiness-lane.md) | 2026-06-22 | landed | Read-only live readiness lane | live-readiness, cli, hosts, placement, observability, secrets, drift, docs, tests |
 | [0026](0026-fixture-app-suite-and-readiness-harness.md) | 2026-06-22 | landed | Fixture app suite and live-readiness harness | fixtures, live-readiness, manifests, readiness, placement, drift, docs, tests |
 | [0027](0027-phase-7-plugin-contracts.md) | 2026-06-22 | landed | Phase 7 plugin contracts | plugins, cli, api, lumen, fixtures, docs, tests |
+| [0028](0028-phase-8-lumen-console-mvp.md) | 2026-06-22 | landed | Phase 8 Lumen console MVP | lumen, console, api, cli, fixtures, docs, tests |

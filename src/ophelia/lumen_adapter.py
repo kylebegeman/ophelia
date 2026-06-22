@@ -26,6 +26,7 @@ to :func:`ophelia.command_catalog.catalog`.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -42,11 +43,13 @@ from .portability import app_readiness_report, backup_status_report, traffic_sta
 from .receipt_index import receipt_timeline
 from .redaction import deep_redact
 from .state_db import state_summary
+from .workflows import list_workflow_templates
 
 CAPABILITIES_KIND = "ophelia.lumen.capabilities"
 ACTION_DESCRIPTORS_KIND = "ophelia.lumen.action_descriptors"
 DASHBOARD_KIND = "ophelia.lumen.dashboard"
 APPS_KIND = "ophelia.lumen.apps"
+CONSOLE_KIND = "ophelia.lumen.console"
 
 # Recent receipts surfaced per app/environment on the dashboard.
 _DASHBOARD_RECEIPT_LIMIT = 10
@@ -71,6 +74,7 @@ _SURFACES: List[str] = [
     "placement",
     "live_readiness",
     "plugins",
+    "console",
 ]
 
 
@@ -115,6 +119,104 @@ def action_descriptors() -> Dict[str, Any]:
         "descriptors": command_catalog.catalog(),
     }
     return deep_redact(payload)
+
+
+def console_data(
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    plugins_dir: Path = REPO_ROOT / "plugins",
+) -> Dict[str, Any]:
+    """Single read-only payload for the Lumen operator console MVP.
+
+    The console contract composes existing Ophelia surfaces into a bounded model
+    Lumen can render directly: navigation, overview cards, app rows, approval
+    queue, workflow summaries, plugin metadata, and safe quick actions. It does
+    not execute operations and it does not include raw findings or secret values.
+    """
+    runtime_root = Path(runtime_root)
+    manifests_dir = Path(manifests_dir)
+    plugins_dir = Path(plugins_dir)
+    dashboard = dashboard_data(runtime_root=runtime_root, manifests_dir=manifests_dir)
+    capabilities_report = capabilities(runtime_root=runtime_root)
+    plugin_report = plugin_catalog(plugins_dir)
+    templates = list_workflow_templates()
+    workflows = _stored_workflow_summaries(runtime_root)
+    descriptors = command_catalog.catalog()
+    approval_queue = _approval_queue(descriptors, workflows)
+    apps = [_console_app_row(entry) for entry in dashboard.get("apps", []) if isinstance(entry, dict)]
+    blockers = sum(int((entry.get("blockers") or {}).get("count") or 0) for entry in apps if isinstance(entry.get("blockers"), dict))
+    warnings_count = sum(int(entry.get("warnings_count") or 0) for entry in apps)
+    payload: Dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": CONSOLE_KIND,
+        "runtime_root": str(runtime_root),
+        "manifests_dir": str(manifests_dir),
+        "plugins_dir": str(plugins_dir),
+        "read_only": True,
+        "mutates_state": False,
+        "navigation": _console_navigation(),
+        "overview": {
+            "cards": [
+                {
+                    "id": "apps",
+                    "label": "Apps",
+                    "value": len(apps),
+                    "status": _status_from_counts(blockers, warnings_count),
+                },
+                {
+                    "id": "readiness",
+                    "label": "Readiness",
+                    "value": dashboard.get("totals", {}),
+                    "status": "blocked" if int((dashboard.get("totals") or {}).get("blocked") or 0) else "ok",
+                },
+                {
+                    "id": "approvals",
+                    "label": "Approvals",
+                    "value": len(approval_queue),
+                    "status": "warning" if approval_queue else "ok",
+                },
+                {
+                    "id": "plugins",
+                    "label": "Plugins",
+                    "value": len(plugin_report.get("plugins", [])) if isinstance(plugin_report.get("plugins"), list) else 0,
+                    "status": plugin_report.get("status"),
+                },
+                {
+                    "id": "workflows",
+                    "label": "Workflows",
+                    "value": len(workflows),
+                    "status": "warning" if any(item.get("status") in {"paused", "blocked", "failed"} for item in workflows) else "ok",
+                },
+            ],
+            "summary": dashboard.get("summary"),
+        },
+        "apps": apps,
+        "approval_queue": approval_queue,
+        "workflows": {
+            "templates": templates.get("templates", []) if isinstance(templates, dict) else [],
+            "stored": workflows,
+        },
+        "plugins": _compact_plugin_report(plugin_report),
+        "quick_actions": _quick_actions(descriptors),
+        "sources": {
+            "dashboard": {"kind": dashboard.get("kind"), "status": "ok", "app_count": len(apps)},
+            "capabilities": {
+                "kind": capabilities_report.get("kind"),
+                "command_count": (capabilities_report.get("commands") or {}).get("count")
+                if isinstance(capabilities_report.get("commands"), dict)
+                else None,
+            },
+            "plugins": {"kind": plugin_report.get("kind"), "status": plugin_report.get("status")},
+        },
+        "safety": {
+            "execution": "none",
+            "mutation": "none",
+            "confirmation_tokens_accepted": False,
+            "values_redacted": True,
+        },
+        "summary": f"Lumen console: {len(apps)} app(s), {len(approval_queue)} approval item(s), {len(workflows)} stored workflow(s).",
+    }
+    return deep_redact(payload, safe_keys={"values_redacted"}, propagate=True)
 
 
 def app_readiness(
@@ -265,7 +367,12 @@ def _dashboard_app_entry(
     }
 
     readiness = _safe_call(
-        lambda: app_readiness_report(app, environment=environment, runtime_root=runtime_root),
+        lambda: app_readiness_report(
+            app,
+            environment=environment,
+            runtime_root=runtime_root,
+            manifest_path=Path(manifest_path) if manifest_path else None,
+        ),
         warnings,
         "readiness_unavailable",
         app,
@@ -308,7 +415,12 @@ def _dashboard_app_entry(
         entry["route_conflicts"] = {"count": len(conflict_list), "ok": bool(conflicts.get("ok"))}
 
     backup = _safe_call(
-        lambda: backup_status_report(app, environment=environment, runtime_root=runtime_root),
+        lambda: backup_status_report(
+            app,
+            environment=environment,
+            runtime_root=runtime_root,
+            manifest_path=Path(manifest_path) if manifest_path else None,
+        ),
         warnings,
         "backup_status_unavailable",
         app,
@@ -369,6 +481,201 @@ def _compact_traffic_summary(status: Dict[str, Any]) -> Dict[str, Any]:
         "target_health_ok": target_health.get("ok"),
         "blocker_count": len(blockers),
     }
+
+
+def _console_navigation() -> List[Dict[str, str]]:
+    return [
+        {"id": "overview", "label": "Overview"},
+        {"id": "apps", "label": "Apps"},
+        {"id": "approvals", "label": "Approvals"},
+        {"id": "workflows", "label": "Workflows"},
+        {"id": "plugins", "label": "Plugins"},
+        {"id": "activity", "label": "Activity"},
+    ]
+
+
+def _console_app_row(entry: Dict[str, Any]) -> Dict[str, Any]:
+    score = entry.get("portability_score") if isinstance(entry.get("portability_score"), dict) else {}
+    blockers = entry.get("blockers") if isinstance(entry.get("blockers"), dict) else {"count": 0, "codes": []}
+    route_conflicts = entry.get("route_conflicts") if isinstance(entry.get("route_conflicts"), dict) else {}
+    traffic = entry.get("traffic_status") if isinstance(entry.get("traffic_status"), dict) else {}
+    observability = entry.get("observability") if isinstance(entry.get("observability"), dict) else {}
+    return {
+        "app": entry.get("app"),
+        "environment": entry.get("environment"),
+        "manifest_path": entry.get("manifest_path"),
+        "readiness_level": entry.get("readiness_level"),
+        "score": score.get("score"),
+        "score_level": score.get("level"),
+        "blockers": {
+            "count": blockers.get("count", 0),
+            "codes": blockers.get("codes", []),
+        },
+        "warnings_count": entry.get("warnings_count", 0),
+        "backup_freshness": entry.get("backup_freshness"),
+        "route_conflict_count": route_conflicts.get("count"),
+        "traffic_status": traffic.get("status"),
+        "observability_status": observability.get("status"),
+        "primary_actions": [
+            {
+                "id": "readiness",
+                "operation": "app.readiness",
+                "command": f"ship app readiness {entry.get('app')} --environment {entry.get('environment') or 'staging'} --json",
+                "mutates_state": False,
+            },
+            {
+                "id": "timeline",
+                "operation": "receipts.timeline",
+                "command": f"ship receipts timeline --app {entry.get('app')} --environment {entry.get('environment') or 'staging'} --json",
+                "mutates_state": False,
+            },
+        ],
+    }
+
+
+def _stored_workflow_summaries(runtime_root: Path) -> List[Dict[str, Any]]:
+    workflows_root = Path(runtime_root) / "workflows"
+    if not workflows_root.exists():
+        return []
+    summaries: List[Dict[str, Any]] = []
+    for path in sorted(workflows_root.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, ValueError):
+            summaries.append(
+                {
+                    "workflow_id": path.stem,
+                    "path": str(path),
+                    "status": "unreadable",
+                    "node_counts": {},
+                    "paused_nodes": [],
+                }
+            )
+            continue
+        nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
+        node_counts = _count_values(node.get("status") for node in nodes if isinstance(node, dict))
+        paused_nodes = [
+            {
+                "node_id": node.get("id"),
+                "operation": node.get("operation"),
+                "requires_confirmation": bool(node.get("requires_confirmation")),
+                "plan_command": node.get("plan_command"),
+            }
+            for node in nodes
+            if isinstance(node, dict) and node.get("status") == "paused_for_confirmation"
+        ]
+        summaries.append(
+            {
+                "workflow_id": payload.get("workflow_id") or path.stem,
+                "template": payload.get("template"),
+                "app": payload.get("app"),
+                "environment": payload.get("environment"),
+                "status": payload.get("workflow_status") or payload.get("status"),
+                "path": str(path),
+                "node_counts": node_counts,
+                "paused_nodes": paused_nodes,
+                "updated_at": payload.get("updated_at") or payload.get("created_at"),
+            }
+        )
+    return summaries
+
+
+def _approval_queue(descriptors: List[Dict[str, Any]], workflows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for workflow in workflows:
+        for node in workflow.get("paused_nodes", []) if isinstance(workflow.get("paused_nodes"), list) else []:
+            if isinstance(node, dict):
+                items.append(
+                    {
+                        "type": "workflow_node",
+                        "status": "paused_for_confirmation",
+                        "workflow_id": workflow.get("workflow_id"),
+                        "node_id": node.get("node_id"),
+                        "operation": node.get("operation"),
+                        "plan_command": node.get("plan_command"),
+                        "requires_confirmation": True,
+                    }
+                )
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict) or not descriptor.get("mutates_state"):
+            continue
+        items.append(
+            {
+                "type": "command_descriptor",
+                "status": "confirmation_required",
+                "operation": descriptor.get("operation"),
+                "command": descriptor.get("command"),
+                "risk": descriptor.get("risk"),
+                "plan_command": descriptor.get("plan_command"),
+                "requires_confirmation": bool(descriptor.get("requires_confirmation")),
+            }
+        )
+    return items
+
+
+def _quick_actions(descriptors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    wanted = {
+        "live.readiness.run",
+        "state.summary",
+        "host.inventory",
+        "app.placement.plan",
+        "plugins.catalog",
+        "workflow.list",
+        "lumen.dashboard-data",
+    }
+    actions: List[Dict[str, Any]] = []
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict) or descriptor.get("operation") not in wanted:
+            continue
+        examples = descriptor.get("examples") if isinstance(descriptor.get("examples"), list) else []
+        actions.append(
+            {
+                "operation": descriptor.get("operation"),
+                "command": descriptor.get("command"),
+                "summary": descriptor.get("summary"),
+                "example": examples[0] if examples else descriptor.get("command"),
+                "mutates_state": False,
+            }
+        )
+    return sorted(actions, key=lambda item: str(item.get("operation") or ""))
+
+
+def _compact_plugin_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    plugins = []
+    for plugin in report.get("plugins", []) if isinstance(report.get("plugins"), list) else []:
+        if not isinstance(plugin, dict):
+            continue
+        counts = plugin.get("capability_counts") if isinstance(plugin.get("capability_counts"), dict) else {}
+        plugins.append(
+            {
+                "name": plugin.get("name"),
+                "version": plugin.get("version"),
+                "enabled": bool(plugin.get("enabled")),
+                "capabilities": [
+                    {"type": str(key), "count": int(value)}
+                    for key, value in sorted(counts.items())
+                    if isinstance(value, int)
+                ],
+                "lumen_surface_count": len(plugin.get("lumen_surfaces", [])) if isinstance(plugin.get("lumen_surfaces"), list) else 0,
+            }
+        )
+    return {
+        "kind": report.get("kind"),
+        "status": report.get("status"),
+        "plugins_dir": report.get("plugins_dir"),
+        "plugin_count": len(plugins),
+        "plugins": plugins,
+        "blocker_count": len(report.get("blockers", [])) if isinstance(report.get("blockers"), list) else 0,
+        "warning_count": len(report.get("warnings", [])) if isinstance(report.get("warnings"), list) else 0,
+    }
+
+
+def _status_from_counts(blockers: int, warnings: int) -> str:
+    if blockers:
+        return "blocked"
+    if warnings:
+        return "warning"
+    return "ok"
 
 
 def _aggregate_observability(entries: List[Dict[str, Any]]) -> Dict[str, Any]:

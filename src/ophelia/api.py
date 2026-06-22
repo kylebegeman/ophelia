@@ -14,6 +14,7 @@ from .lumen_adapter import (
     app_readiness as lumen_app_readiness,
     app_timeline as lumen_app_timeline,
     capabilities as lumen_capabilities,
+    console_data as lumen_console_data,
     dashboard_data as lumen_dashboard_data,
 )
 from .operator_reports import host_inventory, manifest_registry, release_registry
@@ -107,6 +108,9 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/lumen/capabilities":
             self._json(lumen_capabilities(self.runtime_root_value))
+            return
+        if parsed.path == "/lumen/console-data":
+            self._json(lumen_console_data(self.runtime_root_value, REPO_ROOT / "manifests", REPO_ROOT / "plugins"))
             return
         if parsed.path == "/lumen/dashboard-data":
             self._json(lumen_dashboard_data(self.runtime_root_value, REPO_ROOT / "manifests"))

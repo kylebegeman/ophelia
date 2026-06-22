@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-7 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-8 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -58,6 +58,8 @@ rebuilt:
   placement, drift, backup, restore, provider, and secret-provider testing.
 - Metadata-only plugin contracts, trusted-directory discovery, validation, and
   plugin catalog surfaces.
+- Read-only Lumen operator console payload over dashboard, app rows, approvals,
+  workflows, plugins, and quick actions.
 
 ## Implementation Rules
 
@@ -459,6 +461,9 @@ or sandbox plugin code. Runtime plugin execution remains later hardening work.
 
 ## Phase 8: Lumen Operator Console
 
+**Status:** Landed in changelog record
+[`0028`](changelog/0028-phase-8-lumen-console-mvp.md).
+
 **Goal:** Build the operator cockpit on top of Ophelia contracts.
 
 **Implements:**
@@ -497,6 +502,11 @@ host placement.
 - Console views are backed by stable Ophelia JSON contracts.
 - Mutating actions show digest, risk, token, expected changes, and rollback
   posture before execution.
+
+**Boundary:** Phase 8 adds the read-only console data contract and fixture
+smoke target. Lumen UI rendering lives outside this repo; Ophelia exposes the
+bounded payload and keeps mutation execution inside existing plan/confirm/apply
+contracts.
 
 ## Phase 9: Production Hardening And Migration
 

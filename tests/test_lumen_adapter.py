@@ -78,6 +78,8 @@ class LumenContractTests(unittest.TestCase):
             "state_service",
             "policy",
             "workflows",
+            "plugins",
+            "console",
         ):
             self.assertIn(surface, round_tripped["surfaces"])
 
@@ -107,6 +109,29 @@ class LumenContractTests(unittest.TestCase):
         self.assertIsInstance(round_tripped["state_service"], dict)
         self.assertEqual(0, round_tripped["traffic_status"]["app_count"])
         self.assertEqual(0, round_tripped["observability"]["app_count"])
+
+    def test_console_data_covers_fixture_suite_without_leaking_values(self) -> None:
+        fixture_root = Path(__file__).resolve().parents[1] / "fixtures" / "app-suite"
+        report = lumen_adapter.console_data(
+            runtime_root=fixture_root / "runtime",
+            manifests_dir=fixture_root / "manifests",
+            plugins_dir=fixture_root / "plugins",
+        )
+        round_tripped = json.loads(json.dumps(report))
+        self.assertEqual(lumen_adapter.CONSOLE_KIND, round_tripped["kind"])
+        self.assertTrue(round_tripped["read_only"])
+        self.assertFalse(round_tripped["mutates_state"])
+        self.assertEqual(8, len(round_tripped["apps"]))
+        readiness_card = next(card for card in round_tripped["overview"]["cards"] if card["id"] == "readiness")
+        self.assertEqual(1, readiness_card["value"]["blocked"])
+        self.assertEqual(7, readiness_card["value"]["warning"])
+        self.assertTrue(round_tripped["approval_queue"])
+        self.assertTrue(round_tripped["quick_actions"])
+        self.assertEqual(1, round_tripped["plugins"]["plugin_count"])
+        self.assertIn("overview", {item["id"] for item in round_tripped["navigation"]})
+        serialized = json.dumps(round_tripped)
+        self.assertNotIn("fixture-provider-token-value", serialized)
+        self.assertNotIn("fixture-db-password", serialized)
 
 
 class LumenDashboardSafetyTests(unittest.TestCase):

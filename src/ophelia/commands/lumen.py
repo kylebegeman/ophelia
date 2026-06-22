@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
-from ..lumen_adapter import action_descriptors, capabilities, dashboard_data
+from ..lumen_adapter import action_descriptors, capabilities, console_data, dashboard_data
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -33,6 +33,15 @@ def register(subparsers: _SubParsersAction) -> None:
     )
     ad_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     ad_parser.set_defaults(handler=run_action_descriptors)
+
+    console_parser = lumen_subparsers.add_parser(
+        "console-data", help="Single bounded payload for the Lumen operator console"
+    )
+    console_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    console_parser.add_argument("--manifests-dir", type=Path, default=REPO_ROOT / "manifests")
+    console_parser.add_argument("--plugins-dir", type=Path, default=REPO_ROOT / "plugins")
+    console_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    console_parser.set_defaults(handler=run_console_data)
 
 
 def run_capabilities(args: Namespace) -> int:
@@ -77,6 +86,20 @@ def run_action_descriptors(args: Namespace) -> int:
     return 0
 
 
+def run_console_data(args: Namespace) -> int:
+    report = console_data(runtime_root=args.runtime_root, manifests_dir=args.manifests_dir, plugins_dir=args.plugins_dir)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        overview = report.get("overview") if isinstance(report.get("overview"), dict) else {}
+        cards = overview.get("cards") if isinstance(overview.get("cards"), list) else []
+        print(report.get("summary", ""))
+        for card in cards:
+            if isinstance(card, dict):
+                print(f"  {card.get('label')}: {card.get('value')} ({card.get('status')})")
+    return 0
+
+
 register_cli_descriptor(
     CommandDescriptor(
         command="ship lumen capabilities",
@@ -100,6 +123,37 @@ register_cli_descriptor(
         output_schema_ref="ophelia.lumen.capabilities.v1",
         artifacts=[],
         safety_notes=["Read-only discovery surface. No mutation; no secret values."],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship lumen console-data",
+        operation="lumen.console",
+        summary="Single bounded read-only payload for the Lumen operator console MVP.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.lumen.console",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "runtime_root": {"type": "string"},
+                "manifests_dir": {"type": "string"},
+                "plugins_dir": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.lumen.console.v1",
+        artifacts=[],
+        safety_notes=[
+            "Read-only aggregate for UI rendering. Does not execute workflows, commands, plugins, or provider operations.",
+            "Approval queue entries are metadata only; mutation still runs through each command's own plan/confirm/apply contract.",
+        ],
     )
 )
 

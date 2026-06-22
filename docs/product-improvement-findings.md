@@ -148,6 +148,13 @@ cohesive operator experience while keeping execution deterministic in Ophelia.
 
 **Roadmap phase:** Phase 8
 
+**Implementation status:** Landed in
+[`0028`](changelog/0028-phase-8-lumen-console-mvp.md). Ophelia now exposes
+`ship lumen console-data` and `GET /lumen/console-data`, a read-only console
+payload with overview cards, app rows, approval queue metadata, workflow
+summaries, plugin inventory, quick actions, source metadata, and fixture smoke
+coverage. Lumen UI rendering remains outside this repo.
+
 ### F-007: Workflows Need To Become Resumable End-To-End Operations
 
 **Selected item:** Major 2, Full Workflow Orchestrator
