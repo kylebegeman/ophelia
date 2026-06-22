@@ -182,7 +182,10 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
     "workflow.cancel": ["ship workflow cancel latest:dragon-writer --json"],
     "workflow.show": ["ship workflow show latest:dragon-writer --json"],
     "workflow.list": ["ship workflow list --json"],
-    "live.readiness.run": ["ship live-readiness run --environment staging --json"],
+    "live.readiness.run": [
+        "ship live-readiness run --environment staging --json",
+        "ship live-readiness run --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --host-config fixtures/app-suite/host-inventory.yml --provider-config fixtures/app-suite/integrations.yml --allow-blocked --json",
+    ],
     "observability.plan": ["ship observability plan --app dragon-writer --environment production --json"],
     "observability.status": ["ship observability status --app dragon-writer --environment production --json"],
     "observability.export": ["ship observability export --app dragon-writer --environment production --json"],

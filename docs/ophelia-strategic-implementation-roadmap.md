@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-6 landed plus read-only live readiness lane
+Status: selected next-stage roadmap, Phases 1-6 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -54,6 +54,8 @@ rebuilt:
 - Backup, restore verification, export/import, and restore drill receipts.
 - Read-only host inventory, host readiness, app placement planning, and the
   live readiness aggregate lane.
+- A committed fixture app suite for deterministic multi-app readiness,
+  placement, drift, backup, restore, provider, and secret-provider testing.
 
 ## Implementation Rules
 
@@ -379,6 +381,33 @@ mutation hardening.
 **Boundary:** This lane is for real inspection and gap discovery. Actual live
 provider mutations, migration rehearsals, and production applies remain Phase 9
 hardening work.
+
+## Parallel Lane: Fixture App Suite
+
+**Goal:** Keep live-readiness and production-hardening work testable without
+depending on production data, real provider credentials, or mutable VPS state.
+
+**Work items:**
+
+- Store synthetic micro apps covering static, service, multi-service, tunnel,
+  Postgres, Redis, bind-mounted volumes, and an intentionally incomplete app.
+- Store synthetic runtime metadata, backup manifests, restore-drill receipts,
+  GitHub observations, secret observations, SOPS-shaped key files, host
+  inventory, and provider config.
+- Add `make validate-fixtures` and `make live-readiness-fixtures`.
+- Add `--allow-blocked` to the live-readiness CLI so expected-failure suites can
+  return blocked reports while exiting zero.
+- Add tests for manifest loading, read-only execution, redaction, expected
+  blocked state, placement recommendation coverage, and command catalog
+  discoverability.
+
+**Contract:** Fixture values are fake and must never be production data. The
+fixture live-readiness command is expected to emit a blocked report because
+`fixture-incomplete-app` is deliberately broken.
+
+**Boundary:** The suite is test infrastructure. It does not replace real
+staging/prod live-value runs, live probes, authenticated provider adapters, or
+Phase 9 production hardening drills.
 
 ## Phase 7: Contracted Plugin System
 

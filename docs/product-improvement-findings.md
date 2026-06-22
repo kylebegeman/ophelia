@@ -338,3 +338,12 @@ Fastest visible wins:
 - Run `ship state refresh` and use `ship state summary` for local app
   aggregates.
 - Use `ship workflow pause|resume|cancel` for local workflow control.
+
+## Supporting Test Infrastructure
+
+The committed [Fixture App Suite](fixture-app-suite.md) supports the roadmap by
+providing deterministic multi-app inputs for readiness, live-readiness,
+placement, drift, backup, restore, provider, and secret-provider behavior. It
+does not change the selected product scope, but it lowers implementation risk
+for Phase 7 through Phase 9 by making mixed operational states reproducible
+without production data.

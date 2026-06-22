@@ -33,6 +33,11 @@ def register(subparsers: _SubParsersAction) -> None:
     run_parser.add_argument("--probe-http", action="store_true", help="Opt in to bounded read-only HTTP health probes")
     run_parser.add_argument("--check-docker", action="store_true", help="Opt in to bounded read-only docker status checks")
     run_parser.add_argument("--http-timeout", type=float, default=5.0)
+    run_parser.add_argument(
+        "--allow-blocked",
+        action="store_true",
+        help="Exit zero after printing a blocked report. Useful for fixture suites and expected-failure audits.",
+    )
     run_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     run_parser.set_defaults(handler=run)
 
@@ -68,7 +73,7 @@ def run(args: Namespace) -> int:
                 )
         _print_items("Blockers", report.get("blockers", []))
         _print_items("Warnings", report.get("warnings", []))
-    return 0 if report.get("status") != "blocked" else 1
+    return 0 if report.get("status") != "blocked" or args.allow_blocked else 1
 
 
 def _print_items(label: str, value: object) -> None:
@@ -111,6 +116,7 @@ register_cli_descriptor(
                 "probe_http": {"type": "boolean"},
                 "check_docker": {"type": "boolean"},
                 "http_timeout": {"type": "number"},
+                "allow_blocked": {"type": "boolean"},
                 "json": {"type": "boolean"},
             },
             "required": [],
@@ -118,6 +124,10 @@ register_cli_descriptor(
         },
         output_schema_ref="ophelia.live_readiness_report.v1",
         artifacts=[],
+        examples=[
+            "ship live-readiness run --environment staging --json",
+            "ship live-readiness run --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --host-config fixtures/app-suite/host-inventory.yml --provider-config fixtures/app-suite/integrations.yml --allow-blocked --json",
+        ],
         safety_notes=[
             "Read-only aggregate. Does not call apply/create/rebuild/refresh operations or write artifacts.",
             "HTTP and Docker checks are disabled by default and must be opted in explicitly.",
@@ -125,4 +135,3 @@ register_cli_descriptor(
         ],
     )
 )
-

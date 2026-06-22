@@ -35,6 +35,21 @@ ship live-readiness run \
   --json
 ```
 
+Run against the committed fixture suite:
+
+```bash
+ship live-readiness run \
+  --runtime-root fixtures/app-suite/runtime \
+  --manifests-dir fixtures/app-suite/manifests \
+  --host-config fixtures/app-suite/host-inventory.yml \
+  --provider-config fixtures/app-suite/integrations.yml \
+  --allow-blocked \
+  --json
+```
+
+`--allow-blocked` only changes the process exit code. The JSON report still
+returns `status: "blocked"` when blockers exist.
+
 ## What It Runs
 
 Top-level checks:
@@ -109,3 +124,11 @@ Use this lane now for staging and production inspection:
 
 Use Phase 9 production hardening for actual migration rehearsals, failure drills,
 provider mutation tests, and live production applies.
+
+## Fixture Suite
+
+Use [Fixture App Suite](fixture-app-suite.md) when changing readiness,
+placement, provider, secret, backup, restore, drift, or workflow behavior. It
+contains multiple synthetic app kinds plus a deliberately incomplete app, so it
+can prove the live-readiness lane handles mixed states without production
+runtime data.
