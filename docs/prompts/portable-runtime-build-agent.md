@@ -17,7 +17,7 @@ Read these files first, in this order:
 6. docs/host-contract.md
 7. docs/ophelia-next-architecture.md
 8. docs/portable-app-pack-spec.md
-9. docs/dragon-writer-migration-runbook.md
+9. docs/stateful-app-migration-runbook.md
 
 Core constraints:
 - Do not touch production VPS state.
@@ -40,12 +40,12 @@ Implementation order:
    The plan should inspect runtime files only. It should not run pg_dump yet unless explicitly implemented as a confirmed create command.
 5. Add export receipt types and bundle shape constants matching docs/portable-app-pack-spec.md.
 6. Add import planning from an export bundle or exported metadata. Keep import apply out of scope until plan and validation are solid.
-7. Add docs updates and examples, especially an example Dragon Writer pack shape.
+7. Add docs updates and examples, especially an example Demo Service pack shape.
 
 Suggested first milestone:
 - pack fields parse and round-trip into manifest.lock.json
 - pack validate/explain works for existing examples
-- Dragon Writer example can declare critical data without breaking render/deploy
+- Demo Service example can declare critical data without breaking render/deploy
 - docs-check, compile, and tests pass
 
 Verification commands:
@@ -62,4 +62,3 @@ Definition of done for this agent run:
 - New commands are dry-run/read-only unless a confirmation token is explicitly required.
 - Final response lists changed files, tests run, and any remaining risks.
 ```
-

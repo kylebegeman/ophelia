@@ -52,3 +52,4 @@
 | [0048](0048-public-readme-fixture-first.md) | 2026-06-22 | landed | Public README fixture-first cleanup | open-source, docs, tests |
 | [0049](0049-remove-private-scratchpad-notes.md) | 2026-06-22 | landed | Remove private scratchpad notes | open-source, docs, audit, tests |
 | [0050](0050-public-safe-operator-docs.md) | 2026-06-22 | landed | Public-safe operator docs | open-source, docs |
+| [0051](0051-open-source-launch-prep.md) | 2026-06-22 | landed | Open source launch prep | open-source, docs, ci, manifests, examples, governance |

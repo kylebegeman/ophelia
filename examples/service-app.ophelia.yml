@@ -1,13 +1,13 @@
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer:latest
+image: ghcr.io/example/demo-service:latest
 
 pack:
   portability: critical
-  owner: personal
-  description: Dragon Writer production app
+  owner: platform
+  description: Demo service app with explicit data movement contracts.
   deploy_binding_file: ophelia/deploy.json
 
 host_requirements:
@@ -28,7 +28,7 @@ services:
       path: /health
 
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.com
     service: web
 
 addons:
@@ -38,7 +38,7 @@ addons:
 data:
   postgres:
     mode: shared-postgres-database
-    database: dragon_writer
+    database: demo_service
     export:
       format: custom
       command: pg_dump
@@ -71,6 +71,6 @@ env:
 
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.com/health
   - name: home
-    url: https://dragonwriter.example.net/
+    url: https://demo-service.example.com/

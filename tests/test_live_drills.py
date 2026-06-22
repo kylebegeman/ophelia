@@ -91,6 +91,7 @@ class LiveDrillTests(unittest.TestCase):
 
         self.assertEqual("ok", catalog["status"])
         self.assertIn("local-file-baseline", profile_ids)
+        self.assertIn("demo-service-file-baseline", profile_ids)
         local_profile = next(profile for profile in catalog["profiles"] if profile["id"] == "local-file-baseline")
         self.assertEqual({}, local_profile["expected"])
 

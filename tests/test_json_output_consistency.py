@@ -45,7 +45,7 @@ class JsonOutputConsistencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = str(Path(temp_dir) / "runtime")
             commands = [
-                ["validate", str(REPO / "examples" / "dragonwriter.ophelia.yml"), "--json"],
+                ["validate", str(REPO / "examples" / "service-app.ophelia.yml"), "--json"],
                 ["actions", "--json"],
                 ["commands", "catalog", "--json"],
                 ["receipts", "list", "--json", "--runtime-root", runtime_root],

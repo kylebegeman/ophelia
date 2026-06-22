@@ -27,11 +27,11 @@ Limit to one app:
 
 ```bash
 ship live-readiness run \
-  --app dragon-writer \
+  --app demo-service \
   --environment production \
-  --manifest ./manifests/dragon-writer.ophelia.yml \
+  --manifest ./manifests/demo-service.ophelia.yml \
   --from local \
-  --to ovh-gra \
+  --to target-host \
   --json
 ```
 

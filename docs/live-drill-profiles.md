@@ -91,19 +91,16 @@ expectations.
 
 ## Local Live Profiles
 
-Local profiles are legacy inventory or adoption snapshots, not the core test
-substrate. Use fixture profiles for developing Ophelia behavior. Add real
-product profiles only when a retained product is entering an approved migration
-or deployment phase.
+Local profiles are optional operator snapshots, not the core test substrate.
+Use fixture profiles for developing Ophelia behavior. Add real product profiles
+only when that product is entering an approved migration or deployment phase.
 
 Current local legacy profiles:
 
-- `local-file-baseline`: all repo manifests against `~/ophelia-runtime`, local
-  host inventory, provider observations, and production hardening.
-- `quark-ops-production-file-baseline`: focused production Quark Ops
-  live-readiness run.
-- `quark-ops-staging-file-baseline`: focused staging Quark Ops live-readiness
-  run.
+- `local-file-baseline`: public demo manifests against `~/ophelia-runtime`,
+  local host inventory, provider observations, and production hardening.
+- `demo-service-file-baseline`: focused local baseline for the public demo
+  service manifest.
 
 These profiles intentionally have no expected state yet. Without expectations,
 the drill result propagates child `blocked` or `warning` statuses. Add expected

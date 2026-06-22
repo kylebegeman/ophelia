@@ -103,10 +103,10 @@ class SchemaExportTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(_jsonschema_available(), "jsonschema not installed")
-    def test_dragonwriter_critical_pack_validates(self) -> None:
+    def test_demo_service_critical_pack_validates(self) -> None:
         import jsonschema
 
-        path = str(REPO_ROOT / "examples" / "dragonwriter.ophelia.yml")
+        path = str(REPO_ROOT / "examples" / "service-app.ophelia.yml")
         instance = _load_yaml(path)
         self.assertEqual(instance["pack"]["portability"], "critical")
         jsonschema.validate(instance, manifest_json_schema())

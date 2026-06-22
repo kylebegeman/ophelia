@@ -25,9 +25,9 @@ Example host record:
 ```yaml
 version: 1
 hosts:
-  - id: ovh-gra
-    name: OVH GRA runtime
-    provider: ovh
+  - id: target-host
+    name: Example target runtime
+    provider: example-provider
     region: gra
     arch: amd64
     roles: [runtime]
@@ -50,8 +50,8 @@ hosts:
 
 ```bash
 ship host inventory --json
-ship host readiness ovh-gra --json
-ship app placement dragon-writer --environment production --from local --to ovh-gra --json
+ship host readiness target-host --json
+ship app placement demo-service --environment production --from local --to target-host --json
 ```
 
 `ship app placement` resolves manifests the same way as readiness and export

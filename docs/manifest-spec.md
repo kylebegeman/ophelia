@@ -139,8 +139,8 @@ Use `rewrite_prefix` for host aliases that should map to an upstream subpath.
 
 Example:
 
-- `docs.bagels.top/` -> upstream `/docs`
-- `admin.bagels.top/` -> upstream `/admin`
+- `docs.example.com/` -> upstream `/docs`
+- `admin.example.com/` -> upstream `/admin`
 
 Pair that with exact-path passthrough routes for endpoints that should stay
 unaltered on the alias host.
@@ -202,15 +202,15 @@ edge:
 
 ```yaml
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer:latest
+image: ghcr.io/example/demo-service:latest
 
 pack:
   portability: critical
   owner: personal
-  description: Dragon Writer production app
+  description: Demo service production app
 
 host_requirements:
   arch: amd64
@@ -230,7 +230,7 @@ services:
       path: /health
 
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.com
     service: web
 
 addons:
@@ -240,7 +240,7 @@ addons:
 data:
   postgres:
     mode: shared-postgres-database
-    database: dragon_writer
+    database: demo_service
     export:
       format: custom
       command: pg_dump
@@ -273,38 +273,38 @@ env:
 
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.com/health
   - name: home
-    url: https://dragonwriter.example.net/
+    url: https://demo-service.example.com/
 ```
 
 ## Example: path-routed multi-service app
 
 ```yaml
 version: 1
-app: pokedex
+app: demo-multi-service
 kind: multi-service
 
 services:
   api:
-    image: ghcr.io/example/pokedex-api:latest
+    image: ghcr.io/example/demo-api:latest
     port: 3001
     host_port: 3701
     healthcheck:
       path: /health
   web:
-    image: ghcr.io/example/pokedex-web:latest
+    image: ghcr.io/example/demo-web:latest
     port: 3000
     host_port: 3702
     healthcheck:
       path: /
 
 routes:
-  - domain: pokedex.example.net
+  - domain: demo-multi.example.com
     path_prefix: /api
     strip_prefix: /api
     service: api
-  - domain: pokedex.example.net
+  - domain: demo-multi.example.com
     service: web
 ```
 
@@ -316,26 +316,26 @@ the shared Redis instance and assigns the next free logical Redis database.
 Portable pack and readiness commands are read-only by default:
 
 ```bash
-./cli/ship pack validate examples/dragonwriter.ophelia.yml
-./cli/ship pack explain examples/dragonwriter.ophelia.yml --json
-./cli/ship env diff dragon-writer --environment production --json
-./cli/ship backup status dragon-writer --environment production --json
-./cli/ship app readiness dragon-writer --environment production --json
-./cli/ship app runbook dragon-writer --environment production
-./cli/ship app export plan dragon-writer --environment production --json
-./cli/ship app export create dragon-writer --environment production --confirm <token> --json
-./cli/ship app import plan ./exports/dragon-writer.production.export/manifest.json --json
-./cli/ship app import apply ./exports/dragon-writer.production.export/manifest.json --confirm <token> --json
-./cli/ship app restore-drill plan dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --json
-./cli/ship app restore-drill apply dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --confirm <token> --json
-./cli/ship app cutover plan dragon-writer --from spaceship --to ovh --environment production --json
-./cli/ship app cutover apply dragon-writer --from spaceship --to ovh --environment production --confirm <token> --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
-./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --confirm <token> --json
-./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
-./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
-./cli/ship receipts list --app dragon-writer --json
-./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship pack validate examples/service-app.ophelia.yml
+./cli/ship pack explain examples/service-app.ophelia.yml --json
+./cli/ship env diff demo-service --environment production --json
+./cli/ship backup status demo-service --environment production --json
+./cli/ship app readiness demo-service --environment production --json
+./cli/ship app runbook demo-service --environment production
+./cli/ship app export plan demo-service --environment production --json
+./cli/ship app export create demo-service --environment production --confirm <token> --json
+./cli/ship app import plan ./exports/demo-service.production.export/manifest.json --json
+./cli/ship app import apply ./exports/demo-service.production.export/manifest.json --confirm <token> --json
+./cli/ship app restore-drill plan demo-service --environment production --source ./exports/demo-service.production.export.tar --json
+./cli/ship app restore-drill apply demo-service --environment production --source ./exports/demo-service.production.export.tar --confirm <token> --json
+./cli/ship app cutover plan demo-service --from source-host --to target-host --environment production --json
+./cli/ship app cutover apply demo-service --from source-host --to target-host --environment production --confirm <token> --json
+./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --json
+./cli/ship app traffic apply demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --confirm <token> --json
+./cli/ship app traffic rollback plan demo-service --receipt <traffic-receipt-id> --environment production --json
+./cli/ship app traffic rollback apply demo-service --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship receipts list --app demo-service --json
+./cli/ship pack init --app demo-service --environment production --critical --postgres --uploads --json
 ./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ```
 
@@ -387,7 +387,7 @@ When `prism.admin_domain` is set, Ophelia will synthesize a route for that host 
 
 `verify` entries are HTTP checks that `ship verify` or `ship deploy --apply --verify` can run after deployment.
 Ophelia-owned manifests should include at least one explicit verification check
-so preflight, conflict scanning, rollback reports, and Quark operator views can
+so preflight, conflict scanning, rollback reports, and operator views can
 show concrete post-change checks.
 
 Fields:
@@ -463,33 +463,33 @@ the target container:
   drills.
 
 Named Docker volume ids include the app and environment, for example
-`dragon-writer-production-uploads`, so staging and production apps on the same
+`demo-service-production-uploads`, so staging and production apps on the same
 host do not share data accidentally.
 
-## Example: Prism-backed Quark surface
+## Example: Prism-backed console surface
 
 ```yaml
 version: 1
-app: quark-ops
+app: demo-console
 environment: production
 profile: prism
 kind: service
-image: ghcr.io/example/prism:quark-latest
+image: ghcr.io/example/console-runtime:latest
 
 env_files:
-  - env/quark-ops.shared.env
+  - env/demo-console.shared.env
 
 services:
   web:
     port: 8080
     env:
-      PRISM_CONSOLE_SURFACE: quark
+      PRISM_CONSOLE_SURFACE: console
       PRISM_CONSOLE_ASSET_PATH: /opt/prism/console
     healthcheck:
       path: /health
 
 routes:
-  - domain: ops.example.net
+  - domain: console.example.com
     service: web
 
 addons:
@@ -497,17 +497,17 @@ addons:
   redis: true
 
 prism:
-  admin_domain: ops.example.net
+  admin_domain: console.example.com
   console_asset_path: /opt/prism/console
-  surface: quark
+  surface: console
 
 verify:
   - name: health
-    url: https://ops.example.net/health
+    url: https://console.example.com/health
   - name: landing
-    url: https://ops.example.net/
+    url: https://console.example.com/
   - name: console-fallback
-    url: https://ops.example.net/console
+    url: https://console.example.com/console
 ```
 
 ## Example: static site
@@ -527,25 +527,25 @@ routes:
 
 ```yaml
 version: 1
-app: aspectavy-staging
+app: demo-tunnel
 kind: tunnel
 tunnel_target: host.docker.internal:3401
 
 routes:
-  - domain: staging-app.bagels.top
-  - domain: staging-docs.bagels.top
+  - domain: app.example.com
+  - domain: docs.example.com
     path: /api/openapi.json
-  - domain: staging-docs.bagels.top
+  - domain: docs.example.com
     path: /api/admin-cli.json
-  - domain: staging-docs.bagels.top
+  - domain: docs.example.com
     path: /api/ai/defaults.json
-  - domain: staging-docs.bagels.top
+  - domain: docs.example.com
     path_prefix: /docs
-  - domain: staging-docs.bagels.top
+  - domain: docs.example.com
     rewrite_prefix: /docs
-  - domain: staging-admin.bagels.top
+  - domain: admin.example.com
     path_prefix: /admin
-  - domain: staging-admin.bagels.top
+  - domain: admin.example.com
     rewrite_prefix: /admin
 ```
 
@@ -553,15 +553,15 @@ routes:
 
 ```yaml
 version: 1
-app: pokedex-dev
+app: demo-tunnel
 kind: tunnel
 
 routes:
-  - domain: dev.pokedex.example.net
+  - domain: demo-tunnel.example.com
     path_prefix: /api
     strip_prefix: /api
     upstream: host.docker.internal:3711
-  - domain: dev.pokedex.example.net
+  - domain: demo-tunnel.example.com
     upstream: host.docker.internal:3712
 ```
 
@@ -569,11 +569,11 @@ routes:
 
 ```yaml
 version: 1
-app: bagels-top-www
+app: demo-static-www
 kind: redirect
-redirect_to: https://bagels.top{uri}
+redirect_to: https://demo-static.example.com{uri}
 redirect_status: 308
 
 routes:
-  - domain: www.bagels.top
+  - domain: www.demo-static.example.com
 ```

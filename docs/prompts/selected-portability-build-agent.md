@@ -13,13 +13,17 @@ Important reset:
 This prompt supersedes docs/prompts/portable-runtime-build-agent.md and any earlier broad implementation prompt. Do not blindly continue the previous work plan. Start from the current worktree, audit what has already changed, and reconcile it with the selected scope below. Keep, modify, or replace existing in-progress implementation only when it serves the selected roadmap. Work that does not support the selected scope should be left alone unless it blocks the selected features or the user explicitly asks for cleanup.
 
 Legacy platform note:
-Quark, Prism, and OpenClaw are legacy deployments on current hosts. Lumen replaces them as the long-term product/control plane. Do not design new Ophelia work around preserving Quark, Prism, or OpenClaw as target foundations. Treat their files, containers, and docs as legacy inventory or future decommission targets only. Do not delete or modify them unless the user explicitly approves a cleanup/decommission task.
+Private deployments on current hosts are not the public product model. Do not
+design new Ophelia work around preserving one-off private layouts as target
+foundations. Treat private host files, containers, and docs as legacy inventory
+or future decommission targets only. Do not delete or modify them unless the
+user explicitly approves a cleanup/decommission task.
 
 Read first:
 1. README.md
 2. docs/ophelia-next-architecture.md
 3. docs/portable-app-pack-spec.md
-4. docs/dragon-writer-migration-runbook.md
+4. docs/stateful-app-migration-runbook.md
 5. docs/selected-portability-feature-roadmap.md
 6. docs/manifest-spec.md
 7. docs/preflight-and-safety.md
@@ -75,7 +79,7 @@ Implementation order:
 13. Expose action descriptors for Lumen Ops as stable JSON once commands exist.
 
 Hard safety constraints:
-- Do not SSH into Spaceship, Hostinger, OVH, or any other VPS for mutation.
+- Do not SSH into source-host, target-host, or any other VPS for mutation.
 - Do not delete containers, images, volumes, backups, apps, DNS records, env files, or runtime roots.
 - Do not change production Caddy or DNS.
 - Do not commit secrets.

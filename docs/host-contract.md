@@ -21,7 +21,9 @@ Each app registered on a host should declare:
 - health URLs
 - public Docker network
 
-The Hostinger registry lives at `config/hostinger-app-registry.json`.
+The public example registry lives at `config/app-registry.example.json`.
+Operators can point Ophelia at a private registry with `OPHELIA_APP_REGISTRY`
+or `--registry`.
 
 ## Host Inventory
 
@@ -38,13 +40,10 @@ record shape and scoring behavior.
 
 ## Safety Rules
 
-- Boop entries are protected inventory only.
+- Protected entries are inventory only unless an operator explicitly starts an
+  adoption, migration, or deployment phase.
 - Caddy site files must be backed up before editing or removing them.
 - Caddy config must validate before reload.
-- Apollo staging must be deployed and healthy before old `quark-staging`
-  containers are removed.
-- `/opt/quark` should remain as a timestamped backup until Apollo staging has
-  survived validation.
 - `shared-caddy-1`, `shared-postgres-1`, `shared-redis-1`, and `ophelia-edge`
   are shared runtime foundations and must not be deleted as part of app
   cleanup.
@@ -60,7 +59,7 @@ Use `ophelia` or `ship`; both invoke the same CLI.
 ./cli/ophelia caddy reload
 ./cli/ophelia host inventory --json
 ./cli/ophelia host readiness local --json
-./cli/ophelia app health apollo-staging
-./cli/ophelia app logs apollo-staging
-./cli/ophelia app placement apollo-staging --environment staging --json
+./cli/ophelia app health demo-service
+./cli/ophelia app logs demo-service
+./cli/ophelia app placement demo-service --environment staging --json
 ```

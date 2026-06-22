@@ -21,7 +21,7 @@ class JsonOutputTests(unittest.TestCase):
             env = {**os.environ, "OPHELIA_SKIP_DOCKER_STATUS": "1", "OPHELIA_SKIP_GH_STATUS": "1"}
 
             commands = [
-                ["validate", "examples/dragonwriter.ophelia.yml", "--json"],
+                ["validate", "examples/service-app.ophelia.yml", "--json"],
                 ["render", "examples/portfolio.ophelia.yml", "--output-dir", str(root / "rendered"), "--json"],
                 ["deploy", "examples/portfolio.ophelia.yml", "--runtime-root", str(runtime_root), "--plan", "--json"],
                 ["diff", "examples/portfolio.ophelia.yml", "--runtime-root", str(runtime_root), "--json"],

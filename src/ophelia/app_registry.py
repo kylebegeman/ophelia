@@ -14,7 +14,7 @@ from .config import REPO_ROOT
 from .redaction import redact_url
 
 
-DEFAULT_APP_REGISTRY = REPO_ROOT / "config" / "hostinger-app-registry.json"
+DEFAULT_APP_REGISTRY = REPO_ROOT / "config" / "app-registry.example.json"
 
 
 @dataclass(frozen=True)

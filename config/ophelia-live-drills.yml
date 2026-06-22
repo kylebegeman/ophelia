@@ -1,10 +1,10 @@
 version: 1
-# Local profiles are legacy inventory or adoption snapshots only. Core Ophelia
-# behavior should be developed and tested against fixtures/app-suite first.
+# Local profiles are optional operator snapshots only. Core Ophelia behavior
+# should be developed and tested against fixtures/app-suite first.
 profiles:
   - id: local-file-baseline
     title: Local Runtime File Baseline
-    summary: Read-only baseline over repo manifests, local runtime files, host inventory, provider observations, and hardening.
+    summary: Read-only baseline over public demo manifests, local runtime files, host inventory, provider observations, and hardening.
     runtime_root: ~/ophelia-runtime
     manifests_dir: ../manifests
     ophelia_root: ..
@@ -13,24 +13,13 @@ profiles:
     plugins_dir: ../plugins
     include_hardening: true
 
-  - id: quark-ops-production-file-baseline
-    title: Quark Ops Production File Baseline
-    summary: Focused read-only live-readiness baseline for the production Quark Ops manifest.
+  - id: demo-service-file-baseline
+    title: Demo Service File Baseline
+    summary: Focused read-only live-readiness baseline for the public demo service manifest.
     runtime_root: ~/ophelia-runtime
     manifests_dir: ../manifests
     ophelia_root: ..
     host_config: ophelia-hosts.yml
     provider_config: ophelia-integrations.yml
-    app: quark-ops
-    environment: production
-
-  - id: quark-ops-staging-file-baseline
-    title: Quark Ops Staging File Baseline
-    summary: Focused read-only live-readiness baseline for the staging Quark Ops manifest.
-    runtime_root: ~/ophelia-runtime
-    manifests_dir: ../manifests
-    ophelia_root: ..
-    host_config: ophelia-hosts.yml
-    provider_config: ophelia-integrations.yml
-    app: quark-ops-staging
+    app: demo-service
     environment: staging

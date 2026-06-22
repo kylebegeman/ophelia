@@ -8,18 +8,20 @@ venv:
 	.venv/bin/python -m pip install PyYAML
 
 validate-examples:
-	./cli/ship validate examples/dragonwriter.ophelia.yml
-	./cli/ship validate examples/pokedex.ophelia.yml
+	./cli/ship validate examples/service-app.ophelia.yml
+	./cli/ship validate examples/multi-service-app.ophelia.yml
 	./cli/ship validate examples/portfolio.ophelia.yml
-	./cli/ship validate examples/aspectavy-staging.ophelia.yml
-	./cli/ship validate examples/aspectavy-production-mirror.ophelia.yml
+	./cli/ship validate examples/static-site.ophelia.yml
+	./cli/ship validate examples/redirect-host.ophelia.yml
+	./cli/ship validate examples/tunnel-app.ophelia.yml
 
 render-examples:
-	./cli/ship render examples/dragonwriter.ophelia.yml --output-dir build/dragonwriter
-	./cli/ship render examples/pokedex.ophelia.yml --output-dir build/pokedex
+	./cli/ship render examples/service-app.ophelia.yml --output-dir build/service-app
+	./cli/ship render examples/multi-service-app.ophelia.yml --output-dir build/multi-service-app
 	./cli/ship render examples/portfolio.ophelia.yml --output-dir build/portfolio
-	./cli/ship render examples/aspectavy-staging.ophelia.yml --output-dir build/aspectavy-staging
-	./cli/ship render examples/aspectavy-production-mirror.ophelia.yml --output-dir build/aspectavy-production-mirror
+	./cli/ship render examples/static-site.ophelia.yml --output-dir build/static-site
+	./cli/ship render examples/redirect-host.ophelia.yml --output-dir build/redirect-host
+	./cli/ship render examples/tunnel-app.ophelia.yml --output-dir build/tunnel-app
 
 validate-manifests:
 	for manifest in manifests/*.ophelia.yml; do ./cli/ship validate "$$manifest" || exit 1; done

@@ -14,12 +14,12 @@ class ExplainTests(unittest.TestCase):
     def test_explain_supported_manifest_shapes(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         manifests = [
-            repo / "examples" / "portfolio.ophelia.yml",
-            repo / "examples" / "dragonwriter.ophelia.yml",
-            repo / "examples" / "pokedex.ophelia.yml",
-            repo / "examples" / "aspectavy-staging.ophelia.yml",
-            repo / "manifests" / "bagels-top-www.ophelia.yml",
-            repo / "manifests" / "quark-ops-staging.ophelia.yml",
+            repo / "examples" / "static-site.ophelia.yml",
+            repo / "examples" / "service-app.ophelia.yml",
+            repo / "examples" / "multi-service-app.ophelia.yml",
+            repo / "examples" / "tunnel-app.ophelia.yml",
+            repo / "manifests" / "demo-static-www.ophelia.yml",
+            repo / "manifests" / "demo-service.ophelia.yml",
         ]
 
         for manifest_path in manifests:

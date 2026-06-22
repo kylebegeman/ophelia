@@ -69,11 +69,10 @@ provider state, deployment state, or product-specific runtime evidence.
 
 ## Retained Products
 
-The currently retained product direction is `stillup` and `clearedtorun`.
-Work for those apps should still start from Ophelia's contract and fixture
-coverage. When it is time to deploy or migrate them, add product-specific
-manifests, live profiles, runbooks, and evidence as adoption artifacts, not as
-new core assumptions.
+Retained products should still start from Ophelia's contract and fixture
+coverage. When it is time to deploy or migrate one, add product-specific
+manifests, live profiles, runbooks, and evidence as private adoption artifacts,
+not as new core assumptions in the public repository.
 
 ## Practical Rule
 

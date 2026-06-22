@@ -6,7 +6,8 @@
 - Keep application code in application repos.
 - Make runtime state reproducible from manifests and templates.
 - Avoid VPS drift caused by hand-edited edge config.
-- Make ingress host layout explicit enough to rehearse `bagels.top` before mirroring it onto `aspectavy.com`.
+- Make ingress host layout explicit enough to rehearse public and private
+  routes with fixture manifests before any production cutover.
 
 ## Boundaries
 
@@ -70,7 +71,7 @@ live under `~/ophelia-runtime`.
 ```text
 ~/ophelia-runtime/
   apps/
-    dragon-writer/
+    demo-service/
       compose.yml
       env
       env.example
@@ -78,7 +79,7 @@ live under `~/ophelia-runtime`.
       release.json
       releases/
       caddy/
-        dragon-writer.caddy
+        demo-service.caddy
   caddy/
     env
     global.d/
@@ -88,13 +89,13 @@ live under `~/ophelia-runtime`.
   cache/
 ```
 
-Platform-owned manifests live in `manifests/` and are intended for hosts that
-do not belong to a single app repo yet, such as:
+Platform-owned manifests live in `manifests/`. In the public repository they
+are synthetic demo manifests. Private operators can maintain separate host
+manifests for apps that do not belong to a single app repo yet, such as:
 
-- the `bagels.top` static and redirect hosts
-- AspectAvy production and staging tunnel ingress
-- the static `dev.bagels.top` preview host
-- temporary legacy-ingress bridges like `dev.pokedex.example.net`
+- static and redirect hosts
+- production and staging tunnel ingress
+- temporary ingress bridges during migration
 
 ## Networking
 
@@ -104,7 +105,7 @@ Use two Docker networks:
 - `ophelia-internal`: app to Postgres/Redis traffic
 
 Shared services live in `platform/shared/compose.yml`. Generated app bundles
-join both networks with stable aliases like `dragon-writer-web`.
+join both networks with stable aliases like `demo-service-web`.
 
 The shared Caddy service also maps `host.docker.internal` to Docker's
 host-gateway address so tunnel-style manifests can proxy to host-published
@@ -179,31 +180,17 @@ material:
 Read-only inspection is available through `ship status`, `ship doctor`,
 `ship diff`, `ship drift`, `ship inspect conflicts`, and `ship explain`.
 
-## AspectAvy Domain Layout
+## Example Domain Layout
 
-The bagels.top rehearsal layout is:
+A public-safe rehearsal layout can use:
 
-- `app.bagels.top`
-- `api.bagels.top`
-- `docs.bagels.top`
-- `admin.bagels.top`
-- `dev.bagels.top`
-
-The future mirror is:
-
-- `app.aspectavy.com`
-- `api.aspectavy.com`
-- `docs.aspectavy.com`
-- `admin.aspectavy.com`
-- `dev.aspectavy.com`
-
-Staging follows:
-
-- `staging-app.bagels.top`
-- `staging-api.bagels.top`
-- `staging-docs.bagels.top`
-- `staging-admin.bagels.top`
+- `app.example.com`
+- `api.example.com`
+- `docs.example.com`
+- `admin.example.com`
+- `demo-static.example.com`
+- `demo-service.example.com`
 
 Docs and admin hosts are implemented generically through route-level exact-path
 passthroughs plus host-level `rewrite_prefix` behavior, not through
-AspectAvy-specific Caddy hacks.
+product-specific Caddy hacks.

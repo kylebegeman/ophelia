@@ -18,8 +18,8 @@ lets Ophelia safely operate the app.
 - Every important app can prove restore readiness before migration.
 - Host-specific values are either rendered from a host profile or materialized
   from secret refs.
-- The same pack can target Spaceship, Hostinger, OVH, or a future host when host
-  capabilities match.
+- The same pack can target a source host, a target host, or a future host when
+  host capabilities match.
 
 ## Repository Shape
 
@@ -54,14 +54,14 @@ incrementally.
 
 ```yaml
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
 
 pack:
   portability: critical
   owner: personal
-  description: Dragon Writer production app
+  description: Demo Service production app
   deploy_binding_file: ophelia/deploy.json
 
 host_requirements:
@@ -77,7 +77,7 @@ networking:
 data:
   postgres:
     mode: shared-postgres-database
-    database: dragon_writer
+    database: demo_service
     export:
       format: custom
       command: pg_dump
@@ -103,9 +103,9 @@ hooks:
 
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.com/health
   - name: home
-    url: https://dragonwriter.example.net/
+    url: https://demo-service.example.com/
     expect_status: 200
 ```
 
@@ -178,7 +178,7 @@ Current shape:
 ```text
 ~/ophelia-runtime/
   apps/
-    dragon-writer/
+    demo-service/
       compose.yml
       env
       manifest.lock.json
@@ -194,7 +194,7 @@ Target-compatible shape:
 ```text
 ~/ophelia-runtime/
   apps/
-    dragon-writer/
+    demo-service/
       production/
         compose.yml
         env
@@ -219,7 +219,7 @@ alias at `apps/<app>` until older commands are migrated.
 An export bundle is an immutable artifact that can be copied to another host.
 
 ```text
-dragon-writer.production.export.<timestamp>.tar.zst
+demo-service.production.export.<timestamp>.tar.zst
   manifest.json
   checksums.sha256
   source-host.json
@@ -231,7 +231,7 @@ dragon-writer.production.export.<timestamp>.tar.zst
     caddy/
   data/
     postgres/
-      dragon_writer.dump
+      demo_service.dump
       metadata.json
     volumes/
       uploads.tar.zst
@@ -252,7 +252,7 @@ default should be secret refs and redacted env shape.
 ```bash
 ./cli/ship pack validate path/to/.ophelia.yml
 ./cli/ship pack explain path/to/.ophelia.yml
-./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship pack init --app demo-service --environment production --critical --postgres --uploads --json
 ./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ./cli/ship pack init --app demo-static --environment staging --directory ../demo-static --include-manifest --kind static --domain demo-static.example.com --json
 ```
@@ -274,12 +274,12 @@ credential URLs are masked while preserving enough command shape for review.
 ### Readiness Commands
 
 ```bash
-./cli/ship env diff dragon-writer --environment production --json
-./cli/ship backup status dragon-writer --environment production --json
+./cli/ship env diff demo-service --environment production --json
+./cli/ship backup status demo-service --environment production --json
 ./cli/ship inspect conflicts --include-runtime --json
-./cli/ship app readiness dragon-writer --environment production --json
-./cli/ship app runbook dragon-writer --environment production
-./cli/ship receipts list --app dragon-writer --json
+./cli/ship app readiness demo-service --environment production --json
+./cli/ship app runbook demo-service --environment production
+./cli/ship receipts list --app demo-service --json
 ```
 
 These commands are read-only. They report redacted env shape, backup freshness,
@@ -322,7 +322,7 @@ runtime env, backup, or restore state, it scores only the manifest-derived
 factors it can assess (pack metadata, explicit data contracts, image digests,
 and whether validation passed); it does not invent the runtime factors.
 
-##### Dragon Writer example (abbreviated)
+##### Demo Service example (abbreviated)
 
 ```json
 {
@@ -336,8 +336,8 @@ and whether validation passed); it does not invent the runtime factors.
       "remediation": {
         "summary": "Plan a restore drill from the latest export bundle, then run it to record a receipt.",
         "commands": [
-          "ship app restore-drill plan dragon-writer --environment production --json",
-          "ship app export plan dragon-writer --environment production --json"
+          "ship app restore-drill plan demo-service --environment production --json",
+          "ship app export plan demo-service --environment production --json"
         ],
         "docs": ["docs/portable-app-pack-spec.md"],
         "requires_human_approval": true
@@ -348,7 +348,7 @@ and whether validation passed); it does not invent the runtime factors.
     {
       "code": "restore_drill_missing",
       "area": "blocker",
-      "command": "ship app restore-drill plan dragon-writer --environment production --json",
+      "command": "ship app restore-drill plan demo-service --environment production --json",
       "summary": "Plan a restore drill from the latest export bundle, then run it to record a receipt."
     }
   ],
@@ -372,8 +372,8 @@ and whether validation passed); it does not invent the runtime factors.
 ### Export Commands
 
 ```bash
-./cli/ship app export plan dragon-writer --environment production
-./cli/ship app export create dragon-writer --environment production --confirm <token>
+./cli/ship app export plan demo-service --environment production
+./cli/ship app export create demo-service --environment production --confirm <token>
 ```
 
 The export plan is implemented and read-only. It reports:
@@ -399,7 +399,7 @@ not run Redis exports, mutate Caddy, run Docker operations, SSH, or change DNS.
 ### Import Commands
 
 ```bash
-./cli/ship app import plan ./exports/dragon-writer.production.export.tar.zst
+./cli/ship app import plan ./exports/demo-service.production.export.tar.zst
 ```
 
 The import plan is implemented and read-only. It accepts an export bundle
@@ -424,8 +424,8 @@ start containers, or change Caddy/DNS.
 ### Restore Drill Commands
 
 ```bash
-./cli/ship app restore-drill plan dragon-writer --environment production
-./cli/ship app restore-drill apply dragon-writer --environment production --confirm <token>
+./cli/ship app restore-drill plan demo-service --environment production
+./cli/ship app restore-drill apply demo-service --environment production --confirm <token>
 ```
 
 A restore drill proves the exported artifacts are usable without damaging the
@@ -435,8 +435,8 @@ a restore-drill receipt. It does not restore over production or start services.
 ### Cutover Commands
 
 ```bash
-./cli/ship app cutover plan dragon-writer --from spaceship --to ovh
-./cli/ship app cutover apply dragon-writer --from spaceship --to ovh --confirm <token>
+./cli/ship app cutover plan demo-service --from source-host --to target-host
+./cli/ship app cutover apply demo-service --from source-host --to target-host --confirm <token>
 ```
 
 Cutover apply should only run after successful import and verification on the
@@ -447,14 +447,14 @@ state.
 ### Traffic Automation Commands
 
 ```bash
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
-./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --confirm <token> --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --json
-./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --confirm <token> --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --dns-provider file --caddy-provider file --provider-config ./traffic-providers.json --execute-provider-mutation --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --dns-provider cloudflare --provider-config ./traffic-providers.json --execute-provider-mutation --json
-./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
-./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --json
+./cli/ship app traffic apply demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --confirm <token> --json
+./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --target-health-url https://demo-service-target.example.net/health --run-target-health --json
+./cli/ship app traffic apply demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --target-health-url https://demo-service-target.example.net/health --run-target-health --confirm <token> --json
+./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --dns-provider file --caddy-provider file --provider-config ./traffic-providers.json --execute-provider-mutation --json
+./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --dns-provider cloudflare --provider-config ./traffic-providers.json --execute-provider-mutation --json
+./cli/ship app traffic rollback plan demo-service --receipt <traffic-receipt-id> --environment production --json
+./cli/ship app traffic rollback apply demo-service --receipt <traffic-receipt-id> --environment production --confirm <token> --json
 ```
 
 Traffic plan is the first production traffic automation contract. It records the
@@ -554,7 +554,7 @@ Caddy file snapshots captured by the apply receipt.
 ### Isolation Commands
 
 ```bash
-./cli/ship app isolation plan dragon-writer --environment production --json
+./cli/ship app isolation plan demo-service --environment production --json
 ```
 
 The isolation plan reports the current shared-network compatibility mode and

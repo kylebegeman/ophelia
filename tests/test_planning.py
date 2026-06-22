@@ -143,7 +143,7 @@ routes:
             [
                 str(repo / "cli" / "ship"),
                 "diff",
-                str(repo / "examples" / "dragonwriter.ophelia.yml"),
+                str(repo / "examples" / "service-app.ophelia.yml"),
                 "--runtime-root",
                 str(Path(tempfile.gettempdir()) / "ophelia-plan-test-runtime"),
                 "--json",
@@ -154,7 +154,7 @@ routes:
         )
 
         payload = json.loads(result.stdout)
-        self.assertEqual("dragon-writer", payload["app"])
+        self.assertEqual("demo-service", payload["app"])
         self.assertIn("changed_files", payload)
 
 

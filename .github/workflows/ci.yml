@@ -29,6 +29,9 @@ jobs:
       - name: Validate platform manifests
         run: make validate-manifests
 
+      - name: Run open-source readiness audit
+        run: make open-source-audit-strict
+
       - name: Render example bundles
         run: make render-examples
 
