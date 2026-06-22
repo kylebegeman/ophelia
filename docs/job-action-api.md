@@ -31,9 +31,11 @@ Quark can call these read-only commands today:
 - `ship app traffic plan <app> --from <source> --to <target> --target-origin <origin> --json`
 - `ship app traffic rollback plan <app> --receipt <traffic-receipt-id> --json`
 - `ship app isolation plan <app> --environment <env> --json`
+- `ship providers github status --json`
 - `ship receipts list --json`
 - `ship receipts show <receipt-id> --json`
 - `ship receipts show latest:<app> --json`
+- `ship secrets providers <manifest-or-app> --environment <env> --json`
 - `ship workflow list --json`
 - `ship workflow plan <template> --app <app> --json`
 - `ship workflow show <workflow-id-or-alias> --json`
@@ -54,6 +56,7 @@ Mutating commands require confirmation tokens from their matching plans:
 - `ship app cutover apply ... --confirm <token>` for cutover checkpoint receipts
 - `ship app traffic apply ... --confirm <token>` for production traffic checkpoint receipts
 - `ship app traffic rollback apply ... --confirm <token>` for file-provider traffic rollback receipts
+- `ship app github apply ... --github-provider auto|gh|github-app --confirm <token>` for provider-aware GitHub provisioning
 - `ship workflow run|resume ... --confirm-node <node-id>=<token>` for confirmation-gated mutating workflow nodes
 
 Isolation apply is not exposed as a standalone mutating action descriptor.
@@ -243,9 +246,7 @@ nodes so `ship state summary --json` can expose workflow counts and status from
 one read model.
 
 Built-in workflow templates are `move-app`, `incident-triage`,
-`release-readiness`, `github-provisioning`, and `restore-rehearsal`. Later
-integration phases will replace remaining local or placeholder provider values
-with authenticated live GitHub, secrets, and production provider reads.
+`release-readiness`, `github-provisioning`, and `restore-rehearsal`.
 
 ## Drift Reports
 
@@ -263,18 +264,20 @@ Each per-app report preserves the existing `rendered`, `release_metadata`,
 - `snapshots`: bounded desired/observed comparisons for rendered runtime files,
   release metadata, env requirements, state index freshness, backup/restore
   evidence, observability schedule artifacts, traffic/provider receipts, and
-  GitHub settings.
+  GitHub desired settings versus local observations.
 - `findings`: severity-sorted entries with `code`, `message`, `severity`,
   `owner`, `path`, `remediation_commands`, and `plan_candidates`.
 - `remediation_commands`: de-duplicated command strings copied from findings.
 - `plan_candidates`: de-duplicated operation suggestions copied from findings.
 
-External GitHub/provider live observations are intentionally represented as
-bounded `not_observed` snapshots until the later GitHub App and provider
-integration phases add authenticated probes. These informational findings do
-not make `drift` true.
+When no local GitHub observation file exists, GitHub settings are represented as
+bounded `not_observed` snapshots and do not make `drift` true. When an
+observation file is present under
+`<runtime_root>/github/observations/<app>.json`, drift can report missing
+branch protection, environments, labels, workflows, required status checks, and
+secret names. These reports still never include secret values.
 
-## Provider And Secret Validation (Phase 3)
+## Provider And Secret Validation
 
 These are read-only validators. They never print secret values and never
 require a confirmation token.
@@ -292,13 +295,33 @@ structured form. It emits
 It reports the resolved provider kinds, mutation/reload gates, and the
 `api_token_env` name only, never the token value.
 
+`ship providers github status --json` emits
+`{"schema_version": 1, "kind": "ophelia.github_provider_status", ...}`. It
+validates the GitHub provider contract from `config/ophelia-integrations.yml`
+or `<runtime_root>/integrations/ophelia-integrations.yml`, reports the selected
+provider (`auto`, `gh`, or `github_app`), checks executable/env-var presence,
+and never reads or emits GitHub App private key values.
+
 `ship secrets audit <manifest-or-app> --environment <env> --json` reports the
 presence of required secrets/env keys. It emits
 `{"schema_version": 1, "kind": "ophelia.secrets_audit", ...}`. The audit lists
 key names plus `present` booleans only. It never reads, echoes, or stores any
 secret value.
 
-## Receipt Timeline And Dry-Run Diffs (Phase 5)
+`ship secrets providers <manifest-or-app> --environment <env> --json` emits
+`{"schema_version": 1, "kind": "ophelia.secret_provider_report", ...}`. It
+combines local runtime env presence, GitHub environment observation files under
+`<runtime_root>/github/secret-observations/`, and SOPS file refs under
+`<runtime_root>/secrets/`. It reports key names, provider locations, presence
+booleans, freshness metadata, and blockers only.
+
+`ship app github plan|apply` accepts `--github-provider auto|gh|github-app` and
+`--provider-config <path>`. `auto` uses the configured provider when usable and
+keeps `gh` as the fallback. The GitHub App path emits typed API operation
+descriptors and shares the same confirmation-token apply semantics as `gh`; a
+live GitHub App runner can plug into that apply contract later.
+
+## Receipt Timeline And Dry-Run Diffs
 
 `ship receipts timeline --json` returns a chronological view of stored receipts
 with optional filters `--app`, `--environment`, `--operation`, `--status`,

@@ -280,7 +280,7 @@ def register(subparsers: _SubParsersAction) -> None:
     github_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     github_plan_parser.set_defaults(handler=run_github_plan)
     github_apply_parser = github_subparsers.add_parser(
-        "apply", help="Apply GitHub provisioning with gh, gated by a confirmation token"
+        "apply", help="Apply GitHub provisioning with the selected provider, gated by a confirmation token"
     )
     _add_github_common_args(github_apply_parser)
     github_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from app github plan")
@@ -307,6 +307,13 @@ def _add_github_common_args(parser) -> None:
         "--environment", choices=["dev", "staging", "production"], default="production"
     )
     parser.add_argument("--repo", help="GitHub repository in OWNER/REPO form; defaults to owner/app")
+    parser.add_argument(
+        "--github-provider",
+        choices=["auto", "gh", "github-app"],
+        default="auto",
+        help="GitHub provider contract to use; auto falls back to gh when GitHub App is unavailable",
+    )
+    parser.add_argument("--provider-config", type=Path, help="Path to ophelia integrations config")
     parser.add_argument(
         "--phase",
         choices=["all", "repo", "environments", "protection"],
@@ -793,6 +800,8 @@ def run_github_plan(args: Namespace) -> int:
         runtime_root=args.runtime_root,
         repo=args.repo,
         phase=args.phase,
+        github_provider=args.github_provider,
+        provider_config=args.provider_config,
     )
     if args.json:
         print(json.dumps(plan, indent=2, sort_keys=True))
@@ -800,11 +809,16 @@ def run_github_plan(args: Namespace) -> int:
         print(plan["summary"])
         print(f"Repo: {plan.get('repo')}")
         print(f"Phase: {plan.get('phase')}")
+        print(f"Provider: {plan.get('github_provider')}")
         _print_string_items("Blockers", plan.get("blockers", []))
         _print_string_items("Warnings", plan.get("warnings", []))
         for command in plan.get("commands", []):
             if isinstance(command, dict):
-                print(f"  - {command.get('id')}: {command.get('gh')}")
+                detail = command.get("gh")
+                if not detail and isinstance(command.get("api"), dict):
+                    api = command["api"]
+                    detail = f"{api.get('method')} {api.get('path')}"
+                print(f"  - {command.get('id')}: {detail}")
         print(f"Confirmation token: {plan.get('confirmation_token')}")
     return 0 if not plan["blockers"] else 1
 
@@ -818,6 +832,8 @@ def run_github_apply(args: Namespace) -> int:
         runtime_root=args.runtime_root,
         repo=args.repo,
         phase=args.phase,
+        github_provider=args.github_provider,
+        provider_config=args.provider_config,
         confirm=args.confirm,
         timeout=args.timeout,
     )
@@ -1006,7 +1022,7 @@ register_cli_descriptor(
     CommandDescriptor(
         command="ship app github plan",
         operation="app.github.provision.plan",
-        summary="Plan GitHub repo, environment, and branch protection provisioning with typed gh commands.",
+        summary="Plan GitHub repo, environment, and branch protection provisioning with a provider contract.",
         risk="medium",
         mutates_state=False,
         requires_confirmation=False,
@@ -1021,6 +1037,8 @@ register_cli_descriptor(
                 "owner": {"type": "string"},
                 "environment": {"enum": ["dev", "staging", "production"]},
                 "repo": {"type": "string"},
+                "github_provider": {"enum": ["auto", "gh", "github-app"]},
+                "provider_config": {"type": "string"},
                 "phase": {"enum": ["all", "repo", "environments", "protection"]},
                 "runtime_root": {"type": "string"},
                 "json": {"type": "boolean"},
@@ -1031,7 +1049,7 @@ register_cli_descriptor(
         output_schema_ref="ophelia.github_provision_plan.v1",
         artifacts=[],
         safety_notes=[
-            "Read-only. Builds exact argv arrays for gh; does not call GitHub.",
+            "Read-only. Builds typed gh argv arrays or GitHub App API operations; does not call GitHub.",
             "Branch protection steps require target branches to exist before apply.",
         ],
     )
@@ -1041,7 +1059,7 @@ register_cli_descriptor(
     CommandDescriptor(
         command="ship app github apply",
         operation="app.github.provision.apply",
-        summary="Apply GitHub repo provisioning with gh, gated by a confirmation token and recorded as a receipt.",
+        summary="Apply GitHub repo provisioning with the selected provider, gated by a confirmation token and recorded as a receipt.",
         risk="high",
         mutates_state=True,
         requires_confirmation=True,
@@ -1056,6 +1074,8 @@ register_cli_descriptor(
                 "owner": {"type": "string"},
                 "environment": {"enum": ["dev", "staging", "production"]},
                 "repo": {"type": "string"},
+                "github_provider": {"enum": ["auto", "gh", "github-app"]},
+                "provider_config": {"type": "string"},
                 "phase": {"enum": ["all", "repo", "environments", "protection"]},
                 "confirm": {"type": "string"},
                 "timeout": {"type": "number"},
@@ -1068,8 +1088,8 @@ register_cli_descriptor(
         output_schema_ref=RECEIPT_SCHEMA_REF,
         artifacts=["GitHub provisioning receipt", "app receipt timeline entry"],
         safety_notes=[
-            "Calls gh and mutates GitHub only after a matching confirmation token.",
-            "Commands are argv arrays with optional JSON stdin, never shell strings.",
+            "Mutates GitHub only after a matching confirmation token.",
+            "gh commands are argv arrays; GitHub App operations are typed API descriptors.",
             "Stops on the first failed GitHub command and marks the rest skipped.",
         ],
     )

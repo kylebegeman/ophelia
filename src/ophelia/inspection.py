@@ -235,6 +235,27 @@ def doctor_report(runtime_root: Path, ophelia_root: Path, manifest_dir: Path) ->
             warning=not bool(gh_status["authenticated"]),
         )
 
+    from .github_providers import github_provider_status
+    from .secret_providers import secret_provider_status
+
+    github_provider = github_provider_status(runtime_root=runtime_root, ophelia_root=ophelia_root)
+    _record(
+        checks,
+        "github.providers.config",
+        github_provider.get("status") != "blocked",
+        str(github_provider.get("summary") or "GitHub provider status unavailable"),
+        warning=github_provider.get("status") != "ok",
+    )
+
+    secret_providers = secret_provider_status(runtime_root=runtime_root, ophelia_root=ophelia_root)
+    _record(
+        checks,
+        "secrets.providers.config",
+        secret_providers.get("status") != "blocked",
+        str(secret_providers.get("summary") or "Secret provider status unavailable"),
+        warning=secret_providers.get("status") != "ok",
+    )
+
     provider_status = _provider_config_status(ophelia_root, runtime_root)
     _record(
         checks,
@@ -271,6 +292,8 @@ def doctor_report(runtime_root: Path, ophelia_root: Path, manifest_dir: Path) ->
         "command_catalog": catalog_status,
         "docs": docs_status,
         "github": gh_status,
+        "github_provider": github_provider,
+        "secret_providers": secret_providers,
         "provider_config": provider_status,
         "redaction": redaction_status,
         "docker": docker,

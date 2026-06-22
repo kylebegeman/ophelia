@@ -113,6 +113,9 @@ python3 -m venv .venv
 ./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --confirm <token> --json
 ./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
 ./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship providers github status --json
+./cli/ship secrets providers dragon-writer --environment production --json
+./cli/ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --github-provider auto --json
 ./cli/ship workflow plan move-app --app dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
 ./cli/ship workflow run latest:dragon-writer --preview --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --json
 ./cli/ship workflow run latest:dragon-writer --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --json
@@ -177,7 +180,8 @@ starting SSH and never prints their values.
 2. Phase 2 has landed: workflow run preview plus shared plan/receipt search aliases.
 3. Phase 3 has landed: durable state refresh/summary plus structured drift snapshots, findings, and remediation commands.
 4. Phase 4 has landed: resumable, receipt-backed workflow orchestration with pause/resume/cancel and confirmation-gated mutating nodes.
-5. Execute Phase 5 next: GitHub App and secrets integrations. Later phases continue with multi-host placement, plugin contracts, then the Lumen operator console.
+5. Phase 5 has landed: GitHub App and secret provider contracts, provider-aware GitHub provisioning, local GitHub drift observations, and provider doctor checks.
+6. Execute Phase 6 next: multi-host inventory and placement planning. Later phases continue with plugin contracts, then the Lumen operator console.
 
 ## Deploy Flows
 
@@ -211,6 +215,8 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship receipts list|show` for local operation receipt browsing.
 - `ship state refresh|summary` for the local SQLite state service and app aggregates.
 - `ship workflow list|plan|show|run|pause|resume|cancel` for resumable, receipt-backed workflow orchestration. `run --preview` resolves nodes without executing them; mutating nodes pause until `--confirm-node NODE_ID=TOKEN` is supplied from that node's own plan.
+- `ship providers github status` and `ship secrets providers` for GitHub App/gh and secret-reference provider readiness without reading or printing secret values.
+- `ship app github plan|apply --github-provider auto|gh|github-app` for provider-aware GitHub provisioning; `gh` remains the apply fallback unless a GitHub App runner is configured.
 - `ship pack init` for preview-first app pack scaffolding; pass `--write` before it creates files.
 - `ship deploy --apply --confirm <token>` for confirmed production apply.
 - `ship releases <app>` and `ship release show <app> <release-id>` for release history.

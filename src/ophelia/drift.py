@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .manifest import Manifest, ManifestError, load_manifest
+from .github_providers import github_drift_snapshot
 from .operation_schema import SCHEMA_VERSION
 from .planning import bundle_diff
 from .portability import _backup_records, _restore_drill_receipts, traffic_status
@@ -43,7 +44,7 @@ def manifest_drift(manifest: Manifest, manifest_path: Path, runtime_root: Path) 
     backup_snapshot, backup_findings = _backup_restore_drift(manifest, manifest_path, runtime_root)
     observability_snapshot, observability_findings = _observability_drift(manifest, runtime_root)
     traffic_snapshot, traffic_findings = _traffic_provider_drift(manifest, manifest_path, runtime_root)
-    github_snapshot, github_findings = _github_drift(manifest)
+    github_snapshot, github_findings = _github_drift(manifest, runtime_root)
 
     snapshots.extend(
         [
@@ -577,25 +578,8 @@ def _traffic_provider_drift(
     return snapshot, findings
 
 
-def _github_drift(manifest: Manifest) -> Tuple[Dict[str, object], List[Dict[str, object]]]:
-    finding = _finding(
-        "github_settings_not_observed",
-        "No local GitHub provisioning observation is available for this manifest.",
-        "info",
-        "github",
-        manifest.app,
-        [],
-        [],
-    )
-    snapshot = _snapshot(
-        "github_desired_settings_vs_observed_settings",
-        "not_observed",
-        "github",
-        "GitHub repository settings are not locally observed in this phase.",
-        desired={"app": manifest.app},
-        observed={"available": False},
-    )
-    return snapshot, [finding]
+def _github_drift(manifest: Manifest, runtime_root: Path) -> Tuple[Dict[str, object], List[Dict[str, object]]]:
+    return github_drift_snapshot(manifest, runtime_root)
 
 
 def _snapshot(

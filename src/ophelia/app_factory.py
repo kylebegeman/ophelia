@@ -48,6 +48,7 @@ from .operation_schema import (
     token,
     utc_now,
 )
+from .github_providers import GITHUB_PROVIDERS, github_app_operations, resolve_github_provider
 from .redaction import deep_redact
 
 # ---------------------------------------------------------------------------
@@ -728,18 +729,21 @@ def _github_provisioning_commands(repo: str, branch_policy: Dict[str, Any]) -> L
     commands: List[Dict[str, Any]] = [
         {
             "id": "create_repo",
+            "provider": "gh",
             "description": f"Create the private GitHub repository {repo}.",
             "argv": ["gh", "repo", "create", repo, "--private"],
             "executed": False,
         },
         {
             "id": "create_staging_environment",
+            "provider": "gh",
             "description": "Create the staging deployment environment.",
             "argv": ["gh", "api", "-X", "PUT", f"repos/{repo}/environments/staging"],
             "executed": False,
         },
         {
             "id": "create_production_environment",
+            "provider": "gh",
             "description": "Create the production deployment environment.",
             "argv": ["gh", "api", "-X", "PUT", f"repos/{repo}/environments/production"],
             "executed": False,
@@ -749,6 +753,7 @@ def _github_provisioning_commands(repo: str, branch_policy: Dict[str, Any]) -> L
         commands.append(
             {
                 "id": f"protect_{branch}",
+                "provider": "gh",
                 "description": f"Protect the {branch} branch (reviews + status checks).",
                 "argv": [
                     "gh",
@@ -878,6 +883,8 @@ def _canonical_github_apply_input(
     repo: str,
     phase: str,
     runtime_root: Path,
+    github_provider: str,
+    provider_config: Optional[Path],
 ) -> Dict[str, Any]:
     return {
         "app": app,
@@ -886,6 +893,8 @@ def _canonical_github_apply_input(
         "environment": environment,
         "repo": repo,
         "phase": phase,
+        "github_provider": github_provider,
+        "provider_config": str(provider_config) if provider_config is not None else None,
         "runtime_root": str(Path(runtime_root).expanduser()),
     }
 
@@ -898,6 +907,8 @@ def github_provision_plan(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     repo: Optional[str] = None,
     phase: str = "all",
+    github_provider: str = "auto",
+    provider_config: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Plan token-gated GitHub repo/environment/branch protection provisioning."""
     blockers: List[Dict[str, Any]] = []
@@ -910,6 +921,8 @@ def github_provision_plan(
         blockers.append(issue("invalid_environment", "`environment` must be dev, staging, or production."))
     if phase not in {"all", "repo", "environments", "protection"}:
         blockers.append(issue("invalid_github_phase", "`phase` must be all, repo, environments, or protection."))
+    if github_provider not in GITHUB_PROVIDERS:
+        blockers.append(issue("invalid_github_provider", "`github_provider` must be auto, gh, or github-app."))
     if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", app or ""):
         blockers.append(
             issue(
@@ -946,9 +959,31 @@ def github_provision_plan(
     github = _github_settings(app, owner, template_obj)
     github["repo"] = repo_name
     branch_policy = github.get("branch_policy") if isinstance(github.get("branch_policy"), dict) else {}
-    commands = _select_github_phase(_github_provisioning_commands(repo_name, branch_policy), phase)
-    for command in commands:
-        command["gh"] = " ".join(str(token) for token in command["argv"])
+    selected_provider, provider_status = resolve_github_provider(
+        github_provider,
+        runtime_root=runtime_root,
+        config_path=provider_config,
+    )
+    provider_blockers = provider_status.get("blockers") if isinstance(provider_status.get("blockers"), list) else []
+    for provider_blocker in provider_blockers:
+        if isinstance(provider_blocker, dict):
+            warnings.append(
+                issue(
+                    str(provider_blocker.get("code") or "github_provider_not_ready"),
+                    str(provider_blocker.get("message") or "GitHub provider is not ready; apply may block."),
+                    str(provider_blocker.get("path")) if provider_blocker.get("path") else None,
+                )
+            )
+    provider_warnings = provider_status.get("warnings") if isinstance(provider_status.get("warnings"), list) else []
+    warnings.extend(provider_warnings)
+    if selected_provider == "github_app":
+        commands = _select_github_phase(github_app_operations(repo_name, branch_policy), phase)
+    else:
+        commands = _select_github_phase(_github_provisioning_commands(repo_name, branch_policy), phase)
+        for command in commands:
+            command["gh"] = " ".join(str(token) for token in command["argv"])
+    github["provider"] = selected_provider
+    github["provider_status"] = provider_status
 
     if phase in {"all", "protection"}:
         warnings.append(
@@ -958,7 +993,17 @@ def github_provision_plan(
             )
         )
 
-    apply_input = _canonical_github_apply_input(app, template, owner, environment, repo_name, phase, runtime_root)
+    apply_input = _canonical_github_apply_input(
+        app,
+        template,
+        owner,
+        environment,
+        repo_name,
+        phase,
+        runtime_root,
+        selected_provider,
+        provider_config,
+    )
     confirmation_token = token("app.github.provision.apply", apply_input)
     return plan_envelope(
         operation="app.github.provision",
@@ -969,7 +1014,12 @@ def github_provision_plan(
         warnings=warnings,
         checks=[
             {"name": "github_repo_valid", "ok": True, "message": f"Repository target is {repo_name}."},
-            {"name": "commands_typed", "ok": True, "message": "Provisioning uses argv arrays, never shell strings."},
+            {
+                "name": "github_provider_selected",
+                "ok": True,
+                "message": f"Selected GitHub provider is {selected_provider}.",
+            },
+            {"name": "commands_typed", "ok": True, "message": "Provisioning uses typed provider operations, never shell strings."},
         ],
         artifacts=[],
         confirmation_required=True,
@@ -980,6 +1030,8 @@ def github_provision_plan(
         repo=repo_name,
         phase=phase,
         commands=commands,
+        github_provider=selected_provider,
+        provider_status=provider_status,
         github=github,
         required_secrets=list(template_obj.requires_secrets),
     )
@@ -994,6 +1046,8 @@ def github_provision_apply(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     repo: Optional[str] = None,
     phase: str = "all",
+    github_provider: str = "auto",
+    provider_config: Optional[Path] = None,
     timeout: float = 60.0,
     command_runner: Optional[GithubCommandRunner] = None,
 ) -> Dict[str, Any]:
@@ -1007,6 +1061,8 @@ def github_provision_apply(
         runtime_root=runtime_root,
         repo=repo,
         phase=phase,
+        github_provider=github_provider,
+        provider_config=provider_config,
     )
     blockers: List[Dict[str, Any]] = list(plan.get("blockers", [])) if isinstance(plan.get("blockers"), list) else []
     warnings: List[Dict[str, Any]] = list(plan.get("warnings", [])) if isinstance(plan.get("warnings"), list) else []
@@ -1021,8 +1077,16 @@ def github_provision_apply(
         elif confirm != expected:
             blockers.append(issue("confirmation_token_mismatch", "Confirmation token does not match the GitHub provisioning plan input."))
 
-    if command_runner is None and shutil.which("gh") is None:
+    selected_provider = str(plan.get("github_provider") or "gh")
+    if selected_provider == "gh" and command_runner is None and shutil.which("gh") is None:
         blockers.append(issue("github_cli_missing", "`gh` is required for GitHub provisioning apply."))
+    if selected_provider == "github_app" and command_runner is None:
+        blockers.append(
+            issue(
+                "github_app_runner_missing",
+                "GitHub App provider selected, but no live GitHub App runner is configured in this phase.",
+            )
+        )
 
     commands = plan.get("commands") if isinstance(plan.get("commands"), list) else []
     if blockers:
@@ -1035,6 +1099,7 @@ def github_provision_apply(
             plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
             repo=str(plan.get("repo") or repo or ""),
             phase=phase,
+            provider=selected_provider,
             steps=[],
             blockers=blockers,
             warnings=warnings,
@@ -1099,6 +1164,7 @@ def github_provision_apply(
         plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
         repo=str(plan.get("repo") or ""),
         phase=phase,
+        provider=selected_provider,
         steps=steps,
         blockers=blockers,
         warnings=warnings,
@@ -1156,6 +1222,7 @@ def _github_provision_receipt(
     plan_operation_id: Optional[str],
     repo: str,
     phase: str,
+    provider: str,
     steps: List[Dict[str, Any]],
     blockers: List[Dict[str, Any]],
     warnings: List[Dict[str, Any]],
@@ -1185,6 +1252,7 @@ def _github_provision_receipt(
         plan_operation_id=plan_operation_id,
         repo=repo,
         phase=phase,
+        github_provider=provider,
         steps=steps,
         step_counts={"total": len(steps), "succeeded": succeeded, "failed": failed, "skipped": skipped},
         blockers=blockers,

@@ -188,6 +188,13 @@ the ability to react to GitHub events.
 
 **Roadmap phase:** Phase 5
 
+**Implementation status:** Landed in
+[`0023`](changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
+GitHub provisioning now selects a provider contract (`auto`, `gh`, or
+`github-app`), exposes GitHub App configuration readiness without reading key
+values, keeps `gh` as the fallback apply path, and lets local GitHub observation
+files feed drift checks.
+
 ### F-009: Drift Should Become A Product-Level Signal
 
 **Selected item:** Major 4, Drift Detection Engine
@@ -210,8 +217,10 @@ now emits bounded snapshots, severity-sorted findings, owners, remediation
 commands, and plan candidates. Local comparisons cover rendered runtime files,
 release metadata, env shape, state index freshness, backup/restore evidence,
 observability schedule artifacts, and receipt-backed traffic/provider state.
-GitHub and live provider observations are explicit `not_observed` slots until
-the GitHub App and provider integration phases add authenticated probes.
+GitHub observations now support local observation files from Phase 5 provider
+contracts. Missing observation data still remains informational; observed
+GitHub settings can produce drift findings for branch protection, environments,
+labels, workflows, status checks, and secret names.
 
 ### F-010: The State DB Should Become A Durable Query Service
 
@@ -251,6 +260,12 @@ the platform should make that observable without weakening the no-secret-value
 invariant.
 
 **Roadmap phase:** Phase 5
+
+**Implementation status:** Landed in
+[`0023`](changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
+`ship secrets providers` reports key names, provider locations, presence
+booleans, freshness metadata, and blockers across local runtime env, GitHub
+environment observations, and SOPS file refs. It never emits values.
 
 ### F-012: Multi-Host Operations Need Inventory And Placement Intelligence
 
@@ -293,6 +308,8 @@ Highest ROI near-term:
 - F-004 Plan/Receipt Search Aliases
 - F-005 Command Catalog Examples
 - F-009 Drift Detection Engine foundation (landed)
+- F-008 GitHub App provider contracts (landed)
+- F-011 Secret provider contracts (landed)
 
 Most strategic long-term:
 
@@ -300,7 +317,7 @@ Most strategic long-term:
 - F-007 Full Workflow Orchestrator (local orchestrator landed; live
   integrations continue in later phases)
 - F-010 Durable State Service
-- F-009 Drift Detection Engine live provider observations
+- F-009 Drift Detection Engine external provider expansion
 - F-012 Multi-Host Inventory And Placement
 - F-013 Contracted Plugin System
 

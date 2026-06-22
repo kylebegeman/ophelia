@@ -63,6 +63,8 @@ _SURFACES: List[str] = [
     "state_service",
     "policy",
     "workflows",
+    "github_providers",
+    "secret_providers",
 ]
 
 

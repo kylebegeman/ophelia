@@ -9,6 +9,8 @@ from ..command_catalog import (
     CommandDescriptor,
     register_cli_descriptor,
 )
+from ..config import DEFAULT_RUNTIME_ROOT
+from ..github_providers import github_provider_status
 from ..provider_config import explain_provider_config, validate_provider_config
 from ._output import print_error
 
@@ -26,6 +28,14 @@ def register(subparsers: _SubParsersAction) -> None:
     explain.add_argument("--config", help="Path to the provider config JSON")
     explain.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     explain.set_defaults(handler=run_explain)
+
+    github = provider_subparsers.add_parser("github", help="Inspect GitHub provider contracts")
+    github_subparsers = github.add_subparsers(dest="providers_github_command")
+    github_status = github_subparsers.add_parser("status", help="Show GitHub App/gh provider readiness")
+    github_status.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    github_status.add_argument("--config", type=Path, help="Path to ophelia integrations config")
+    github_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    github_status.set_defaults(handler=run_github_status)
 
 
 def run_validate(args: Namespace) -> int:
@@ -50,6 +60,24 @@ def run_explain(args: Namespace) -> int:
     else:
         _print_explanation(report)
     return 0 if report.get("status") != "blocked" and report.get("kind") != "ophelia.error" else 1
+
+
+def run_github_status(args: Namespace) -> int:
+    report = github_provider_status(runtime_root=args.runtime_root, config_path=args.config)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(report.get("summary", "GitHub provider status."))
+        print(f"Status: {report.get('status')}")
+        print(f"Selected provider: {report.get('selected_provider')}")
+        for provider in report.get("providers", []):
+            if isinstance(provider, dict):
+                print(f"  {provider.get('name')}: usable={provider.get('usable')} configured={provider.get('configured')}")
+        for blocker in report.get("blockers", []):
+            print(f"  blocker {blocker.get('code')}: {blocker.get('message')}")
+        for warning in report.get("warnings", []):
+            print(f"  warning {warning.get('code')}: {warning.get('message')}")
+    return 0 if report.get("status") != "blocked" else 1
 
 
 def _require_config(args: Namespace) -> str | None:
@@ -142,5 +170,35 @@ register_cli_descriptor(
         output_schema_ref=REPORT_SCHEMA_REF,
         artifacts=[],
         safety_notes=["Read-only explanation. Reports env-var references by name only; no secret values."],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship providers github status",
+        operation="providers.github.status",
+        summary="Inspect GitHub App and gh provider readiness without mutation.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.github_provider_status",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "runtime_root": {"type": "string"},
+                "config": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref=REPORT_SCHEMA_REF,
+        artifacts=[],
+        safety_notes=[
+            "Read-only. Checks provider config shape, executable presence, and env-var presence booleans only.",
+            "Never reads or emits GitHub App private key values.",
+        ],
     )
 )

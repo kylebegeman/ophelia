@@ -155,7 +155,10 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
     "app.templates.explain": ["ship app templates explain web-postgres --json"],
     "app.create.plan": ["ship app create plan --app demo-app --template static-site --json"],
     "app.create.apply": ["ship app create apply --plan create-plan.json --target-dir ../demo-app --confirm <token>"],
-    "app.github.provision.plan": ["ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --json"],
+    "app.github.provision.plan": [
+        "ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --json",
+        "ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --github-provider github-app --json",
+    ],
     "app.github.provision.apply": ["ship app github apply --app demo-app --template static-site --owner example --repo example/demo-app --confirm <token> --json"],
     "receipts.list": ["ship receipts list --app dragon-writer --json"],
     "receipts.show": ["ship receipts show latest:dragon-writer --json", "ship receipts show <receipt-id-prefix> --json"],
@@ -182,7 +185,9 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
     "observability.schedule.run": ["ship observability schedule run --json"],
     "providers.validate": ["ship providers validate --config ./traffic-providers.json --json"],
     "providers.explain": ["ship providers explain --config ./traffic-providers.json --json"],
+    "providers.github.status": ["ship providers github status --json"],
     "secrets.audit": ["ship secrets audit dragon-writer --environment production --json"],
+    "secrets.providers": ["ship secrets providers dragon-writer --environment production --json"],
     "policy.evaluate": ["ship policy evaluate --operation app.traffic.apply --app dragon-writer --environment production --json"],
 }
 

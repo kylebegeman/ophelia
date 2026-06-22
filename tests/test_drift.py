@@ -85,6 +85,43 @@ class DriftTests(unittest.TestCase):
             self.assertEqual("high", report["severity"])
             self.assertEqual("env_key_missing", report["findings"][0]["code"])
 
+    def test_github_observation_reports_missing_environment_secret_as_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_manifest_with_env())
+            manifest = load_manifest(manifest_path)
+            deploy_bundle(manifest, manifest_path, runtime_root)
+            observations = runtime_root / "github" / "observations"
+            observations.mkdir(parents=True)
+            (observations / "drift-test.json").write_text(
+                """
+{
+  "repo": "example/drift-test",
+  "environments": {
+    "staging": {"secrets": ["OPHELIA_DEPLOY_HOST", "OPHELIA_DEPLOY_PORT", "OPHELIA_DEPLOY_USER", "OPHELIA_DEPLOY_KEY"]},
+    "production": {"secrets": []}
+  },
+  "branch_protection": {
+    "next": {"protected": true, "required_status_checks": ["validate", "tests"]},
+    "master": {"protected": true, "required_status_checks": ["validate", "tests"]}
+  },
+  "labels": ["release:patch", "release:minor", "release:major"],
+  "workflows": [".github/workflows/ophelia-staging.yml", ".github/workflows/ophelia-release.yml"]
+}
+""".strip()
+                + "\n"
+            )
+
+            report = manifest_drift(manifest, manifest_path, runtime_root)
+
+        self.assertTrue(report["drift"])
+        codes = {item["code"] for item in report["findings"]}
+        self.assertIn("github_environment_secret_missing", codes)
+        github_snapshot = next(item for item in report["snapshots"] if item["owner"] == "github")
+        self.assertEqual("drift", github_snapshot["status"])
+
 
 def _manifest() -> str:
     return """

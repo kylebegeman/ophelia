@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-4 landed
+Status: selected next-stage roadmap, Phases 1-5 landed
 
 Date: 2026-06-21
 
@@ -42,6 +42,9 @@ rebuilt:
 - Central redaction and propagated data redaction.
 - Command catalog and Lumen action descriptors.
 - App factory, scaffold apply, and token-gated GitHub provisioning via `gh`.
+- GitHub provider contracts with GitHub App metadata and `gh` fallback.
+- Secret provider reports for runtime env, GitHub environment observations, and
+  SOPS file refs.
 - Workflow graph planning, preview, pause/resume/cancel, and confirmation-gated
   mutating workflow nodes.
 - Receipt timeline and state DB read model.
@@ -204,8 +207,9 @@ product signals.
   - observability schedule status versus current manifest registry
 - Emit drift reports with severity, owner, remediation commands, and plan
   candidates.
-- Record external GitHub/provider live observations as bounded `not_observed`
-  snapshot slots for now; live API probes remain Phase 5/provider work.
+- Record missing external observations as bounded `not_observed` snapshot slots;
+  Phase 5 adds local GitHub observation contracts, and later provider adapters
+  can add authenticated live probes.
 
 **Dependencies:** Digest fields, operation references, state DB read model,
 traffic status, GitHub provisioning contracts, observability schedule runs.
@@ -266,6 +270,8 @@ provider value integration remains in Phase 5 and later provider phases.
 
 ## Phase 5: GitHub App And Secrets Integrations
 
+Status: landed in [`0023`](changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
+
 **Goal:** Move external integrations from local CLI assumptions to first-class,
 redacted provider contracts.
 
@@ -302,6 +308,10 @@ validation, redaction, command catalog examples.
 - Secret reports expose key names, location, presence, freshness, and blockers,
   never values.
 - Provider failures degrade to structured blockers/warnings.
+
+**Boundary:** Phase 5 adds provider contracts, local observation formats, and
+runner hooks. Real production GitHub App HTTP execution and external vault APIs
+can plug into these contracts later without changing the CLI envelope shape.
 
 ## Phase 6: Multi-Host Inventory And Placement
 
