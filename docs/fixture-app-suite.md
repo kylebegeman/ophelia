@@ -46,6 +46,12 @@ Validate all fixture manifests:
 make validate-fixtures
 ```
 
+Validate fixture plugin metadata:
+
+```bash
+make validate-fixture-plugins
+```
+
 Run the live-readiness aggregate against the fixture suite:
 
 ```bash
@@ -92,3 +98,14 @@ A healthy fixture run should produce:
 - Add focused fixture cases when new readiness, placement, provider, backup,
   restore, drift, or workflow behavior needs realistic multi-app coverage.
 
+## Plugin Metadata
+
+The suite includes a metadata-only plugin manifest:
+
+```text
+fixtures/app-suite/plugins/fixture-app-suite/ophelia-plugin.yml
+```
+
+The plugin manifest describes fixture apps, provider observations, secret
+observations, host inventory, and a Lumen surface. It does not execute code or
+register new commands.

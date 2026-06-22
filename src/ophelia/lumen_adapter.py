@@ -37,6 +37,7 @@ from .host_inventory import app_placement_plan, collect_host_inventory
 from .observability import compact_observability_summary, observability_status
 from .operation_schema import SCHEMA_VERSION, issue
 from .operator_reports import manifest_registry
+from .plugin_contracts import plugin_inventory as plugin_catalog
 from .portability import app_readiness_report, backup_status_report, traffic_status
 from .receipt_index import receipt_timeline
 from .redaction import deep_redact
@@ -69,6 +70,7 @@ _SURFACES: List[str] = [
     "host_inventory",
     "placement",
     "live_readiness",
+    "plugins",
 ]
 
 
@@ -90,6 +92,7 @@ def capabilities(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
         },
         "http_endpoints": list(HTTP_ROUTE_PATTERNS),
         "surfaces": list(_SURFACES),
+        "plugins": plugin_catalog(REPO_ROOT / "plugins"),
         "summary": (
             f"Ophelia exposes {len(descriptors)} command(s), "
             f"{len(HTTP_ROUTE_PATTERNS)} read-only HTTP endpoint(s), "

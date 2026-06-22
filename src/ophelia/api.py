@@ -19,6 +19,7 @@ from .lumen_adapter import (
 from .operator_reports import host_inventory, manifest_registry, release_registry
 from .operation_schema import error_envelope
 from .operations import list_operations, run_operation
+from .plugin_contracts import plugin_inventory
 from .schema_export import manifest_json_schema
 from .state_db import SQLITE_AVAILABLE, query_receipts, state_db_path, state_status, state_summary
 from .workflows import list_workflow_templates, show_workflow
@@ -74,6 +75,9 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/operations":
             self._json(list_operations())
+            return
+        if parsed.path == "/plugins":
+            self._json(plugin_inventory(REPO_ROOT / "plugins"))
             return
         if parsed.path == "/workflows":
             self._json(list_workflow_templates())

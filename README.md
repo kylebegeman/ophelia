@@ -32,6 +32,7 @@ logs, and pulled images.
 - [Host Contract](docs/host-contract.md)
 - [Live Readiness Lane](docs/live-readiness-lane.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
+- [Plugin Contracts](docs/plugin-contracts.md)
 - [Migration Plan](docs/migration-plan.md)
 - [Ophelia Next Architecture](docs/ophelia-next-architecture.md)
 - [Portable App Pack Spec](docs/portable-app-pack-spec.md)
@@ -121,6 +122,7 @@ python3 -m venv .venv
 ./cli/ship app placement dragon-writer --environment production --from spaceship --to ovh --json
 ./cli/ship live-readiness run --environment staging --json
 make validate-fixtures
+make validate-fixture-plugins
 make live-readiness-fixtures
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
@@ -193,7 +195,8 @@ starting SSH and never prints their values.
 6. Phase 6 has landed: multi-host inventory, host readiness, and app placement planning.
 7. The read-only live readiness lane is available now for real staging/prod inspection without mutation.
 8. The fixture app suite is available for deterministic multi-app readiness, placement, drift, backup, restore, and provider testing.
-9. Execute Phase 7 next: plugin contracts, followed by the Lumen operator console and production hardening.
+9. Phase 7 has landed: metadata-only plugin contracts, trusted-directory discovery, plugin catalog/validation commands, API/Lumen discovery, and fixture plugin coverage.
+10. Execute Phase 8 next: the Lumen operator console MVP, followed by production hardening.
 
 ## Deploy Flows
 
@@ -227,6 +230,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship host inventory`, `ship host readiness`, and `ship app placement` for read-only host and placement intelligence.
 - `ship live-readiness run` for a read-only aggregate over real runtime/manifests, provider observations, host readiness, placement, observability, secrets, and drift. HTTP and Docker probes are opt-in.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
+- `ship plugins list|catalog|validate` for metadata-only plugin discovery from trusted directories. Plugin descriptors are not executed or injected into the command catalog in this phase.
 - `ship receipts list|show` for local operation receipt browsing.
 - `ship state refresh|summary` for the local SQLite state service and app aggregates.
 - `ship workflow list|plan|show|run|pause|resume|cancel` for resumable, receipt-backed workflow orchestration. `run --preview` resolves nodes without executing them; mutating nodes pause until `--confirm-node NODE_ID=TOKEN` is supplied from that node's own plan.

@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-6 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-7 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -56,6 +56,8 @@ rebuilt:
   live readiness aggregate lane.
 - A committed fixture app suite for deterministic multi-app readiness,
   placement, drift, backup, restore, provider, and secret-provider testing.
+- Metadata-only plugin contracts, trusted-directory discovery, validation, and
+  plugin catalog surfaces.
 
 ## Implementation Rules
 
@@ -411,6 +413,9 @@ Phase 9 production hardening drills.
 
 ## Phase 7: Contracted Plugin System
 
+**Status:** Landed in changelog record
+[`0027`](changelog/0027-phase-7-plugin-contracts.md).
+
 **Goal:** Keep Ophelia extensible without turning core modules into integration
 sprawl.
 
@@ -447,6 +452,10 @@ orchestrator, state service, policy engine.
 - Plugins cannot bypass plan/apply or redaction rules.
 - Built-in templates/providers can be represented through the same contract over
   time.
+
+**Boundary:** Phase 7 is metadata-only. Ophelia validates plugin manifests and
+surfaces capabilities to CLI/API/Lumen, but it does not import, install, execute,
+or sandbox plugin code. Runtime plugin execution remains later hardening work.
 
 ## Phase 8: Lumen Operator Console
 

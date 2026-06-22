@@ -23,6 +23,7 @@ from .notes import register as register_notes
 from .observability import register as register_observability
 from .operations import register as register_operations
 from .pack import register as register_pack
+from .plugins import register as register_plugins
 from .policy import register as register_policy
 from .preflight import register as register_preflight
 from .providers import register as register_providers
@@ -68,6 +69,7 @@ def register_commands(subparsers):
     register_notes(subparsers)
     register_gc(subparsers)
     register_pack(subparsers)
+    register_plugins(subparsers)
     register_policy(subparsers)
     register_env(subparsers)
     register_receipts(subparsers)

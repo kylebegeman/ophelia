@@ -306,6 +306,12 @@ integrations grow without destabilizing core safety contracts.
 
 **Roadmap phase:** Phase 7
 
+**Implementation status:** Landed in
+[`0027`](changelog/0027-phase-7-plugin-contracts.md). Ophelia now supports
+metadata-only plugin manifests, trusted-directory discovery, validation,
+`ship plugins list|catalog|validate`, `/plugins`, Lumen capability exposure,
+and fixture plugin coverage. Runtime plugin execution remains deferred.
+
 ## Prioritization Notes
 
 Highest ROI near-term:
