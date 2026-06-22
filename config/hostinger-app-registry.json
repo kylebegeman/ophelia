@@ -1,0 +1,88 @@
+{
+  "host": {
+    "name": "bagel-hostinger",
+    "ip": "187.127.249.208",
+    "runtime_root": "/home/kyle/ophelia-runtime",
+    "public_docker_network": "ophelia-edge"
+  },
+  "apps": [
+    {
+      "name": "stillup",
+      "environment": "production",
+      "compose_project": "stillup",
+      "root_path": "/home/kyle/ophelia-runtime/apps/stillup",
+      "domains": [
+        "api.stillup.at",
+        "stillup.at",
+        "www.stillup.at",
+        "admin.stillup.at"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/stillup.caddy",
+      "container_names": [
+        "stillup-api-1",
+        "stillup-worker-1",
+        "stillup-web-1"
+      ],
+      "health_urls": [
+        {
+          "name": "api-health",
+          "url": "https://api.stillup.at/healthz"
+        },
+        {
+          "name": "web-login",
+          "url": "https://stillup.at/login"
+        }
+      ],
+      "public_docker_network": "ophelia-edge",
+      "protected": true,
+      "notes": "Surviving production app. Preserve runtime env, shared Postgres database stillup, and release metadata."
+    },
+    {
+      "name": "stillup-staging",
+      "environment": "staging",
+      "compose_project": "stillup-staging",
+      "root_path": "/home/kyle/ophelia-runtime/apps/stillup-staging",
+      "domains": [
+        "api-staging.stillup.at",
+        "staging.stillup.at",
+        "admin-staging.stillup.at"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/stillup-staging.caddy",
+      "container_names": [
+        "stillup-staging-api-1",
+        "stillup-staging-worker-1",
+        "stillup-staging-web-1"
+      ],
+      "health_urls": [
+        {
+          "name": "api-health",
+          "url": "https://api-staging.stillup.at/healthz"
+        },
+        {
+          "name": "web-health",
+          "url": "https://staging.stillup.at/__stillup_deploy_health"
+        }
+      ],
+      "public_docker_network": "ophelia-edge",
+      "protected": true,
+      "notes": "Surviving staging app. Preserve runtime env, shared Postgres database stillup_staging, and release metadata."
+    },
+    {
+      "name": "clearedtorun-staging",
+      "environment": "staging",
+      "compose_project": "clearedtorun-staging",
+      "root_path": "/home/kyle/ophelia-runtime/apps/clearedtorun-staging",
+      "domains": [
+        "staging.clearedtorun.com"
+      ],
+      "caddy_site_file": "/home/kyle/ophelia-runtime/caddy/sites.d/clearedtorun-staging.caddy",
+      "container_names": [
+        "clearedtorun-staging-app-1"
+      ],
+      "health_urls": [],
+      "public_docker_network": "ophelia-edge",
+      "protected": true,
+      "notes": "Cleared To Run staging app deployed through Ophelia v0.2.4 from GHCR. Public route is Cloudflare Access protected; use container health for app health."
+    }
+  ]
+}
