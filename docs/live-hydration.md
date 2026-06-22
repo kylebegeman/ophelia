@@ -222,11 +222,13 @@ into a real runtime root.
 The current file-based Quark staging baseline is expected to be blocked. The
 local runtime root now contains an empty app runtime tree for
 `quark-ops-staging` and a separate template-only hydration review scaffold under
-`~/ophelia-runtime/hydration/quark-ops-staging/staging`, so the report still
-asks for:
+`~/ophelia-runtime/hydration/quark-ops-staging/staging`. It also contains
+non-secret structural runtime env keys and name-only GitHub observations for the
+three verified Prism staging secrets. The report still asks for:
 
-- required env-key presence without values
-- observed required secret names, never secret values
+- database and Redis runtime env values, plus the three Prism secret values,
+  stored only in `~/ophelia-runtime/apps/quark-ops-staging/env`
+- observed database and Redis secret names, never secret values
 - active or latest release metadata
 - explicit host capability inventory
 - drift review after runtime evidence exists
@@ -234,6 +236,8 @@ asks for:
 
 The bounded live snapshot attempt is recorded in
 [`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md).
+The follow-up partial evidence pass is recorded in
+[`quark-ops-staging-live-evidence-pass-2026-06-22.md`](scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md).
 
 ## Safety Contract
 

@@ -81,6 +81,8 @@ rebuilt:
   promotion planning, and probe review without live runtime values.
 - The first bounded Quark staging live snapshot attempt, with a real runtime app
   root, review scaffold, and documented remaining evidence blockers.
+- A follow-up Quark staging evidence pass that writes non-secret structural env
+  keys and name-only GitHub observations for verified Prism staging secrets.
 
 ## Implementation Rules
 
@@ -906,6 +908,46 @@ observation files, or host inventory facts with guessed data. The next step
 requires real operator-provided runtime env values and truthful provider/host
 evidence outside Git.
 
+## Phase 19: Quark Staging Partial Live Evidence
+
+**Status:** Landed in changelog record
+[`0039`](changelog/0039-quark-staging-partial-live-evidence.md).
+
+**Goal:** Move the Quark staging baseline forward using only evidence that can
+be verified without reading or inventing secret values.
+
+**Work items:**
+
+- Read the upstream `bagelworks/prism` Quark image workflow to confirm staging
+  secret-name mappings.
+- Write non-secret structural env keys to
+  `~/ophelia-runtime/apps/quark-ops-staging/env`.
+- Write name-only GitHub secret observations for the three verified Prism
+  staging secrets to
+  `~/ophelia-runtime/github/secret-observations/quark-ops-staging.staging.json`.
+- Rerun hydration, probe gate, and focused live-readiness summaries.
+- Document the commands, runtime evidence written, improved counts, remaining
+  blockers, and safety boundary in
+  [`quark-ops-staging-live-evidence-pass-2026-06-22.md`](scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md).
+
+**Dependencies:** Phase 18 live snapshot attempt and GitHub CLI read access to
+the Prism repository metadata.
+
+**Milestone commit:** `docs: record quark staging partial live evidence`
+
+**Definition of done:**
+
+- Env evidence improves from 0/8 to 3/8 present keys.
+- Secret-provider evidence improves from 0/8 to 6/8 present required names.
+- Probe gate remains `no_go` while hydration remains blocked.
+- No secret values, database/Redis values, release metadata, host facts, probes,
+  provider mutations, deploys, or workflows are fabricated or run.
+
+**Boundary:** Phase 19 does not write secret env values. Database and Redis
+remain blocked until real values and provider observations exist. Release
+metadata and host capability evidence remain blocked until they can be collected
+from truthful live sources.
+
 ## Phase Dependency Graph
 
 ```text
@@ -928,6 +970,7 @@ Phase 0 docs
                               -> Phase 16 live evidence promotion plan
                                 -> Phase 17 reviewed hydration fixture evidence
                                   -> Phase 18 quark staging live snapshot attempt
+                                    -> Phase 19 quark staging partial live evidence
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

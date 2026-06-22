@@ -229,7 +229,8 @@ starting SSH and never prints their values.
 18. Phase 16 has landed: a read-only promotion plan now turns reviewed evidence kits into hashed source and target checklists without copying files.
 19. Phase 17 has landed: a committed reviewed fixture evidence kit now rehearses validation, promotion planning, and probe review without live values.
 20. Phase 18 has landed: the first bounded Quark staging live snapshot attempt created the empty runtime app root, wrote the review scaffold, and recorded the remaining real-evidence blockers.
-21. Next work: provide real runtime env values, provider-observed secret names, release metadata, and truthful host capability evidence before opt-in HTTP/Docker/provider probes.
+21. Phase 19 has landed: the Quark staging runtime env now has non-secret structural keys and name-only GitHub observations for the three verified Prism staging secrets.
+22. Next work: provide database/Redis runtime values and provider observations, release metadata, and truthful host capability evidence before opt-in HTTP/Docker/provider probes.
 
 ## Deploy Flows
 

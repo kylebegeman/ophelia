@@ -409,3 +409,9 @@ is safe to create the empty runtime app root and scaffold review templates, but
 env values, provider-observed secret names, active release metadata, and host
 capability facts still need truthful external sources before any probe or
 promotion step should proceed.
+
+The follow-up Quark staging evidence pass moved the real baseline forward
+without crossing that boundary: non-secret structural env keys and verified
+GitHub secret-name mappings were written to the local runtime, while
+database/Redis values, release metadata, and host facts remain blocked until
+truthful sources are available.
