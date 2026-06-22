@@ -79,11 +79,11 @@ Read these before implementation:
 - [Preflight and Safety](preflight-and-safety.md)
 - [Releases and Rollback](releases-and-rollback.md)
 - [Job / Action API Notes](job-action-api.md)
-- [Lumen VPS Ophelia 2 Handoff](lumen-vps-ophelia-2-handoff.md)
+- [Operator Handoff Note](lumen-vps-ophelia-2-handoff.md)
 - Lumen change-log precedent:
-  `/Users/kyle/Developer/products/lumen/docs/changelog/README.md`
+  `/path/to/lumen/docs/changelog/README.md`
 - Lumen change-log template precedent:
-  `/Users/kyle/Developer/products/lumen/docs/changelog/TEMPLATE.md`
+  `/path/to/lumen/docs/changelog/TEMPLATE.md`
 
 Primary source modules to inspect:
 
@@ -383,7 +383,7 @@ Test expectations:
 Update:
 
 - [Job / Action API Notes](job-action-api.md)
-- [Lumen VPS Ophelia 2 Handoff](lumen-vps-ophelia-2-handoff.md)
+- [Operator Handoff Note](lumen-vps-ophelia-2-handoff.md)
 
 Add a change record.
 

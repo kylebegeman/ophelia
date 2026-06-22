@@ -3,7 +3,7 @@
 Use this prompt for a dedicated implementation agent.
 
 ```text
-You are working in /Users/kyle/Developer/platforms/ophelia.
+You are working in /path/to/ophelia.
 
 Goal:
 Build the next Ophelia portability foundation. Ophelia remains the deploy/runtime substrate for Kyle's VPS platform. Do not rename it. Do not mutate any VPS or delete/clean up any services. The immediate implementation target is to make app movement between hosts a first-class, dry-run-first Ophelia workflow with explicit data contracts, export/import planning, and receipts.

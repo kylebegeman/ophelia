@@ -135,6 +135,10 @@ should be approved before changing active deployment workflows.
 The public README is also fixture-first now, and private scratchpad notes have
 been removed from the public tree. Remaining blockers are no longer from
 first-run setup instructions or temporary working notes.
+Private operational handbooks and handoffs have also been replaced with
+public-safe operator guidance. The remaining blocker set is now concentrated in
+active manifests/config, the private deploy workflow, governance files, and the
+license decision.
 
 ## Prep Phases
 

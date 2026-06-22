@@ -4,7 +4,7 @@ Use this prompt for an implementation agent that should work from the selected
 feature scope.
 
 ```text
-You are working in /Users/kyle/Developer/platforms/ophelia.
+You are working in /path/to/ophelia.
 
 Goal:
 Implement the selected Ophelia portability foundation. Ophelia remains the VPS deploy/runtime substrate. Do not rename it. Do not mutate any VPS or clean up any production services. The selected scope is documented in docs/selected-portability-feature-roadmap.md.

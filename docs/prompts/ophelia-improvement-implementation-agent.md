@@ -4,7 +4,7 @@ Use this prompt for an implementation agent that should build the current
 selected Ophelia product-improvement roadmap.
 
 ```text
-You are working in /Users/kyle/Developer/platforms/ophelia.
+You are working in /path/to/ophelia.
 
 Goal:
 Implement the selected Ophelia strategic roadmap documented in docs/ophelia-strategic-implementation-roadmap.md. Ophelia remains the VPS deploy/runtime substrate. Do not rename it. Do not mutate production VPS state, delete services, change production DNS/Caddy, or print secrets.
