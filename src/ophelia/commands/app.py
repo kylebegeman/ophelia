@@ -4,6 +4,7 @@ import json
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
+from ..adoption import adoption_plan
 from ..app_factory import (
     create_apply,
     create_plan,
@@ -86,6 +87,19 @@ def register(subparsers: _SubParsersAction) -> None:
     runbook.add_argument("--force", action="store_true", help="Overwrite --output if it exists")
     runbook.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     runbook.set_defaults(handler=run_runbook)
+
+    adoption = app_subparsers.add_parser("adoption", help="Plan app adoption into Ophelia")
+    adoption_subparsers = adoption.add_subparsers(dest="app_adoption_command")
+    adoption_plan_parser = adoption_subparsers.add_parser(
+        "plan", help="Plan Ophelia contract adoption without mutation"
+    )
+    adoption_plan_parser.add_argument("app", help="App id")
+    adoption_plan_parser.add_argument("--environment", choices=["dev", "staging", "production"])
+    adoption_plan_parser.add_argument("--repo-path", type=Path, default=Path("."), help="App repository root")
+    adoption_plan_parser.add_argument("--manifest", type=Path, help="Path to the app .ophelia manifest")
+    adoption_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    adoption_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    adoption_plan_parser.set_defaults(handler=run_adoption_plan)
 
     export = app_subparsers.add_parser("export", help="Plan app export bundles")
     export_subparsers = export.add_subparsers(dest="app_export_command")
@@ -425,6 +439,21 @@ def run_runbook(args: Namespace) -> int:
     else:
         print(markdown, end="")
     return 0 if not report["blockers"] else 1
+
+
+def run_adoption_plan(args: Namespace) -> int:
+    plan = adoption_plan(
+        app=args.app,
+        environment=args.environment,
+        repo_path=args.repo_path,
+        manifest_path=args.manifest,
+        runtime_root=args.runtime_root,
+    )
+    if args.json:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    else:
+        _print_adoption_plan(plan)
+    return 0 if not plan.get("blockers") else 1
 
 
 def run_export_plan(args: Namespace) -> int:
@@ -924,6 +953,20 @@ def _print_import_plan(plan: dict) -> None:
     print(f"Future apply token: {plan.get('confirmation_token')}")
 
 
+def _print_adoption_plan(plan: dict) -> None:
+    print(plan["summary"])
+    print(f"Repo: {plan.get('repo_path')}")
+    print(f"Manifest: {plan.get('manifest_path')}")
+    _print_string_items("Blockers", plan.get("blockers", []))
+    _print_string_items("Warnings", plan.get("warnings", []))
+    commands = plan.get("next_commands") if isinstance(plan.get("next_commands"), list) else []
+    if commands:
+        print("Next commands:")
+        for item in commands:
+            if isinstance(item, dict):
+                print(f"  - {item.get('id')}: {item.get('command')}")
+
+
 def _data_dependency_names(value: object) -> list[str]:
     if not isinstance(value, dict):
         return []
@@ -942,6 +985,40 @@ def _print_string_items(label: str, value: object) -> None:
         else:
             print(f"  - {item}")
 
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app adoption plan",
+        operation="app.adoption.plan",
+        summary="Plan an app repo's adoption into the Ophelia contract without mutation or live value collection.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.plan",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "repo_path": {"type": "string"},
+                "manifest": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.plan.v1",
+        artifacts=[],
+        safety_notes=[
+            "Read-only adoption planning. Does not mutate app repos, runtime roots, VPS state, providers, or GitHub.",
+            "Uses Ophelia manifest and pack validation as the contract source of truth.",
+            "Does not collect live env values, secret values, probes, or production evidence.",
+        ],
+    )
+)
 
 register_cli_descriptor(
     CommandDescriptor(

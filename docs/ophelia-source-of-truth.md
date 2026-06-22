@@ -52,6 +52,20 @@ Existing products and old host contents are handled in one of three ways:
 Until one of those phases is approved, active implementation should stay on
 fixtures and source-of-truth contracts.
 
+## Adoption Entry Point
+
+Use [App Adoption Planning](app-adoption.md) when a repo is ready to be shaped
+for Ophelia:
+
+```bash
+./cli/ship app adoption plan demo-app --repo-path ../demo-app --environment staging --json
+```
+
+The adoption plan is read-only. It checks the repo path, `.ophelia.yml`, pack
+validation, and recommended repo-local Ophelia artifacts. It emits the next
+Ophelia commands without collecting live env values, secret values, probes,
+provider state, deployment state, or product-specific runtime evidence.
+
 ## Retained Products
 
 The currently retained product direction is `stillup` and `clearedtorun`.

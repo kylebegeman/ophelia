@@ -34,6 +34,7 @@ logs, and pulled images.
 - [Live Drill Profiles](docs/live-drill-profiles.md)
 - [Live Hydration Reports](docs/live-hydration.md)
 - [Ophelia Source Of Truth](docs/ophelia-source-of-truth.md)
+- [App Adoption Planning](docs/app-adoption.md)
 - [Lumen Operator Console](docs/lumen-operator-console.md)
 - [Production Hardening Report](docs/production-hardening.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
@@ -150,6 +151,7 @@ make production-hardening-fixtures
 ./cli/ship workflow cancel latest:dragon-writer --json
 ./cli/ship receipts list --app dragon-writer --json
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship app adoption plan demo-app --repo-path ../demo-app --environment staging --json
 ./cli/ship inspect conflicts
 ./cli/ship status
 ./cli/ship doctor
@@ -224,7 +226,8 @@ starting SSH and never prints their values.
 20. Phase 18 has landed: the first bounded Quark staging live snapshot attempt created the empty runtime app root, wrote the review scaffold, and recorded the remaining real-evidence blockers.
 21. Phase 19 has landed: the Quark staging runtime env now has non-secret structural keys and name-only GitHub observations for the three verified Prism staging secrets.
 22. Phase 20 has landed: active guidance now treats Ophelia as the source-of-truth contract, uses synthetic fixtures as the development test substrate, and leaves old deployments as legacy inventory until an explicit migration or deployment phase.
-23. Next work: define retained-product adoption artifacts for `stillup` and `clearedtorun` when we are ready to migrate or deploy them through Ophelia.
+23. Phase 21 has landed: app adoption planning now checks future app repos against the Ophelia contract without collecting live values or mutating product code.
+24. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
@@ -247,6 +250,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship pack validate|explain` for portable app pack contracts, data declarations, host requirements, and movement readiness.
 - `ship env diff`, `ship backup status`, and `ship app readiness` for redacted movement readiness checks.
 - `ship app runbook` for generated per-app operator runbooks from the readiness model.
+- `ship app adoption plan` for read-only app repo contract adoption before live hydration, provider setup, or deployment work begins.
 - `ship app export plan` and `ship app import plan` for read-only app movement planning receipts.
 - `ship app export create --confirm <token>` for confirmed metadata/runtime export bundles with redacted env shape, a `.tar` fallback archive, optional `.tar.zst`, and receipts.
 - `ship app import apply --confirm <token>` for isolated rehearsal import previews that do not change active runtime.

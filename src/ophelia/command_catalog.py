@@ -139,6 +139,10 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
     "host.inventory": ["ship host inventory --json"],
     "host.readiness": ["ship host readiness local --json", "ship host readiness --json"],
     "app.readiness": ["ship app readiness dragon-writer --environment production --json"],
+    "app.adoption.plan": [
+        "ship app adoption plan demo-app --repo-path ../demo-app --environment staging --json",
+        "ship app adoption plan fixture-postgres-api --repo-path fixtures/app-suite/apps/postgres-api --manifest ../../manifests/fixture-postgres-api.ophelia.yml --environment staging --json",
+    ],
     "app.placement.plan": ["ship app placement dragon-writer --environment production --from spaceship --to ovh --json"],
     "app.runbook": ["ship app runbook dragon-writer --environment production"],
     "app.export.plan": ["ship app export plan dragon-writer --environment production --json"],

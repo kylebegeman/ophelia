@@ -987,6 +987,49 @@ that old live deployments can drift into architecture if used as test anchors.
 old runtime state. It corrects the active development path. Real retained-app
 deployment work belongs in a later approved phase.
 
+## Phase 21: App Adoption Plan Contract
+
+**Status:** Landed in changelog record
+[`0041`](changelog/0041-app-adoption-plan.md).
+
+**Goal:** Give future apps and explicitly retained products a read-only
+adoption entrypoint that checks repo contract readiness against Ophelia before
+live hydration, provider setup, or deployment work begins.
+
+**Work items:**
+
+- Add `ship app adoption plan`.
+- Add a read-only adoption planner that validates repo existence, manifest
+  parseability, app identity, pack validation, and recommended repo-local
+  Ophelia artifacts.
+- Emit ordered next commands for `pack init`, `pack validate`, `pack explain`,
+  later readiness, and later runbook generation.
+- Add command catalog metadata and examples so agents can discover the command.
+- Document the adoption boundary in [App Adoption Planning](app-adoption.md)
+  and [Ophelia Source Of Truth](ophelia-source-of-truth.md).
+- Cover missing-manifest, valid-repo, CLI JSON, and catalog behavior with
+  focused tests.
+
+**Dependencies:** Phase 20 source-of-truth guidance and the portable app pack
+validation contract.
+
+**Milestone commit:** `feat: add app adoption plan`
+
+**Definition of done:**
+
+- A future app repo can be checked with a single read-only command.
+- Missing or invalid manifests block adoption.
+- Missing repo-local runbook, agent notes, hooks, or checks are warnings with a
+  `pack init` next command.
+- Output is an `ophelia.plan` and explicitly records that live values were not
+  collected.
+- No app repo, runtime root, VPS, provider, GitHub, or product deployment state
+  is mutated.
+
+**Boundary:** Phase 21 does not add live value hydration, production probes,
+provider setup, retained-product manifests, or deployment automation. Those
+remain later explicit migration or deployment phases.
+
 ## Phase Dependency Graph
 
 ```text
@@ -1011,6 +1054,7 @@ Phase 0 docs
                                   -> Phase 18 quark staging live snapshot attempt
                                     -> Phase 19 quark staging partial live evidence
                                       -> Phase 20 source-of-truth fixture-first validation
+                                        -> Phase 21 app adoption plan contract
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their
