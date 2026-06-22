@@ -57,11 +57,11 @@ version: 1
 app: pokedex-dev
 kind: tunnel
 routes:
-  - domain: dev.pokedex.begam.in
+  - domain: dev.pokedex.example.net
     path_prefix: /api
     strip_prefix: /api
     upstream: host.docker.internal:3711
-  - domain: dev.pokedex.begam.in
+  - domain: dev.pokedex.example.net
     upstream: host.docker.internal:3712
 """
         )
@@ -103,7 +103,7 @@ services:
   web:
     port: 3773
 routes:
-  - domain: lumen-staging.begam.in
+  - domain: lumen-staging.example.net
     service: web
 edge:
   tls:
@@ -113,7 +113,7 @@ edge:
 
         rendered = render_caddy(manifest)
 
-        self.assertIn("lumen-staging.begam.in {", rendered)
+        self.assertIn("lumen-staging.example.net {", rendered)
         self.assertIn("    tls internal", rendered)
         self.assertIn("reverse_proxy lumen-staging-web:3773", rendered)
 
@@ -128,7 +128,7 @@ services:
   web:
     port: 3773
 routes:
-  - domain: lumen.begam.in
+  - domain: lumen.example.net
     service: web
 edge:
   tls:

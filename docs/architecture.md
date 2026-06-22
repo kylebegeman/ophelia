@@ -51,13 +51,13 @@ decommission phase moves them onto the current Ophelia contract.
 The canonical workstation checkout is:
 
 ```text
-/Users/kyle/Developer/platforms/ophelia
+/path/to/ophelia
 ```
 
 During migration, an older checkout path may still exist at:
 
 ```text
-/Users/kyle/Developer/projects/web/ophelia
+/path/to/old-ophelia
 ```
 
 That older path is compatibility-only. Commands should be written repo-relative
@@ -94,7 +94,7 @@ do not belong to a single app repo yet, such as:
 - the `bagels.top` static and redirect hosts
 - AspectAvy production and staging tunnel ingress
 - the static `dev.bagels.top` preview host
-- temporary legacy-ingress bridges like `dev.pokedex.begam.in`
+- temporary legacy-ingress bridges like `dev.pokedex.example.net`
 
 ## Networking
 

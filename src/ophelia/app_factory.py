@@ -247,12 +247,12 @@ def templates_explain(name: str) -> Dict[str, Any]:
 
 
 def _domain_for(app: str) -> str:
-    return f"{app}.begam.in"
+    return f"{app}.example.com"
 
 
 def _internal_domain_for(app: str) -> str:
     """Internal-only route domain for services with no public route (e.g. workers)."""
-    return f"{app}-internal.begam.in"
+    return f"{app}-internal.example.com"
 
 
 def _manifest_text(

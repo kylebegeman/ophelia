@@ -20,11 +20,11 @@ services:
       - /etc/caddy/env
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}/caddy/env:/etc/caddy/env:ro
-      - ${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}/caddy/global.d:/etc/caddy/global.d:ro
-      - ${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}/caddy/sites.d:/etc/caddy/sites.d:ro
-      - ${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}:${OPHELIA_RUNTIME_ROOT:-/home/kyle/ophelia-runtime}:ro
-      - /home/kyle/websites:/home/kyle/websites:ro
+      - ${OPHELIA_RUNTIME_ROOT:-/opt/ophelia-runtime}/caddy/env:/etc/caddy/env:ro
+      - ${OPHELIA_RUNTIME_ROOT:-/opt/ophelia-runtime}/caddy/global.d:/etc/caddy/global.d:ro
+      - ${OPHELIA_RUNTIME_ROOT:-/opt/ophelia-runtime}/caddy/sites.d:/etc/caddy/sites.d:ro
+      - ${OPHELIA_RUNTIME_ROOT:-/opt/ophelia-runtime}:${OPHELIA_RUNTIME_ROOT:-/opt/ophelia-runtime}:ro
+      - ${OPHELIA_STATIC_ROOT:-/opt/ophelia-runtime/static}:${OPHELIA_STATIC_ROOT:-/opt/ophelia-runtime/static}:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:

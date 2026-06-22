@@ -379,8 +379,8 @@ class PortabilityTests(unittest.TestCase):
                             "receipt_type": "app.export.plan",
                             "app": "dragon-writer",
                             "environment": "production",
-                            "domains": ["dragonwriter.begam.in"],
-                            "routes": [{"domain": "dragonwriter.begam.in", "service": "web"}],
+                            "domains": ["dragonwriter.example.net"],
+                            "routes": [{"domain": "dragonwriter.example.net", "service": "web"}],
                             "data_dependencies": {
                                 "postgres": {
                                     "mode": "shared-postgres-database",
@@ -398,7 +398,7 @@ class PortabilityTests(unittest.TestCase):
                             "verification_checks": [
                                 {
                                     "name": "health",
-                                    "url": "https://dragonwriter.begam.in/health",
+                                    "url": "https://dragonwriter.example.net/health",
                                     "expect_status": 200,
                                 }
                             ],
@@ -428,8 +428,8 @@ class PortabilityTests(unittest.TestCase):
                             "receipt_type": "app.export.plan",
                             "app": "dragon-writer",
                             "environment": "production",
-                            "domains": ["dragonwriter.begam.in"],
-                            "routes": [{"domain": "dragonwriter.begam.in", "service": "web"}],
+                            "domains": ["dragonwriter.example.net"],
+                            "routes": [{"domain": "dragonwriter.example.net", "service": "web"}],
                             "data_dependencies": {
                                 "postgres": {
                                     "mode": "shared-postgres-database",
@@ -437,7 +437,7 @@ class PortabilityTests(unittest.TestCase):
                                 }
                             },
                             "env_shape": [{"key": "DATABASE_URL", "secret_value_redacted": True}],
-                            "verification_checks": [{"name": "health", "url": "https://dragonwriter.begam.in/health"}],
+                            "verification_checks": [{"name": "health", "url": "https://dragonwriter.example.net/health"}],
                         }
                     )
                     + "\n"
@@ -1712,7 +1712,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.begam.in
+  - domain: dragonwriter.example.net
     service: web
 data:
   postgres:
@@ -1738,7 +1738,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.begam.in/health
+    url: https://dragonwriter.example.net/health
 """.strip() + "\n"
 
 
@@ -1809,7 +1809,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.begam.in
+  - domain: dragonwriter.example.net
     service: web
 data:
   postgres:
@@ -1835,7 +1835,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.begam.in/health
+    url: https://dragonwriter.example.net/health
 """.strip() + "\n"
 
 

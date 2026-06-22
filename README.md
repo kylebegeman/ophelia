@@ -236,7 +236,8 @@ starting SSH and never prints their values.
 26. Phase 24 has landed: `pack init` now writes executable hook/check scripts and adoption planning reports non-executable required scripts as warnings.
 27. Phase 25 has landed: `pack init --include-manifest` now previews or writes valid service/static `.ophelia.yml` bootstraps for app repos.
 28. Phase 26 has landed: `ship open-source audit` now provides a read-only public-release hygiene gate and documents the license/readiness path.
-29. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+29. Phase 27 has landed: public examples, tests, generated domains, and shared Caddy static mount defaults no longer assume private hostnames or one operator path.
+30. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 

@@ -4,24 +4,24 @@ kind: multi-service
 
 services:
   api:
-    image: ghcr.io/mrbagels/pokedex-api:latest
+    image: ghcr.io/example/pokedex-api:latest
     port: 3001
     host_port: 3701
     healthcheck:
       path: /health
   web:
-    image: ghcr.io/mrbagels/pokedex-web:latest
+    image: ghcr.io/example/pokedex-web:latest
     port: 3000
     host_port: 3702
     healthcheck:
       path: /
 
 routes:
-  - domain: pokedex.begam.in
+  - domain: pokedex.example.net
     path_prefix: /api
     strip_prefix: /api
     service: api
-  - domain: pokedex.begam.in
+  - domain: pokedex.example.net
     service: web
 
 addons:

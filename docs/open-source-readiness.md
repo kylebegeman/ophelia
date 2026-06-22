@@ -123,11 +123,15 @@ The first audit intentionally reports blockers instead of editing them:
 - private deployment workflow still tracked
 - tracked scratchpad notes still present
 - private DNS, personal paths, private host/IP references, and old product
-  names still appear in README, docs, examples, manifests, scripts, and command
-  catalog examples
+  names still appear in private operational docs, active manifests, config,
+  README, and command catalog examples
 
 These are cleanup tasks, not architecture blockers. The architecture should move
 forward around fixtures, generic providers, and Ophelia's contract.
+
+The public example/spec/test surface has already been sanitized. Remaining
+blockers are concentrated in private operational inventory and decisions that
+should be approved before changing active deployment workflows.
 
 ## Prep Phases
 
@@ -143,4 +147,3 @@ forward around fixtures, generic providers, and Ophelia's contract.
    discipline, release process, and optional PyPI packaging.
 6. Launch review: audit passes, docs are coherent, private deployment material
    is absent, and the maintainer approves publishing.
-

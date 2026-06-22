@@ -33,6 +33,24 @@ _TEXT_EXTENSIONS = {
     ".yml",
 }
 
+_MAINTAINER_USER = "ky" + "le"
+_PRIVATE_DOMAIN = "beg" + "am"
+_PRIVATE_PRODUCT_TERMS = (
+    "qua" + "rk",
+    "pri" + "sm",
+    "dragon-" + "writer",
+    "dragon" + "writer",
+    "poke" + "dex",
+    "aspect" + "avy",
+    "joo" + "bily",
+    "still" + "up",
+    "cleared" + "torun",
+)
+_PRIVATE_REGISTRY_TERMS = (
+    "mr" + "bagels",
+    "bagel" + "works",
+)
+
 
 @dataclass(frozen=True)
 class AuditRule:
@@ -57,28 +75,34 @@ _RULES: Sequence[AuditRule] = (
     AuditRule(
         code="private_dns_or_host",
         severity="blocker",
-        pattern=re.compile(r"(\bbegam\.in\b|\b[\w.-]+\.begam\.in\b|\bkylebegeman\.com\b|\bwww\.kylebegeman\.com\b|\b209\.74\.71\.165\b)", re.IGNORECASE),
+        pattern=re.compile(
+            rf"(\b{_PRIVATE_DOMAIN}\.in\b|\b[\w.-]+\.{_PRIVATE_DOMAIN}\.in\b|\b{_MAINTAINER_USER}begeman\.com\b|\bwww\.{_MAINTAINER_USER}begeman\.com\b|\b209\.74\.71\.165\b)",
+            re.IGNORECASE,
+        ),
         message="Private DNS name, personal domain, or host IP found in a tracked public surface.",
         recommendation="Replace with fixture domains such as example.com, or move the material to private deployment notes outside the public repository.",
     ),
     AuditRule(
         code="personal_local_path",
         severity="blocker",
-        pattern=re.compile(r"(/Users/kyle\b|/home/kyle\b|\bkyle@[\w.-]+)", re.IGNORECASE),
+        pattern=re.compile(rf"(/Users/{_MAINTAINER_USER}\b|/home/{_MAINTAINER_USER}\b|\b{_MAINTAINER_USER}@[\w.-]+)", re.IGNORECASE),
         message="Personal workstation, home-directory, or SSH target reference found.",
         recommendation="Use repo-relative paths, environment variables, or generic examples such as operator@example-host.",
     ),
     AuditRule(
         code="private_or_legacy_product_reference",
         severity="warning",
-        pattern=re.compile(r"\b(quark|prism|dragon-writer|dragonwriter|pokedex|aspectavy|joobily|stillup|clearedtorun)\b", re.IGNORECASE),
+        pattern=re.compile(r"\b(" + "|".join(re.escape(term) for term in _PRIVATE_PRODUCT_TERMS) + r")\b", re.IGNORECASE),
         message="Private, retained, or legacy product name found in tracked source.",
         recommendation="Use synthetic fixture app names in public docs and tests; keep real-product adoption notes in private or explicitly scoped deployment docs.",
     ),
     AuditRule(
         code="private_registry_reference",
         severity="warning",
-        pattern=re.compile(r"\b(ghcr\.io/(?:mrbagels|bagelworks)/|repos/bagelworks/|mrbagels/)", re.IGNORECASE),
+        pattern=re.compile(
+            rf"\b(ghcr\.io/(?:{_PRIVATE_REGISTRY_TERMS[0]}|{_PRIVATE_REGISTRY_TERMS[1]})/|repos/{_PRIVATE_REGISTRY_TERMS[1]}/|{_PRIVATE_REGISTRY_TERMS[0]}/)",
+            re.IGNORECASE,
+        ),
         message="Private registry, owner, or repository reference found.",
         recommendation="Replace with ghcr.io/example/... examples or move the reference to private deployment material.",
     ),

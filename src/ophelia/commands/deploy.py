@@ -24,7 +24,7 @@ def register(subparsers: _SubParsersAction) -> None:
         default=DEFAULT_RUNTIME_ROOT,
         help="Runtime root to deploy into",
     )
-    parser.add_argument("--host", help="SSH target such as kyle@209.74.71.165")
+    parser.add_argument("--host", help="SSH target such as operator@example-host")
     parser.add_argument("--ssh-port", type=int, default=22022, help="SSH port")
     parser.add_argument(
         "--remote-runtime-root",

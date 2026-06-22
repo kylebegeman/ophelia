@@ -231,11 +231,11 @@ version: 1
 app: pokedex-dev
 kind: tunnel
 routes:
-  - domain: dev.pokedex.begam.in
+  - domain: dev.pokedex.example.net
     path_prefix: /api
     strip_prefix: /api
     upstream: host.docker.internal:3711
-  - domain: dev.pokedex.begam.in
+  - domain: dev.pokedex.example.net
     upstream: host.docker.internal:3712
 """
         loaded = self._load(manifest)
@@ -345,15 +345,15 @@ services:
         target: /opt/quark/console
         read_only: true
 routes:
-  - domain: ops.begam.in
+  - domain: ops.example.net
     service: web
 prism:
-  admin_domain: admin.ops.begam.in
+  admin_domain: admin.ops.example.net
   console_asset_path: /opt/quark/console
   surface: quark
 verify:
   - name: health
-    url: https://ops.begam.in/health
+    url: https://ops.example.net/health
 """.strip()
                 + "\n"
             )
@@ -362,12 +362,12 @@ verify:
 
         self.assertEqual("prism", loaded.profile)
         self.assertEqual(["env/shared.env"], loaded.env_files)
-        self.assertEqual("admin.ops.begam.in", loaded.prism.admin_domain if loaded.prism else None)
+        self.assertEqual("admin.ops.example.net", loaded.prism.admin_domain if loaded.prism else None)
         self.assertEqual("quark", loaded.prism.surface if loaded.prism else None)
         self.assertEqual(1, len(loaded.services["web"].mounts))
         self.assertEqual("/opt/quark/console", loaded.services["web"].mounts[0].target)
         self.assertEqual(1, len(loaded.verify))
-        self.assertEqual("https://ops.begam.in/health", loaded.verify[0].url)
+        self.assertEqual("https://ops.example.net/health", loaded.verify[0].url)
 
     def test_prism_profile_synthesizes_admin_domain_route(self) -> None:
         manifest = """
@@ -380,18 +380,18 @@ services:
   web:
     port: 8080
 routes:
-  - domain: ops.begam.in
+  - domain: ops.example.net
     service: web
 prism:
-  admin_domain: admin.ops.begam.in
+  admin_domain: admin.ops.example.net
   surface: quark
 """
         loaded = self._load(manifest)
 
         caddy = render_caddy(loaded)
 
-        self.assertIn("ops.begam.in {", caddy)
-        self.assertIn("admin.ops.begam.in {", caddy)
+        self.assertIn("ops.example.net {", caddy)
+        self.assertIn("admin.ops.example.net {", caddy)
 
     def test_render_compose_includes_env_file_fragments_and_mounts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -419,10 +419,10 @@ services:
       - source: assets/console
         target: /opt/quark/console
 routes:
-  - domain: ops.begam.in
+  - domain: ops.example.net
     service: web
 prism:
-  admin_domain: ops.begam.in
+  admin_domain: ops.example.net
 """.strip()
                 + "\n"
             )
@@ -456,7 +456,7 @@ services:
         read_only: false
         bind: true
 routes:
-  - domain: dragonwriter.begam.in
+  - domain: dragonwriter.example.net
     service: web
 """.strip()
                 + "\n"
@@ -618,10 +618,10 @@ services:
   web:
     port: 8080
 routes:
-  - domain: ops.begam.in
+  - domain: ops.example.net
     service: web
 prism:
-  admin_domain: ops.begam.in
+  admin_domain: ops.example.net
   surface: quark
 """
         loaded = self._load(manifest)
@@ -630,9 +630,9 @@ prism:
 
         self.assertEqual(
             [
-                "https://ops.begam.in/health",
-                "https://ops.begam.in/",
-                "https://ops.begam.in/console",
+                "https://ops.example.net/health",
+                "https://ops.example.net/",
+                "https://ops.example.net/console",
             ],
             [item.url for item in checks],
         )

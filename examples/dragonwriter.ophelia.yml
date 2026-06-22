@@ -2,7 +2,7 @@ version: 1
 app: dragon-writer
 environment: production
 kind: service
-image: ghcr.io/mrbagels/dragon-writer:latest
+image: ghcr.io/example/dragon-writer:latest
 
 pack:
   portability: critical
@@ -28,7 +28,7 @@ services:
       path: /health
 
 routes:
-  - domain: dragonwriter.begam.in
+  - domain: dragonwriter.example.net
     service: web
 
 addons:
@@ -71,6 +71,6 @@ env:
 
 verify:
   - name: health
-    url: https://dragonwriter.begam.in/health
+    url: https://dragonwriter.example.net/health
   - name: home
-    url: https://dragonwriter.begam.in/
+    url: https://dragonwriter.example.net/

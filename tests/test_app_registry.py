@@ -36,8 +36,8 @@ class AppRegistryTests(unittest.TestCase):
                 json.dumps(
                     {
                         "apps": [
-                            _app("apollo-staging", ["ops-staging.begam.in"], ["apollo-host-staging"]),
-                            _app("duplicate", ["ops-staging.begam.in"], ["other"]),
+                            _app("apollo-staging", ["ops-staging.example.net"], ["apollo-host-staging"]),
+                            _app("duplicate", ["ops-staging.example.net"], ["other"]),
                         ]
                     }
                 )
@@ -47,7 +47,7 @@ class AppRegistryTests(unittest.TestCase):
             conflicts = registry_conflicts(entries)
 
             self.assertEqual(["apollo-staging", "duplicate"], [entry.name for entry in entries])
-            self.assertEqual(["ops-staging.begam.in"], conflicts["domains"])
+            self.assertEqual(["ops-staging.example.net"], conflicts["domains"])
 
     def test_loads_direct_list_registry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -151,7 +151,7 @@ class AppRegistryTests(unittest.TestCase):
                 load_app_registry(registry_path)
 
             app = _app("apollo-staging", [], [])
-            app["domains"] = "ops-staging.begam.in"
+            app["domains"] = "ops-staging.example.net"
             registry_path.write_text(json.dumps({"apps": [app]}))
 
             with self.assertRaisesRegex(ValueError, "domains"):
@@ -191,7 +191,7 @@ def _app(name: str, domains: list[str], containers: list[str]) -> dict:
         "compose_project": name,
         "root_path": f"/opt/{name}",
         "domains": domains,
-        "caddy_site_file": f"/home/kyle/ophelia-runtime/caddy/sites.d/{name}.caddy",
+        "caddy_site_file": f"/opt/ophelia-runtime/caddy/sites.d/{name}.caddy",
         "container_names": containers,
         "health_urls": [],
         "public_docker_network": "ophelia-edge",

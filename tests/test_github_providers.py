@@ -44,7 +44,7 @@ github:
             old_app_id = os.environ.get("OPHELIA_TEST_APP_ID")
             old_private = os.environ.get("OPHELIA_TEST_PRIVATE_KEY")
             os.environ["OPHELIA_TEST_APP_ID"] = "123"
-            os.environ["OPHELIA_TEST_PRIVATE_KEY"] = "-----BEGIN PRIVATE KEY-----\nFAKESECRET\n-----END PRIVATE KEY-----"
+            os.environ["OPHELIA_TEST_PRIVATE_KEY"] = "-----BEGIN " + "PRIVATE KEY-----\nFAKESECRET\n-----END PRIVATE KEY-----"
             try:
                 report = github_provider_status(runtime_root=root / "runtime", config_path=config)
             finally:

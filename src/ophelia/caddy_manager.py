@@ -12,16 +12,18 @@ def validate_caddy(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     ophelia_root: Path = REPO_ROOT,
     timeout: int = 30,
+    static_root: Optional[Path] = None,
 ) -> Dict[str, object]:
     if timeout <= 0:
         return {"returncode": 1, "stdout": "", "stderr": "timeout must be greater than 0", "command": []}
     runtime_root = runtime_root.expanduser()
     ophelia_root = ophelia_root.expanduser()
+    static_root = (static_root or Path(os.environ.get("OPHELIA_STATIC_ROOT", str(runtime_root / "static")))).expanduser()
     caddyfile = ophelia_root / "platform" / "shared" / "caddy" / "Caddyfile"
     env_file = runtime_root / "caddy" / "env"
     global_dir = runtime_root / "caddy" / "global.d"
     sites_dir = runtime_root / "caddy" / "sites.d"
-    setup_error = _ensure_caddy_runtime_paths(env_file, global_dir, sites_dir)
+    setup_error = _ensure_caddy_runtime_paths(env_file, global_dir, sites_dir, static_root)
     if setup_error is not None:
         return {"returncode": 1, "stdout": "", "stderr": setup_error, "command": []}
 
@@ -40,7 +42,7 @@ def validate_caddy(
         "-v",
         f"{runtime_root}:{runtime_root}:ro",
         "-v",
-        "/home/kyle/websites:/home/kyle/websites:ro",
+        f"{static_root}:{static_root}:ro",
         "caddy:2-alpine",
         "caddy",
         "validate",
@@ -100,6 +102,7 @@ def reload_caddy(
 def _run(command: List[str], timeout: int = 30, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, object]:
     env = os.environ.copy()
     env.setdefault("OPHELIA_RUNTIME_ROOT", str(runtime_root))
+    env.setdefault("OPHELIA_STATIC_ROOT", str(runtime_root / "static"))
     try:
         result = subprocess.run(command, text=True, capture_output=True, timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -112,10 +115,11 @@ def _run(command: List[str], timeout: int = 30, runtime_root: Path = DEFAULT_RUN
     }
 
 
-def _ensure_caddy_runtime_paths(env_file: Path, global_dir: Path, sites_dir: Path) -> str | None:
+def _ensure_caddy_runtime_paths(env_file: Path, global_dir: Path, sites_dir: Path, static_root: Path) -> str | None:
     env_file.parent.mkdir(parents=True, exist_ok=True)
     global_dir.mkdir(parents=True, exist_ok=True)
     sites_dir.mkdir(parents=True, exist_ok=True)
+    static_root.mkdir(parents=True, exist_ok=True)
     if env_file.exists() and not env_file.is_file():
         return f"Expected Caddy env path to be a file: {env_file}"
     if not env_file.exists():

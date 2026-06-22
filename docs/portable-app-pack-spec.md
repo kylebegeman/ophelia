@@ -103,9 +103,9 @@ hooks:
 
 verify:
   - name: health
-    url: https://dragonwriter.begam.in/health
+    url: https://dragonwriter.example.net/health
   - name: home
-    url: https://dragonwriter.begam.in/
+    url: https://dragonwriter.example.net/
     expect_status: 200
 ```
 
@@ -513,9 +513,9 @@ directory it writes. Reload requires both `reload: true` and
 {
   "caddy": {
     "provider": "file",
-    "sites_dir": "/home/kyle/ophelia-runtime/caddy/sites.d",
-    "runtime_root": "/home/kyle/ophelia-runtime",
-    "ophelia_root": "/home/kyle/Developer/platforms/ophelia",
+    "sites_dir": "/opt/ophelia-runtime/caddy/sites.d",
+    "runtime_root": "/opt/ophelia-runtime",
+    "ophelia_root": "/path/to/ophelia",
     "allow_mutation": true,
     "validate": true,
     "reload": true,

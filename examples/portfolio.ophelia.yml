@@ -1,8 +1,8 @@
 version: 1
 app: portfolio
 kind: static
-static_root: /home/kyle/ophelia-runtime/static/portfolio
+static_root: /opt/ophelia-runtime/static/portfolio
 
 routes:
-  - domain: kylebegeman.com
-  - domain: www.kylebegeman.com
+  - domain: portfolio.example.net
+  - domain: www.portfolio.example.net

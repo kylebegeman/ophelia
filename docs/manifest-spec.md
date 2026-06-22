@@ -205,7 +205,7 @@ version: 1
 app: dragon-writer
 environment: production
 kind: service
-image: ghcr.io/mrbagels/dragon-writer:latest
+image: ghcr.io/example/dragon-writer:latest
 
 pack:
   portability: critical
@@ -230,7 +230,7 @@ services:
       path: /health
 
 routes:
-  - domain: dragonwriter.begam.in
+  - domain: dragonwriter.example.net
     service: web
 
 addons:
@@ -273,9 +273,9 @@ env:
 
 verify:
   - name: health
-    url: https://dragonwriter.begam.in/health
+    url: https://dragonwriter.example.net/health
   - name: home
-    url: https://dragonwriter.begam.in/
+    url: https://dragonwriter.example.net/
 ```
 
 ## Example: path-routed multi-service app
@@ -287,24 +287,24 @@ kind: multi-service
 
 services:
   api:
-    image: ghcr.io/mrbagels/pokedex-api:latest
+    image: ghcr.io/example/pokedex-api:latest
     port: 3001
     host_port: 3701
     healthcheck:
       path: /health
   web:
-    image: ghcr.io/mrbagels/pokedex-web:latest
+    image: ghcr.io/example/pokedex-web:latest
     port: 3000
     host_port: 3702
     healthcheck:
       path: /
 
 routes:
-  - domain: pokedex.begam.in
+  - domain: pokedex.example.net
     path_prefix: /api
     strip_prefix: /api
     service: api
-  - domain: pokedex.begam.in
+  - domain: pokedex.example.net
     service: web
 ```
 
@@ -414,7 +414,7 @@ ready but the HTTP check still fails.
 ```yaml
 verify:
   - name: health
-    url: https://ops.begam.in/health
+    url: https://ops.example.net/health
 verify_policy:
   attempts: 12
   interval: 5
@@ -474,7 +474,7 @@ app: quark-ops
 environment: production
 profile: prism
 kind: service
-image: ghcr.io/bagelworks/prism:quark-latest
+image: ghcr.io/example/prism:quark-latest
 
 env_files:
   - env/quark-ops.shared.env
@@ -489,7 +489,7 @@ services:
       path: /health
 
 routes:
-  - domain: ops.begam.in
+  - domain: ops.example.net
     service: web
 
 addons:
@@ -497,17 +497,17 @@ addons:
   redis: true
 
 prism:
-  admin_domain: ops.begam.in
+  admin_domain: ops.example.net
   console_asset_path: /opt/prism/console
   surface: quark
 
 verify:
   - name: health
-    url: https://ops.begam.in/health
+    url: https://ops.example.net/health
   - name: landing
-    url: https://ops.begam.in/
+    url: https://ops.example.net/
   - name: console-fallback
-    url: https://ops.begam.in/console
+    url: https://ops.example.net/console
 ```
 
 ## Example: static site
@@ -517,10 +517,10 @@ version: 1
 app: portfolio
 environment: production
 kind: static
-static_root: /home/kyle/ophelia-runtime/static/portfolio
+static_root: /opt/ophelia-runtime/static/portfolio
 
 routes:
-  - domain: kylebegeman.com
+  - domain: portfolio.example.net
 ```
 
 ## Example: tunnel
@@ -557,11 +557,11 @@ app: pokedex-dev
 kind: tunnel
 
 routes:
-  - domain: dev.pokedex.begam.in
+  - domain: dev.pokedex.example.net
     path_prefix: /api
     strip_prefix: /api
     upstream: host.docker.internal:3711
-  - domain: dev.pokedex.begam.in
+  - domain: dev.pokedex.example.net
     upstream: host.docker.internal:3712
 ```
 

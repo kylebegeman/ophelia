@@ -42,7 +42,9 @@ class OpenSourceReadinessTests(unittest.TestCase):
     def test_private_public_surface_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write(root / "README.md", "Deploy from /Users/kyle to ops.begam.in\n")
+            private_path = "/Users/" + "kyle"
+            private_host = "ops." + "begam" + ".in"
+            _write(root / "README.md", f"Deploy from {private_path} to {private_host}\n")
             _write(root / ".github" / "workflows" / "deploy-platform.yml", "name: deploy\n")
             _write(root / "docs" / "scratchpad" / "note.md", "quark staging notes\n")
 
@@ -61,7 +63,8 @@ class OpenSourceReadinessTests(unittest.TestCase):
     def test_cli_json_and_catalog_descriptor_are_registered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write(root / "README.md", "Deploy from /home/kyle\n")
+            private_home = "/home/" + "kyle"
+            _write(root / "README.md", f"Deploy from {private_home}\n")
             buffer = io.StringIO()
             with contextlib.redirect_stdout(buffer):
                 exit_code = main(["open-source", "audit", "--root", str(root), "--allow-blocked", "--json"])

@@ -448,7 +448,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.begam.in
+  - domain: dragonwriter.example.net
     service: web
 data:
   postgres:
@@ -467,7 +467,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.begam.in/health
+    url: https://dragonwriter.example.net/health
 """.strip() + "\n"
 
 
