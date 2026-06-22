@@ -45,3 +45,4 @@
 | [0041](0041-app-adoption-plan.md) | 2026-06-22 | landed | App adoption plan | cli, adoption, command-catalog, docs, tests |
 | [0042](0042-adoption-fixture-repos.md) | 2026-06-22 | landed | Adoption fixture repos | fixtures, adoption, tests, docs |
 | [0043](0043-pack-command-metadata-redaction.md) | 2026-06-22 | landed | Pack command metadata redaction | security, redaction, portability, adoption, tests, docs |
+| [0044](0044-pack-scaffold-executable-scripts.md) | 2026-06-22 | landed | Pack scaffold executable scripts | pack, adoption, fixtures, tests, docs |

@@ -1530,13 +1530,22 @@ def pack_init_report(
     written = []
     for path, content in files.items():
         exists = path.exists()
-        planned.append({"path": str(path), "exists": exists, "action": "overwrite" if exists and force else "create" if not exists else "skip"})
+        planned.append(
+            {
+                "path": str(path),
+                "exists": exists,
+                "action": "overwrite" if exists and force else "create" if not exists else "skip",
+                "executable": _pack_init_executable(path),
+            }
+        )
         if write and exists and not force:
             blockers.append(schema_issue("file_exists", f"Refusing to overwrite existing file: {path}", str(path)))
     if write and not blockers:
         for path, content in files.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
+            if _pack_init_executable(path):
+                path.chmod(0o755)
             written.append(str(path))
 
     snippet = _pack_init_manifest_snippet(app, environment, critical, postgres, redis, uploads)
@@ -1555,6 +1564,10 @@ def pack_init_report(
         written_files=written,
         manifest_snippet=snippet,
     )
+
+
+def _pack_init_executable(path: Path) -> bool:
+    return path.suffix == ".sh" and any(part in {"checks", "hooks"} for part in path.parts)
 
 
 def receipt_list_report(

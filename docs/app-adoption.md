@@ -37,12 +37,14 @@ The plan checks:
   - `ophelia/agent.md`
   - `ophelia/checks/data-verify.sh`
   - `ophelia/hooks/pre-export.sh`
-  - `ophelia/hooks/freeze.sh`
-  - `ophelia/hooks/unfreeze.sh`
-  - `ophelia/hooks/post-import.sh`
+- `ophelia/hooks/freeze.sh`
+- `ophelia/hooks/unfreeze.sh`
+- `ophelia/hooks/post-import.sh`
 
 Missing or invalid manifests are blockers. Missing repo-local artifacts are
 warnings because `ship pack init` can scaffold them in a preview-first flow.
+Hook and check scripts are expected to be executable; present but non-executable
+scripts are warnings.
 
 ## What It Emits
 
@@ -60,6 +62,9 @@ The JSON output is an `ophelia.plan` with:
 Embedded pack validation data is redacted before output. Secret-shaped command
 flags, key/value arguments, and credential URLs are masked while preserving
 useful command shape.
+
+Each `required_artifacts[]` entry includes `present`. Hook and check scripts
+also include `required_executable` and `executable`.
 
 The next commands are ordered around the Ophelia contract:
 

@@ -68,6 +68,26 @@ class AdoptionPlanTests(unittest.TestCase):
         self.assertEqual("warning", gate_status["repo_artifacts"])
         self.assertEqual(["ship", "pack", "validate", str(manifest), "--json"], plan["next_commands"][1]["argv"])
 
+    def test_present_non_executable_hook_is_adoption_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "demo-app"
+            repo.mkdir()
+            (repo / ".ophelia.yml").write_text(_manifest("demo-app", "staging"))
+            _write_all_adoption_artifacts(repo, executable=False)
+
+            plan = adoption_plan(
+                "demo-app",
+                "staging",
+                repo_path=repo,
+                runtime_root=Path(temp_dir) / "runtime",
+            )
+
+        warning_codes = {item["code"] for item in plan["warnings"]}
+        self.assertIn("adoption_artifacts_not_executable", warning_codes)
+        self.assertNotIn("adoption_artifacts_missing", warning_codes)
+        gate_status = {item["id"]: item["status"] for item in plan["adoption_gates"]}
+        self.assertEqual("warning", gate_status["repo_artifacts"])
+
     def test_embedded_pack_validation_redacts_command_secret_literals(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir) / "demo-app"
@@ -118,6 +138,23 @@ class AdoptionPlanTests(unittest.TestCase):
 
 def _snapshot(root: Path) -> set[Path]:
     return {path for path in root.rglob("*")}
+
+
+def _write_all_adoption_artifacts(repo: Path, *, executable: bool) -> None:
+    for relative in [
+        "ophelia/runbook.md",
+        "ophelia/agent.md",
+        "ophelia/checks/data-verify.sh",
+        "ophelia/hooks/pre-export.sh",
+        "ophelia/hooks/freeze.sh",
+        "ophelia/hooks/unfreeze.sh",
+        "ophelia/hooks/post-import.sh",
+    ]:
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# fixture\n")
+        if executable and path.suffix == ".sh":
+            path.chmod(0o755)
 
 
 def _manifest(app: str, environment: str) -> str:

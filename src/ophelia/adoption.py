@@ -145,6 +145,11 @@ def adoption_plan(
                 )
 
     missing_artifacts = [item for item in artifacts if item.get("required") and not item.get("present")]
+    non_executable_artifacts = [
+        item
+        for item in artifacts
+        if item.get("required_executable") and item.get("present") and not item.get("executable")
+    ]
     if missing_artifacts:
         warnings.append(
             issue(
@@ -153,11 +158,22 @@ def adoption_plan(
                 str(repo_root / "ophelia"),
             )
         )
+    if non_executable_artifacts:
+        warnings.append(
+            issue(
+                "adoption_artifacts_not_executable",
+                f"{len(non_executable_artifacts)} Ophelia hook/check script(s) are not executable.",
+                str(repo_root / "ophelia"),
+            )
+        )
     checks.append(
         {
             "name": "repo_adoption_artifacts",
-            "ok": not missing_artifacts,
-            "message": f"{len(artifacts) - len(missing_artifacts)}/{len(artifacts)} artifact(s) present.",
+            "ok": not missing_artifacts and not non_executable_artifacts,
+            "message": (
+                f"{len(artifacts) - len(missing_artifacts)}/{len(artifacts)} artifact(s) present; "
+                f"{len(non_executable_artifacts)} script mode warning(s)."
+            ),
         }
     )
 
@@ -167,7 +183,7 @@ def adoption_plan(
         manifest_present=resolved_manifest_path.exists(),
         manifest_valid=manifest is not None,
         pack_ok=bool(pack_validation and pack_validation.get("ok")),
-        artifacts_complete=not missing_artifacts,
+        artifacts_complete=not missing_artifacts and not non_executable_artifacts,
     )
     summary = f"Adoption plan for {app} {resolved_environment}: {len(blockers)} blocker(s), {len(warnings)} warning(s)."
     operation_artifacts = [
@@ -233,6 +249,8 @@ def _repo_artifacts(repo_root: Path, manifest_path: Path) -> List[Dict[str, Any]
     ]
     for relative, kind, description in ADOPTION_ARTIFACTS:
         path = repo_root / relative
+        present = path.exists()
+        required_executable = _artifact_requires_executable(path)
         artifacts.append(
             {
                 "path": str(path),
@@ -240,10 +258,16 @@ def _repo_artifacts(repo_root: Path, manifest_path: Path) -> List[Dict[str, Any]
                 "kind": kind,
                 "description": description,
                 "required": True,
-                "present": path.exists(),
+                "present": present,
+                "required_executable": required_executable,
+                "executable": bool(present and path.stat().st_mode & 0o111) if required_executable else None,
             }
         )
     return artifacts
+
+
+def _artifact_requires_executable(path: Path) -> bool:
+    return path.suffix == ".sh" and any(part in {"checks", "hooks"} for part in path.parts)
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

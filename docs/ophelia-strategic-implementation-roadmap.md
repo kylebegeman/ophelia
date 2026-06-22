@@ -1100,6 +1100,41 @@ surfaces that summarize manifest data-contract command strings.
 **Boundary:** Phase 23 does not forbid free-form data-contract commands or
 execute them. It only changes emitted metadata redaction.
 
+## Phase 24: Pack Scaffold Executable Scripts
+
+**Status:** Landed in changelog record
+[`0044`](changelog/0044-pack-scaffold-executable-scripts.md).
+
+**Goal:** Make generated pack hook/check scaffolds runnable by default and let
+adoption planning catch fixture or app repos where required scripts are present
+but not executable.
+
+**Work items:**
+
+- Mark `.sh` files under generated `ophelia/checks` and `ophelia/hooks`
+  executable when `ship pack init --write` creates them.
+- Add `executable` metadata to `pack init` planned files.
+- Add `required_executable` and `executable` metadata to adoption
+  `required_artifacts`.
+- Warn from adoption planning when present hook/check scripts are not
+  executable.
+- Mark committed adoption fixture scripts executable and add regression tests.
+- Document script mode expectations in [Portable App Pack Spec](portable-app-pack-spec.md)
+  and [App Adoption Planning](app-adoption.md).
+
+**Dependencies:** Phase 21 adoption planning and pack init scaffolding.
+
+**Milestone commit:** `fix: make pack scaffold scripts executable`
+
+**Definition of done:**
+
+- `pack init --write` produces executable hook/check scripts.
+- Adoption fixtures pass the executable-script check.
+- Present but non-executable required scripts are surfaced as adoption warnings.
+
+**Boundary:** Phase 24 does not execute hooks or checks. It only writes and
+validates file mode metadata.
+
 ## Phase Dependency Graph
 
 ```text
@@ -1127,6 +1162,7 @@ Phase 0 docs
                                         -> Phase 21 app adoption plan contract
                                           -> Phase 22 future-app adoption fixture repos
                                             -> Phase 23 pack command metadata redaction
+                                              -> Phase 24 pack scaffold executable scripts
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

@@ -1403,14 +1403,33 @@ routes:
             preview = pack_init_report("dragon-writer", "production", True, True, False, True, root)
             self.assertTrue(preview["dry_run"])
             self.assertFalse((root / "ophelia" / "runbook.md").exists())
+            self.assertTrue(
+                next(item for item in preview["planned_files"] if item["path"].endswith("pre-export.sh"))[
+                    "executable"
+                ]
+            )
 
             existing = root / "ophelia" / "runbook.md"
             existing.parent.mkdir()
             existing.write_text("existing\n")
             blocked = pack_init_report("dragon-writer", "production", True, True, False, True, root, write=True)
+            clean_root = root / "clean"
+            written = pack_init_report(
+                "dragon-writer",
+                "production",
+                True,
+                True,
+                False,
+                True,
+                clean_root,
+                write=True,
+            )
+            script_executable = bool((clean_root / "ophelia" / "hooks" / "pre-export.sh").stat().st_mode & 0o111)
 
-        self.assertTrue(blocked["blockers"])
-        self.assertFalse((root / "ophelia" / "agent.md").exists())
+            self.assertTrue(blocked["blockers"])
+            self.assertFalse((root / "ophelia" / "agent.md").exists())
+            self.assertFalse(written["blockers"])
+            self.assertTrue(script_executable)
 
     def test_pack_and_app_plan_commands_emit_json(self) -> None:
         repo = Path(__file__).resolve().parents[1]

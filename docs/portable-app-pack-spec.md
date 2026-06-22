@@ -256,7 +256,8 @@ default should be secret refs and redacted env shape.
 ```
 
 `pack init` is preview-only unless `--write` is passed. It refuses to overwrite
-existing scaffold files unless `--force` is also passed.
+existing scaffold files unless `--force` is also passed. Generated hook and
+check scripts are written executable.
 
 `pack validate --json` and `pack explain --json` redact data-contract command
 metadata before output. Secret-shaped flags, key/value arguments, and

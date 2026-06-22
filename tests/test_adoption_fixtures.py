@@ -30,6 +30,12 @@ class AdoptionFixtureTests(unittest.TestCase):
                 self.assertEqual([], plan["blockers"])
                 self.assertTrue(plan["pack_validation"]["ok"])
                 self.assertTrue(all(item["present"] for item in plan["required_artifacts"]))
+                self.assertTrue(
+                    all(
+                        not item.get("required_executable") or item.get("executable")
+                        for item in plan["required_artifacts"]
+                    )
+                )
                 gate_status = {item["id"]: item["status"] for item in plan["adoption_gates"]}
                 self.assertEqual("passed", gate_status["manifest_contract"])
                 self.assertEqual("passed", gate_status["repo_artifacts"])
