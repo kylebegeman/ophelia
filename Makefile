@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-reviewed-fixture lumen-console-fixtures production-hardening-fixtures test compile docs-check
+.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-adoption-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-reviewed-fixture lumen-console-fixtures production-hardening-fixtures test compile docs-check
 
 venv:
 	python3 -m venv .venv
@@ -29,6 +29,14 @@ render-manifests:
 
 validate-fixtures:
 	for manifest in fixtures/app-suite/manifests/*.ophelia.yml; do ./cli/ship validate "$$manifest" || exit 1; done
+
+validate-adoption-fixtures:
+	@for repo in fixtures/adoption/*; do \
+		if [ -d "$$repo" ]; then \
+			app=$$(basename "$$repo"); \
+			./cli/ship app adoption plan "$$app" --repo-path "$$repo" --environment staging --json >/dev/null || exit 1; \
+		fi; \
+	done
 
 validate-fixture-plugins:
 	@./cli/ship plugins catalog --plugins-dir fixtures/app-suite/plugins --json >/dev/null

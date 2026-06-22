@@ -73,3 +73,14 @@ configuration. It does not mutate the app repo.
 
 Use it to prove that an app repo is shaped for Ophelia before live hydration,
 provider setup, production probes, or deployment work begins.
+
+## Fixture Repos
+
+Committed future-app adoption fixtures live under `fixtures/adoption/`.
+
+```bash
+make validate-adoption-fixtures
+```
+
+Use these fixtures when changing adoption behavior. They model the intended
+Ophelia-first repo shape, not legacy deployment layouts.

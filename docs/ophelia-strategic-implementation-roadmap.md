@@ -1030,6 +1030,41 @@ validation contract.
 provider setup, retained-product manifests, or deployment automation. Those
 remain later explicit migration or deployment phases.
 
+## Phase 22: Future-App Adoption Fixture Repos
+
+**Status:** Landed in changelog record
+[`0042`](changelog/0042-adoption-fixture-repos.md).
+
+**Goal:** Keep adoption behavior fixture-backed with committed app-repo shapes
+that represent future Ophelia-first products instead of old live deployments.
+
+**Work items:**
+
+- Add `fixtures/adoption/future-service` with a service manifest, explicit
+  Postgres/data contracts, runbook, agent notes, hooks, and data check.
+- Add `fixtures/adoption/future-static` with a static manifest, public asset
+  root, runbook, agent notes, hooks, and data check.
+- Add `make validate-adoption-fixtures`.
+- Add focused tests that run `adoption_plan` over every adoption fixture repo.
+- Document adoption fixtures in README, [App Adoption Planning](app-adoption.md),
+  and [Ophelia Source Of Truth](ophelia-source-of-truth.md).
+
+**Dependencies:** Phase 21 app adoption planner.
+
+**Milestone commit:** `test: add app adoption fixtures`
+
+**Definition of done:**
+
+- Future app repo examples are committed under `fixtures/adoption/`.
+- Adoption fixtures have no blockers and complete required artifacts.
+- The Make target and tests fail if fixture repos drift out of the Ophelia
+  contract.
+- No legacy product layout is used as the adoption model.
+
+**Boundary:** Phase 22 does not create retained-product manifests, collect live
+values, run probes, or deploy the fixture apps. It only adds synthetic repo
+fixtures and validation.
+
 ## Phase Dependency Graph
 
 ```text
@@ -1055,6 +1090,7 @@ Phase 0 docs
                                     -> Phase 19 quark staging partial live evidence
                                       -> Phase 20 source-of-truth fixture-first validation
                                         -> Phase 21 app adoption plan contract
+                                          -> Phase 22 future-app adoption fixture repos
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

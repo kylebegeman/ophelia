@@ -27,6 +27,7 @@ one-off legacy runtime assumptions as core behavior.
 
 Use committed synthetic fixtures for product and contract development:
 
+- `fixtures/adoption/`
 - `fixtures/app-suite/`
 - `fixtures/app-suite/live-drills.yml`
 - `fixtures/app-suite/hydration/fixture-postgres-api/staging/`

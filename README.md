@@ -128,6 +128,7 @@ python3 -m venv .venv
 ./cli/ship app placement dragon-writer --environment production --from spaceship --to ovh --json
 ./cli/ship live-readiness run --environment staging --json
 make validate-fixtures
+make validate-adoption-fixtures
 make validate-fixture-plugins
 make live-readiness-fixtures
 make live-drills-fixtures
@@ -227,7 +228,8 @@ starting SSH and never prints their values.
 21. Phase 19 has landed: the Quark staging runtime env now has non-secret structural keys and name-only GitHub observations for the three verified Prism staging secrets.
 22. Phase 20 has landed: active guidance now treats Ophelia as the source-of-truth contract, uses synthetic fixtures as the development test substrate, and leaves old deployments as legacy inventory until an explicit migration or deployment phase.
 23. Phase 21 has landed: app adoption planning now checks future app repos against the Ophelia contract without collecting live values or mutating product code.
-24. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+24. Phase 22 has landed: committed future-app adoption fixture repos now validate the Ophelia repo contract without using legacy products as examples.
+25. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
@@ -262,6 +264,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship host inventory`, `ship host readiness`, and `ship app placement` for read-only host and placement intelligence.
 - `ship live-readiness run` for a read-only aggregate over real runtime/manifests, provider observations, host readiness, placement, observability, secrets, and drift. HTTP and Docker probes are opt-in.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
+- `make validate-adoption-fixtures` for future-app repo contract fixtures that exercise `ship app adoption plan`.
 - `ship live-drills list|run|run-all` for named read-only drill profiles over live-readiness and optional hardening. `make live-drills-fixtures` runs the committed fixture profiles and validates their expected mixed states.
 - `make live-hydration-reviewed-fixture` for a committed reviewed Postgres evidence kit that validates cleanly and produces a read-only promotion checklist before probe review.
 - `ship live-hydration report` for one-app, read-only baseline evidence gaps before enabling probes. Use fixture profiles first, then add a product-specific profile only for an approved migration or deployment phase.
