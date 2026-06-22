@@ -25,7 +25,7 @@ ever written to a plan, a receipt, or a diff artifact file.
 
 ## Why
 
-Agents (Lumen, Quark) and operators could list receipts but not slice them by
+Agents (Lumen, Legacy Console) and operators could list receipts but not slice them by
 time, operation, or status, and a deploy plan reported *which* files changed but
 not *how*. Phase 5 closes both gaps while keeping the redaction contract intact:
 diff content is masked at the source, and only artifact *paths* (never inline

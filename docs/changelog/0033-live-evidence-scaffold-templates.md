@@ -27,7 +27,7 @@ paths, or host inventory by accident.
 - `src/ophelia/commands/live_hydration.py`: adds
   `ship live-hydration scaffold` with `--write`, `--force`, and `--output-dir`.
 - `src/ophelia/command_catalog.py`: adds scaffold examples.
-- `Makefile`: adds `live-hydration-scaffold-quark-staging`.
+- `Makefile`: adds `live-hydration-scaffold-legacy-console-staging`.
 - `tests/test_live_hydration.py`: covers dry-run, write, overwrite guard, CLI,
   catalog, and secret-value absence behavior.
 - README, live-readiness, live-drill, live-hydration, roadmap, findings, and
@@ -57,8 +57,8 @@ mutations are run.
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_hydration`
 - `python3 -m compileall -q src/ophelia/live_hydration.py src/ophelia/commands/live_hydration.py src/ophelia/command_catalog.py`
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_hydration tests.test_live_drills tests.test_live_readiness`
-- `make live-hydration-quark-staging`
-- `make live-hydration-scaffold-quark-staging`
+- `make live-hydration-legacy-console-staging`
+- `make live-hydration-scaffold-legacy-console-staging`
 - `python3 -m compileall -q src`
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest discover -s tests`
 - `PYTHONPATH=src python3 -m ophelia.docs_check`

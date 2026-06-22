@@ -624,8 +624,8 @@ _PROPERTY_SCHEMAS: Dict[str, Dict[str, str]] = {
     "port": {"type": "integer"},
     "static_root": {"type": "string"},
     "completion_callback_url": {"type": "string"},
-    "prism_task_id": {"type": "string"},
-    "prism_run_id": {"type": "string"},
+    "console_task_id": {"type": "string"},
+    "console_run_id": {"type": "string"},
     "source_artifact_id": {"type": "string"},
     "result_artifact_id": {"type": "string"},
 }
@@ -633,8 +633,8 @@ _PROPERTY_SCHEMAS: Dict[str, Dict[str, str]] = {
 _WRAPPER_FIELDS = [
     "runtime_root",
     "completion_callback_url",
-    "prism_task_id",
-    "prism_run_id",
+    "console_task_id",
+    "console_run_id",
     "source_artifact_id",
     "result_artifact_id",
 ]
@@ -1192,7 +1192,7 @@ def _callback_destination_allowed(callback_url: str, config: Dict[str, Any]) -> 
 def _artifact_links(inputs: Dict[str, Any]) -> Dict[str, Any]:
     return {
         key: inputs.get(key)
-        for key in ("prism_task_id", "prism_run_id", "source_artifact_id", "result_artifact_id")
+        for key in ("console_task_id", "console_run_id", "source_artifact_id", "result_artifact_id")
         if inputs.get(key)
     }
 

@@ -76,7 +76,7 @@ class SchemaExportTests(unittest.TestCase):
         self.assertEqual(props["networking"]["properties"]["edge"]["enum"], ["shared"])
         self.assertEqual(props["networking"]["properties"]["internal"]["enum"], ["shared", "per-app"])
         self.assertEqual(props["edge"]["properties"]["tls"]["properties"]["mode"]["enum"], ["auto", "internal", "custom"])
-        self.assertEqual(props["prism"]["properties"]["surface"]["enum"], ["console", "quark"])
+        self.assertEqual(props["console"]["properties"]["surface"]["enum"], ["console", "root"])
         self.assertEqual(props["verify_policy"]["properties"]["failure_mode"]["enum"], ["hard", "warn"])
         self.assertEqual(props["verify"]["items"]["properties"]["url"]["pattern"], r"^https?://(?![^/?#]*@)[^?#]*$")
 

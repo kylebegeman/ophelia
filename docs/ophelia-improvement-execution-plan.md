@@ -52,7 +52,7 @@ needs a narrow host capability read model.
 
 - Do not rename Ophelia.
 - Do not mutate a production VPS while implementing or testing this plan.
-- Do not SSH into Spaceship, Hostinger, OVH, or any other host for mutation.
+- Do not SSH into source host, Hostinger, target host, or any other host for mutation.
 - Do not delete containers, images, volumes, backups, apps, DNS records, env
   files, runtime roots, or generated bundles.
 - Do not print raw env values, database URLs, tokens, private keys, provider
@@ -457,7 +457,7 @@ Example output:
 Tests:
 
 - Existing examples validate against the exported schema.
-- A Dragon Writer critical pack example validates.
+- A Demo Service critical pack example validates.
 - Unknown extension fields behave the same way in parser and schema.
 - The schema command is stable under `json.loads`.
 
@@ -631,7 +631,7 @@ Example JSON:
 {
   "schema_version": 1,
   "kind": "ophelia.secrets_audit",
-  "app": "dragon-writer",
+  "app": "demo-service",
   "environment": "production",
   "status": "warn",
   "keys": [
@@ -725,7 +725,7 @@ must be typed Ophelia commands, usually `plan` forms.
 Readiness command:
 
 ```bash
-ship app readiness dragon-writer --environment production --json
+ship app readiness demo-service --environment production --json
 ```
 
 Add:
@@ -741,7 +741,7 @@ Example:
 {
   "schema_version": 1,
   "kind": "ophelia.app_readiness",
-  "app": "dragon-writer",
+  "app": "demo-service",
   "environment": "production",
   "status": "blocked",
   "score": 72,
@@ -761,7 +761,7 @@ Example:
       "remediation": {
         "summary": "Plan a restore drill from the latest export bundle.",
         "commands": [
-          "ship app restore-drill plan dragon-writer --environment production --json"
+          "ship app restore-drill plan demo-service --environment production --json"
         ],
         "docs": ["docs/portable-app-pack-spec.md"]
       }
@@ -790,7 +790,7 @@ Tests:
 Docs:
 
 - Update portable app pack spec.
-- Add examples for Dragon Writer.
+- Add examples for Demo Service.
 - Add change record.
 
 ## Phase 5: Receipt Timeline And Dry-Run Diff Attachments
@@ -820,7 +820,7 @@ Commands:
 ```bash
 ship receipts list --json
 ship receipts show <receipt-id> --json
-ship receipts timeline --app dragon-writer --environment production --json
+ship receipts timeline --app demo-service --environment production --json
 ship receipts timeline --operation app.traffic.apply --json
 ```
 
@@ -841,19 +841,19 @@ Example JSON:
   "schema_version": 1,
   "kind": "ophelia.receipt_timeline",
   "filters": {
-    "app": "dragon-writer",
+    "app": "demo-service",
     "environment": "production"
   },
   "receipts": [
     {
-      "operation_id": "app.traffic.apply.dragon-writer.production.20260621T120000Z",
+      "operation_id": "app.traffic.apply.demo-service.production.20260621T120000Z",
       "operation": "app.traffic.apply",
       "status": "succeeded",
-      "app": "dragon-writer",
+      "app": "demo-service",
       "environment": "production",
       "started_at": "2026-06-21T12:00:00Z",
       "completed_at": "2026-06-21T12:00:10Z",
-      "path": "receipts/app.traffic.apply.dragon-writer.production.json",
+      "path": "receipts/app.traffic.apply.demo-service.production.json",
       "rollback_available": true
     }
   ],
@@ -965,7 +965,7 @@ Commands:
 ```bash
 ship state status --json
 ship state rebuild --runtime-root ~/ophelia-runtime --json
-ship state query receipts --app dragon-writer --json
+ship state query receipts --app demo-service --json
 ```
 
 `state rebuild` writes a local index. It should still be treated as an Ophelia
@@ -1053,7 +1053,7 @@ Commands:
 ```bash
 ship policy validate --policy config/ophelia-policy.yml --json
 ship policy explain --json
-ship policy evaluate --operation app.traffic.plan --app dragon-writer --environment production --json
+ship policy evaluate --operation app.traffic.plan --app demo-service --environment production --json
 ```
 
 Implementation guidance:
@@ -1072,7 +1072,7 @@ Policy result shape:
   "schema_version": 1,
   "kind": "ophelia.policy_result",
   "operation": "app.traffic.plan",
-  "app": "dragon-writer",
+  "app": "demo-service",
   "environment": "production",
   "status": "blocked",
   "rules": [
@@ -1120,7 +1120,7 @@ Primary files:
 Command:
 
 ```bash
-ship workflow plan move-app --app dragon-writer --from spaceship --to ovh --environment production --json
+ship workflow plan move-app --app demo-service --from source-host --to target-host --environment production --json
 ship workflow show <workflow-id> --json
 ```
 
@@ -1149,7 +1149,7 @@ Graph node shape:
     "ship",
     "app",
     "readiness",
-    "dragon-writer",
+    "demo-service",
     "--environment",
     "production",
     "--json"
@@ -1334,7 +1334,7 @@ Initial templates:
 - web service with Postgres
 - web service with Redis
 - worker service
-- Dragon Writer-style critical data app example
+- Demo Service-style critical data app example
 
 ### GitHub Release/Deploy Model
 
@@ -1480,9 +1480,9 @@ observability:
 Commands:
 
 ```bash
-ship observability plan --app dragon-writer --environment production --json
-ship observability status --app dragon-writer --environment production --json
-ship observability export --app dragon-writer --environment production --json
+ship observability plan --app demo-service --environment production --json
+ship observability status --app demo-service --environment production --json
+ship observability export --app demo-service --environment production --json
 ```
 
 Rules:
@@ -1545,9 +1545,9 @@ Primary files:
 Commands:
 
 ```bash
-ship backup verify plan dragon-writer --environment production --json
-ship backup verify apply dragon-writer --environment production --confirm <token> --json
-ship restore-drills list --app dragon-writer --json
+ship backup verify plan demo-service --environment production --json
+ship backup verify apply demo-service --environment production --confirm <token> --json
+ship restore-drills list --app demo-service --json
 ship restore-drills show <drill-id> --json
 ```
 

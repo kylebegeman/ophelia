@@ -33,7 +33,7 @@ files, reading secret values, calling providers, or running probes.
   drill-backed reports.
 - `src/ophelia/api.py` and `src/ophelia/api_routes.py`: expose
   `/live-hydration/<profile>`.
-- `Makefile`: adds `live-hydration-quark-staging`.
+- `Makefile`: adds `live-hydration-legacy-console-staging`.
 - `tests/test_live_hydration.py`: covers fixture, local blocked, CLI/catalog,
   API route, and no-app profile behavior.
 - README, live readiness, live drill, API, roadmap, findings, scratchpad, and
@@ -62,7 +62,7 @@ execute workflows, or mutate providers.
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_hydration`
 - `python3 -m compileall -q src/ophelia/live_hydration.py src/ophelia/commands/live_hydration.py src/ophelia/live_drills.py src/ophelia/api.py src/ophelia/api_routes.py src/ophelia/command_catalog.py src/ophelia/commands/__init__.py`
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_hydration tests.test_live_drills tests.test_live_readiness`
-- `make live-hydration-quark-staging`
+- `make live-hydration-legacy-console-staging`
 - `python3 -m compileall -q src`
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest discover -s tests`
 - `PYTHONPATH=src python3 -m ophelia.docs_check`

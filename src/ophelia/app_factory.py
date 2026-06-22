@@ -152,7 +152,7 @@ TEMPLATES: Dict[str, Template] = {
     "critical-data": Template(
         name="critical-data",
         summary=(
-            "Dragon Writer-style critical app: Postgres database, a durable "
+            "Demo Service-style critical app: Postgres database, a durable "
             "uploads volume, and mandatory backups with restore drills."
         ),
         kind="service",

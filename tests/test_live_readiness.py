@@ -50,7 +50,7 @@ class LiveReadinessTests(unittest.TestCase):
                     environment="staging",
                     host_config=host_config,
                     provider_config=provider_config,
-                    target_host="ovh-gra",
+                    target_host="target-eu",
                 )
                 self.assertNotIn("OPHELIA_SKIP_DOCKER_STATUS", os.environ)
 
@@ -112,8 +112,8 @@ def _host_config() -> str:
     return """
 version: 1
 hosts:
-  - id: ovh-gra
-    provider: ovh
+  - id: target-eu
+    provider: target-host
     region: gra
     capabilities:
       docker: true

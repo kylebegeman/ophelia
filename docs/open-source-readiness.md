@@ -64,12 +64,13 @@ make open-source-audit-strict
 Equivalent direct command:
 
 ```bash
-./cli/ship open-source audit --json
+./cli/ship open-source audit --fail-on-warnings --json
 ```
 
-The command exits non-zero only for blockers. Warning findings can still require
-maintainer review, especially historical references or compatibility terms that
-are intentionally retained.
+The strict command exits non-zero for blockers or warnings. This keeps the
+public tree at a zero-warning baseline once release cleanup has landed. For
+exploratory reporting on an in-progress branch, run `make open-source-audit` or
+pass `--allow-blocked` directly.
 
 CI runs the same strict audit in `.github/workflows/ci.yml`.
 

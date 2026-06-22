@@ -45,9 +45,10 @@ class OpenSourceReadinessTests(unittest.TestCase):
             root = Path(tmp)
             private_path = "/Users/" + "kyle"
             private_host = "ops." + "begam" + ".in"
+            private_product = "qua" + "rk"
             _write(root / "README.md", f"Deploy from {private_path} to {private_host}\n")
             _write(root / ".github" / "workflows" / "deploy-platform.yml", "name: deploy\n")
-            _write(root / "docs" / "scratchpad" / "note.md", "quark staging notes\n")
+            _write(root / "docs" / "scratchpad" / "note.md", f"{private_product}_staging notes\n")
 
             report = open_source_audit_report(root=root)
 
@@ -59,6 +60,8 @@ class OpenSourceReadinessTests(unittest.TestCase):
         self.assertIn("tracked_scratchpad_doc", codes)
         self.assertIn("private_dns_or_host", codes)
         self.assertIn("personal_local_path", codes)
+        warning_codes = {finding["code"] for finding in report["warnings"]}
+        self.assertIn("private_or_legacy_product_reference", warning_codes)
         self.assertGreaterEqual(report["warning_count"], 1)
 
     def test_deleted_tracked_file_does_not_crash_or_count(self) -> None:
@@ -96,6 +99,23 @@ class OpenSourceReadinessTests(unittest.TestCase):
         self.assertEqual("blocked", payload["status"])
         self.assertEqual("ship open-source audit", descriptor.command)
         self.assertFalse(descriptor.mutates_state)
+        self.assertIn("fail_on_warnings", descriptor.args_schema["properties"])
+
+    def test_cli_can_fail_on_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_public_governance(root)
+            private_product = "pri" + "sm"
+            _write(root / "README.md", f"{private_product}_run_id is not public API\n")
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["open-source", "audit", "--root", str(root), "--fail-on-warnings", "--json"])
+
+        payload = json.loads(buffer.getvalue())
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("warning", payload["status"])
+        self.assertEqual(1, payload["warning_count"])
 
 
 def _write(path: Path, content: str) -> None:

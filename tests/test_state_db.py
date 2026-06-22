@@ -36,10 +36,10 @@ def _manifest_yaml() -> str:
     return (
         """
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer:latest
+image: ghcr.io/example/demo-service:latest
 env:
   API_TOKEN: %s
 services:
@@ -48,11 +48,11 @@ services:
     env:
       DATABASE_URL: postgres://user:%s@db/dragon
 routes:
-  - domain: dragonwriter.example.com
+  - domain: demo-service.example.com
     service: web
 verify:
   - name: health
-    url: https://dragonwriter.example.com/health
+    url: https://demo-service.example.com/health
 """
         % (ROOT_SECRET, SERVICE_SECRET)
     ).strip() + "\n"
@@ -60,7 +60,7 @@ verify:
 
 def _build_runtime_root(base: Path) -> Path:
     runtime_root = base / "runtime"
-    manifest_path = base / "dragon-writer.ophelia.yml"
+    manifest_path = base / "demo-service.ophelia.yml"
     manifest_path.write_text(_manifest_yaml())
     manifest = load_manifest(manifest_path)
     app_root = deploy_bundle(manifest, manifest_path, runtime_root)
@@ -76,9 +76,9 @@ def _build_runtime_root(base: Path) -> Path:
         json.dumps(
             {
                 "operation": "app.export.create",
-                "operation_id": "app.export.create.dragon-writer.production.fixture",
+                "operation_id": "app.export.create.demo-service.production.fixture",
                 "status": "succeeded",
-                "app": "dragon-writer",
+                "app": "demo-service",
                 "environment": "production",
                 "started_at": "2026-06-20T10:00:00Z",
                 "completed_at": "2026-06-20T10:01:00Z",
@@ -95,9 +95,9 @@ def _build_runtime_root(base: Path) -> Path:
         json.dumps(
             {
                 "operation": "deploy.apply",
-                "operation_id": "deploy.apply.dragon-writer.production.fixture",
+                "operation_id": "deploy.apply.demo-service.production.fixture",
                 "status": "succeeded",
-                "app": "dragon-writer",
+                "app": "demo-service",
                 "environment": "production",
                 "started_at": "2026-06-21T10:00:00Z",
                 "inputs_redacted": True,
@@ -109,9 +109,9 @@ def _build_runtime_root(base: Path) -> Path:
         json.dumps(
             {
                 "operation": "app.traffic.apply",
-                "operation_id": "app.traffic.apply.dragon-writer.production.fixture",
+                "operation_id": "app.traffic.apply.demo-service.production.fixture",
                 "status": "succeeded",
-                "app": "dragon-writer",
+                "app": "demo-service",
                 "environment": "production",
                 "started_at": "2026-06-21T11:00:00Z",
                 "completed_at": "2026-06-21T11:01:00Z",
@@ -135,13 +135,13 @@ def _build_runtime_root(base: Path) -> Path:
         json.dumps(
             {
                 "operation": "app.github.provision.apply",
-                "operation_id": "app.github.provision.apply.dragon-writer.production.fixture",
+                "operation_id": "app.github.provision.apply.demo-service.production.fixture",
                 "status": "succeeded",
-                "app": "dragon-writer",
+                "app": "demo-service",
                 "environment": "production",
                 "started_at": "2026-06-21T12:00:00Z",
                 "completed_at": "2026-06-21T12:01:00Z",
-                "repository": "example/dragon-writer",
+                "repository": "example/demo-service",
                 "inputs_redacted": True,
             }
         )
@@ -158,7 +158,7 @@ def _build_runtime_root(base: Path) -> Path:
         "completed_at": "2026-06-21T13:00:00Z",
         "apps": [
             {
-                "app": "dragon-writer",
+                "app": "demo-service",
                 "environment": "production",
                 "status": "ok",
                 "snapshot": {"health_configured": True},
@@ -169,13 +169,13 @@ def _build_runtime_root(base: Path) -> Path:
     (runs_root / "observability.schedule.run.fixture.json").write_text(json.dumps(observability_run) + "\n")
     (observability_root / "latest.json").write_text(json.dumps(observability_run) + "\n")
 
-    backup_root = runtime_root / "backups" / "apps" / "dragon-writer" / "20260620T120000Z-fixture"
+    backup_root = runtime_root / "backups" / "apps" / "demo-service" / "20260620T120000Z-fixture"
     backup_root.mkdir(parents=True)
     (backup_root / "backup-manifest.json").write_text(
         json.dumps(
             {
                 "backup_id": "20260620T120000Z-fixture",
-                "app": "dragon-writer",
+                "app": "demo-service",
                 "created_at": "2026-06-20T12:00:00Z",
                 "coverage": {"release_metadata": True, "app_env": True},
                 "database": {"postgres": True, "mode": "metadata-only"},
@@ -186,11 +186,11 @@ def _build_runtime_root(base: Path) -> Path:
 
     plan_workflow(
         "move-app",
-        app="dragon-writer",
+        app="demo-service",
         environment="production",
-        source="spaceship",
-        target="ovh",
-        target_origin="https://dragonwriter-target.example.net",
+        source="source-host",
+        target="target-host",
+        target_origin="https://demo-service-target.example.net",
         runtime_root=runtime_root,
     )
 
@@ -237,7 +237,7 @@ class StateDbTests(unittest.TestCase):
     def test_corrupt_receipt_becomes_warning_and_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = _build_runtime_root(Path(temp_dir))
-            corrupt = runtime_root / "apps" / "dragon-writer" / "receipts" / "corrupt.json"
+            corrupt = runtime_root / "apps" / "demo-service" / "receipts" / "corrupt.json"
             corrupt.write_text("{ not valid json ")
 
             report = rebuild_state(runtime_root, Path(temp_dir) / "manifests")
@@ -277,7 +277,7 @@ class StateDbTests(unittest.TestCase):
 
         self.assertEqual("ok", report["status"])
         self.assertEqual(1, len(report["receipts"]))
-        self.assertEqual("deploy.apply.dragon-writer.production.fixture", report["receipts"][0]["receipt_id"])
+        self.assertEqual("deploy.apply.demo-service.production.fixture", report["receipts"][0]["receipt_id"])
         self.assertEqual("latest", report["resolved_ref"]["strategy"])
 
     def test_query_receipts_without_index_reports_needs_rebuild(self) -> None:
@@ -372,21 +372,21 @@ class StateDbTests(unittest.TestCase):
         self.assertEqual("ophelia.state_summary", summary["kind"])
         self.assertEqual("current", summary["freshness"]["status"])
         apps = {item["app"]: item for item in summary["apps"]}
-        self.assertIn("dragon-writer", apps)
-        self.assertGreater(apps["dragon-writer"]["route_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["receipt_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["backup_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["observability_snapshot_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["traffic_state_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["provider_snapshot_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["github_provisioning_count"], 0)
-        self.assertGreater(apps["dragon-writer"]["workflow_count"], 0)
+        self.assertIn("demo-service", apps)
+        self.assertGreater(apps["demo-service"]["route_count"], 0)
+        self.assertGreater(apps["demo-service"]["receipt_count"], 0)
+        self.assertGreater(apps["demo-service"]["backup_count"], 0)
+        self.assertGreater(apps["demo-service"]["observability_snapshot_count"], 0)
+        self.assertGreater(apps["demo-service"]["traffic_state_count"], 0)
+        self.assertGreater(apps["demo-service"]["provider_snapshot_count"], 0)
+        self.assertGreater(apps["demo-service"]["github_provisioning_count"], 0)
+        self.assertGreater(apps["demo-service"]["workflow_count"], 0)
         self.assertGreater(summary["counts"]["workflow_states"], 0)
         self.assertGreater(summary["counts"]["workflow_nodes"], 0)
         self.assertTrue(summary["workflows"])
         workflow = summary["workflows"][0]
         self.assertEqual("move-app", workflow["name"])
-        self.assertEqual("dragon-writer", workflow["app"])
+        self.assertEqual("demo-service", workflow["app"])
         self.assertGreater(workflow["node_count"], 0)
 
     def test_state_status_without_index_is_read_only(self) -> None:

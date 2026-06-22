@@ -51,10 +51,10 @@ _SHELL_METACHARS = ["&&", "||", "|", ";", "`", "$(", ">", "<"]
 def _plan(runtime_root: Path) -> dict:
     return plan_workflow(
         "move-app",
-        app="dragon-writer",
+        app="demo-service",
         environment="production",
-        source="spaceship",
-        target="ovh",
+        source="source-host",
+        target="target-host",
         target_origin="https://origin.example.com",
         runtime_root=runtime_root,
     )
@@ -101,11 +101,11 @@ class MoveAppGraphTests(unittest.TestCase):
                 "ship",
                 "app",
                 "placement",
-                "dragon-writer",
+                "demo-service",
                 "--from",
-                "spaceship",
+                "source-host",
                 "--to",
-                "ovh",
+                "target-host",
                 "--environment",
                 "production",
                 "--json",
@@ -118,11 +118,11 @@ class MoveAppGraphTests(unittest.TestCase):
                 "app",
                 "traffic",
                 "plan",
-                "dragon-writer",
+                "demo-service",
                 "--from",
-                "spaceship",
+                "source-host",
                 "--to",
-                "ovh",
+                "target-host",
                 "--target-origin",
                 "https://origin.example.com",
                 "--environment",
@@ -200,7 +200,7 @@ class MoveAppGraphTests(unittest.TestCase):
 class UnknownTemplateTests(unittest.TestCase):
     def test_unknown_template_name_returns_blockers_no_crash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            plan = plan_workflow("does-not-exist", app="dragon-writer", runtime_root=Path(tmp))
+            plan = plan_workflow("does-not-exist", app="demo-service", runtime_root=Path(tmp))
         self.assertEqual([], plan["nodes"])
         self.assertTrue(plan["blockers"])
         codes = {blocker["code"] for blocker in plan["blockers"]}
@@ -263,10 +263,10 @@ class RunWorkflowTests(unittest.TestCase):
                 plan["workflow_id"],
                 runtime_root=runtime_root,
                 substitutions={
-                    "MANIFEST_PATH": "manifests/dragon-writer.ophelia.yml",
+                    "MANIFEST_PATH": "manifests/demo-service.ophelia.yml",
                     "PROVIDER_CONFIG": "providers.json",
                     "MANIFEST_DIR": "manifests",
-                    "EXPORT_BUNDLE": "exports/dragon-writer",
+                    "EXPORT_BUNDLE": "exports/demo-service",
                 },
                 command_runner=_runner,
             )
@@ -281,7 +281,7 @@ class RunWorkflowTests(unittest.TestCase):
             self.assertEqual("node-output-1", receipt["nodes"][0]["receipt_id"])
             self.assertEqual("ship", Path(calls[0][0]).name)
             self.assertTrue((runtime_root / "workflows" / "receipts").exists())
-            self.assertTrue((runtime_root / "apps" / "dragon-writer" / "receipts").exists())
+            self.assertTrue((runtime_root / "apps" / "demo-service" / "receipts").exists())
             stored = show_workflow(plan["workflow_id"], runtime_root=runtime_root)
             self.assertEqual("paused", stored["workflow"]["last_run"]["status"])
             self.assertEqual("paused", stored["workflow"]["workflow_status"])
@@ -315,10 +315,10 @@ class RunWorkflowTests(unittest.TestCase):
                 )
 
             substitutions = {
-                "MANIFEST_PATH": "manifests/dragon-writer.ophelia.yml",
+                "MANIFEST_PATH": "manifests/demo-service.ophelia.yml",
                 "PROVIDER_CONFIG": "providers.json",
                 "MANIFEST_DIR": "manifests",
-                "EXPORT_BUNDLE": "exports/dragon-writer",
+                "EXPORT_BUNDLE": "exports/demo-service",
             }
             first = run_workflow(
                 plan["workflow_id"],
@@ -394,10 +394,10 @@ class RunWorkflowTests(unittest.TestCase):
                 plan["workflow_id"],
                 runtime_root=runtime_root,
                 substitutions={
-                    "MANIFEST_PATH": "manifests/dragon-writer.ophelia.yml",
+                    "MANIFEST_PATH": "manifests/demo-service.ophelia.yml",
                     "PROVIDER_CONFIG": "providers.json",
                     "MANIFEST_DIR": "manifests",
-                    "EXPORT_BUNDLE": "exports/dragon-writer",
+                    "EXPORT_BUNDLE": "exports/demo-service",
                 },
                 command_runner=_runner,
             )
@@ -417,13 +417,13 @@ class PreviewWorkflowTests(unittest.TestCase):
             plan = _plan(runtime_root)
 
             preview = preview_workflow(
-                "latest:dragon-writer",
+                "latest:demo-service",
                 runtime_root=runtime_root,
                 substitutions={
-                    "MANIFEST_PATH": "manifests/dragon-writer.ophelia.yml",
+                    "MANIFEST_PATH": "manifests/demo-service.ophelia.yml",
                     "PROVIDER_CONFIG": "providers.json",
                     "MANIFEST_DIR": "manifests",
-                    "EXPORT_BUNDLE": "exports/dragon-writer",
+                    "EXPORT_BUNDLE": "exports/demo-service",
                 },
             )
 

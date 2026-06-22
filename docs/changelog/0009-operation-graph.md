@@ -106,7 +106,7 @@ printed.
 - `PYTHON=python3 make compile`
 - `PYTHONPATH=src python3 -m unittest discover -s tests`
 - `./cli/ship workflow list --json`
-- `./cli/ship workflow plan move-app --app dragon-writer --from spaceship --to ovh
+- `./cli/ship workflow plan move-app --app demo-service --from source-host --to target-host
   --environment production --target-origin https://origin.example.com
   --runtime-root <tmp> --json`
 - `PYTHON=python3 make validate-examples`

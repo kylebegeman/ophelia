@@ -66,6 +66,4 @@ open-source audit.
 
 ## Follow-Ups
 
-- Review warning-only open-source audit findings in historical changelogs,
-  compatibility tests, and manifest profile compatibility strings during a
-  later cleanup phase.
+- Completed in [0052](0052-public-warning-cleanup.md).

@@ -4,7 +4,7 @@ The local HTTP Job/Action API foundation is implemented with `ship api serve`.
 It binds to `127.0.0.1` by default and exposes JSON endpoints for actions,
 jobs, job events, host inventory, and registries.
 
-Quark can call these read-only commands today:
+Operator consoles and local agents can call these read-only commands today:
 
 - `ship self-test --json` (first smoke command; confirms the install is healthy)
 - `ship schema manifest --json` (manifest JSON schema, draft 2020-12)

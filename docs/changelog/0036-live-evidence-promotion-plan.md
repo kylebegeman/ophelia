@@ -18,7 +18,7 @@ checks, but it does not copy or promote files.
   target metadata, compact evidence/probe-gate child summaries, and explicit
   future-apply boundaries.
 - Added command catalog metadata and examples for downstream agents.
-- Added `make live-hydration-promotion-plan-quark-staging` using a temporary
+- Added `make live-hydration-promotion-plan-legacy-console-staging` using a temporary
   scaffold directory.
 - Added tests for missing evidence, warning template kits, secret-looking value
   blocking, CLI output, and command catalog discovery.

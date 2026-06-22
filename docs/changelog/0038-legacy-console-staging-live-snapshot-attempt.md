@@ -1,4 +1,4 @@
-# 0038: Quark Staging Live Snapshot Attempt
+# 0038: Legacy Console Staging Live Snapshot Attempt
 
 Date: 2026-06-22
 
@@ -6,7 +6,7 @@ Status: landed
 
 ## Summary
 
-Starts the real Quark staging hydration path without crossing the secret,
+Starts the real Legacy Console staging hydration path without crossing the secret,
 provider-mutation, or probe boundary. The local runtime app root was created,
 template-only review evidence was written under the hydration workspace, and
 the remaining real-evidence blockers were documented.
@@ -14,9 +14,9 @@ the remaining real-evidence blockers were documented.
 ## Changes
 
 - Created local runtime app root:
-  `~/ophelia-runtime/apps/quark-ops-staging`.
+  `~/ophelia-runtime/apps/legacy-console-ops-staging`.
 - Wrote local template-only review scaffold:
-  `~/ophelia-runtime/hydration/quark-ops-staging/staging`.
+  `~/ophelia-runtime/hydration/legacy-console-ops-staging/staging`.
 - Ran host readiness, hydration, evidence validation, promotion planning, and
   probe gate against the current local state.
 - Checked GitHub secret-name availability through `gh` without reading values.

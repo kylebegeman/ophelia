@@ -26,8 +26,8 @@ emits exact follow-up probe commands when no file-based blockers remain.
 - `src/ophelia/commands/live_hydration.py`: adds
   `ship live-hydration probe-gate`.
 - `src/ophelia/command_catalog.py`: adds probe-gate examples.
-- `Makefile`: adds `live-hydration-probe-gate-quark-staging`.
-- `tests/test_live_hydration.py`: covers current no-go Quark staging, fixture
+- `Makefile`: adds `live-hydration-probe-gate-legacy-console-staging`.
+- `tests/test_live_hydration.py`: covers current no-go Legacy Console staging, fixture
   review probe command emission, CLI output, and catalog visibility.
 - README, live-hydration docs, roadmap, findings, and scratchpad docs updated.
 
@@ -52,7 +52,7 @@ production mutations.
 ## Verification
 
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_hydration`
-- `make live-hydration-probe-gate-quark-staging`
+- `make live-hydration-probe-gate-legacy-console-staging`
 - `python3 -m compileall -q src/ophelia/live_hydration.py src/ophelia/commands/live_hydration.py src/ophelia/command_catalog.py`
 - `python3 -m compileall -q src`
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest discover -s tests`

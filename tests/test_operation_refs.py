@@ -19,26 +19,26 @@ class OperationReferenceTests(unittest.TestCase):
             runtime_root = Path(temp_dir)
             first = _write_receipt(
                 runtime_root,
-                "dragon-writer",
-                "app.export.create.dragon-writer.production.aaa111",
+                "demo-service",
+                "app.export.create.demo-service.production.aaa111",
                 "app.export.create",
                 "2026-06-20T10:00:00Z",
             )
             second = _write_receipt(
                 runtime_root,
-                "dragon-writer",
-                "app.traffic.apply.dragon-writer.production.bbb222",
+                "demo-service",
+                "app.traffic.apply.demo-service.production.bbb222",
                 "app.traffic.apply",
                 "2026-06-21T10:00:00Z",
             )
 
-            latest = resolve_receipt_ref("latest", runtime_root=runtime_root, app="dragon-writer")
+            latest = resolve_receipt_ref("latest", runtime_root=runtime_root, app="demo-service")
             self.assertTrue(latest["ok"])
-            self.assertEqual("app.traffic.apply.dragon-writer.production.bbb222", latest["resolved_id"])
+            self.assertEqual("app.traffic.apply.demo-service.production.bbb222", latest["resolved_id"])
 
             latest_operation = resolve_receipt_ref("latest:app.export.create", runtime_root=runtime_root)
             self.assertTrue(latest_operation["ok"])
-            self.assertEqual("app.export.create.dragon-writer.production.aaa111", latest_operation["resolved_id"])
+            self.assertEqual("app.export.create.demo-service.production.aaa111", latest_operation["resolved_id"])
 
             prefix = resolve_receipt_ref("app.traffic.apply", runtime_root=runtime_root)
             self.assertTrue(prefix["ok"])
@@ -47,13 +47,13 @@ class OperationReferenceTests(unittest.TestCase):
             path = resolve_receipt_ref(str(first), runtime_root=runtime_root)
             self.assertTrue(path["ok"])
             self.assertEqual("path", path["strategy"])
-            self.assertEqual("app.export.create.dragon-writer.production.aaa111", path["resolved_id"])
+            self.assertEqual("app.export.create.demo-service.production.aaa111", path["resolved_id"])
 
     def test_receipt_prefix_ambiguity_reports_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir)
-            _write_receipt(runtime_root, "dragon-writer", "shared-prefix-alpha", "deploy.apply", "2026-06-20T10:00:00Z")
-            _write_receipt(runtime_root, "dragon-writer", "shared-prefix-beta", "deploy.apply", "2026-06-20T11:00:00Z")
+            _write_receipt(runtime_root, "demo-service", "shared-prefix-alpha", "deploy.apply", "2026-06-20T10:00:00Z")
+            _write_receipt(runtime_root, "demo-service", "shared-prefix-beta", "deploy.apply", "2026-06-20T11:00:00Z")
 
             resolution = resolve_receipt_ref("shared-prefix", runtime_root=runtime_root)
 

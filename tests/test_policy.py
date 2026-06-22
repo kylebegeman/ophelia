@@ -114,7 +114,7 @@ class EvaluateTests(unittest.TestCase):
         policy = load_policy(REPO_POLICY_PATH)
         result = evaluate_policy(
             "app.traffic.apply",
-            "dragon-writer",
+            "demo-service",
             "production",
             {"rollback_available": True},
             policy=policy,
@@ -128,7 +128,7 @@ class EvaluateTests(unittest.TestCase):
         policy = load_policy(REPO_POLICY_PATH)
         result = evaluate_policy(
             "app.traffic.apply",
-            "dragon-writer",
+            "demo-service",
             "production",
             {
                 "target_health_check": True,
@@ -151,7 +151,7 @@ class EvaluateTests(unittest.TestCase):
         policy = load_policy(REPO_POLICY_PATH)
         result = evaluate_policy(
             "app.export.create",
-            "dragon-writer",
+            "demo-service",
             "production",
             {},
             policy=policy,

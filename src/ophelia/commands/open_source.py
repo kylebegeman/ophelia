@@ -20,6 +20,7 @@ def register(subparsers: _SubParsersAction) -> None:
     audit_parser.add_argument("--root", type=Path, default=REPO_ROOT, help="Repository root to scan")
     audit_parser.add_argument("--max-findings", type=int, default=50, help="Maximum findings to include in output")
     audit_parser.add_argument("--allow-blocked", action="store_true", help="Return success even when blockers are present")
+    audit_parser.add_argument("--fail-on-warnings", action="store_true", help="Return failure when warning findings are present")
     audit_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     audit_parser.set_defaults(handler=run_open_source_audit)
 
@@ -39,6 +40,8 @@ def run_open_source_audit(args: Namespace) -> int:
             print(f"Findings truncated at {report.get('max_findings')}; rerun with --max-findings for more detail.")
         print(str(report.get("recommendation") or ""))
     if report.get("status") == "blocked" and not args.allow_blocked:
+        return 1
+    if args.fail_on_warnings and report.get("warning_count"):
         return 1
     return 0
 
@@ -76,6 +79,7 @@ register_cli_descriptor(
                 "root": {"type": "string"},
                 "max_findings": {"type": "integer"},
                 "allow_blocked": {"type": "boolean"},
+                "fail_on_warnings": {"type": "boolean"},
                 "json": {"type": "boolean"},
             },
             "required": [],
@@ -86,6 +90,7 @@ register_cli_descriptor(
         examples=[
             "ship open-source audit --json",
             "ship open-source audit --allow-blocked --json",
+            "ship open-source audit --fail-on-warnings --json",
         ],
         safety_notes=[
             "Read-only release hygiene scan. Does not mutate files, runtime state, providers, or Git history.",

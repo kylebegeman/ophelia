@@ -40,9 +40,9 @@ built to use that contract properly. Existing products only shape new work when
 we explicitly enter a retained-product adoption, migration, or deployment phase.
 Until then, synthetic fixtures are the correct way to prove behavior.
 
-Quark, Prism, and OpenClaw are not long-term foundations for this roadmap. They
+Legacy Console, Legacy Runtime, and Legacy Orchestration are not long-term foundations for this roadmap. They
 may exist on current hosts as legacy deployments, but Lumen replaces them. Agents
-should avoid designing new features around Quark, Prism, or OpenClaw except when
+should avoid designing new features around Legacy Console, Legacy Runtime, or Legacy Orchestration except when
 reading legacy inventory or preparing a separately approved decommission plan.
 
 The product target:
@@ -90,14 +90,14 @@ Use one common envelope for agent-readable plans:
   "schema_version": 1,
   "kind": "ophelia.plan",
   "operation": "app.export.plan",
-  "operation_id": "app.export.plan.dragon-writer.production.20260620T120000Z",
-  "app": "dragon-writer",
+  "operation_id": "app.export.plan.demo-service.production.20260620T120000Z",
+  "app": "demo-service",
   "environment": "production",
-  "source_host": "spaceship",
+  "source_host": "source-host",
   "target_host": null,
   "risk": "high",
   "dry_run": true,
-  "summary": "Export Dragon Writer production runtime and data.",
+  "summary": "Export Demo Service production runtime and data.",
   "blockers": [],
   "warnings": [],
   "checks": [],
@@ -106,7 +106,7 @@ Use one common envelope for agent-readable plans:
   "confirmation_required": true,
   "confirmation_token": "redacted-plan-token",
   "exact_apply_input": {
-    "command": "ship app export create dragon-writer --environment production --confirm redacted-plan-token"
+    "command": "ship app export create demo-service --environment production --confirm redacted-plan-token"
   }
 }
 ```
@@ -120,10 +120,10 @@ Use one common envelope for operation results:
   "schema_version": 1,
   "kind": "ophelia.receipt",
   "operation": "app.export.create",
-  "operation_id": "app.export.create.dragon-writer.production.20260620T120500Z",
-  "plan_operation_id": "app.export.plan.dragon-writer.production.20260620T120000Z",
+  "operation_id": "app.export.create.demo-service.production.20260620T120500Z",
+  "plan_operation_id": "app.export.plan.demo-service.production.20260620T120000Z",
   "status": "succeeded",
-  "app": "dragon-writer",
+  "app": "demo-service",
   "environment": "production",
   "started_at": "2026-06-20T12:05:00Z",
   "completed_at": "2026-06-20T12:06:30Z",
@@ -184,7 +184,7 @@ Show whether an app is safe to move between hosts.
 Add a read-only command:
 
 ```bash
-./cli/ship app readiness dragon-writer --environment production --json
+./cli/ship app readiness demo-service --environment production --json
 ```
 
 The command reads the manifest lock, runtime bundle, release metadata, data
@@ -197,7 +197,7 @@ read-only probe with a timeout.
 The operator or agent gets a clear result:
 
 ```text
-Dragon Writer production is not ready to move.
+Demo Service production is not ready to move.
 Blockers:
 - critical Postgres data has no restore drill receipt
 - uploads volume has no export rule
@@ -243,7 +243,7 @@ Compare env requirements without exposing secret values.
 Add:
 
 ```bash
-./cli/ship env diff dragon-writer --environment production --json
+./cli/ship env diff demo-service --environment production --json
 ```
 
 or include the diff in `pack explain`, readiness, import preview, and deploy
@@ -297,7 +297,7 @@ Make backup coverage, recency, and validation status visible.
 Add:
 
 ```bash
-./cli/ship backup status dragon-writer --environment production --json
+./cli/ship backup status demo-service --environment production --json
 ```
 
 The command reports latest runtime backup, latest database dump, latest upload
@@ -446,8 +446,8 @@ Generate a current per-app operator runbook from app and runtime metadata.
 Add:
 
 ```bash
-./cli/ship app runbook dragon-writer --environment production
-./cli/ship app runbook dragon-writer --environment production --output docs/generated/dragon-writer.md
+./cli/ship app runbook demo-service --environment production
+./cli/ship app runbook demo-service --environment production --output docs/generated/demo-service.md
 ```
 
 The runbook includes routes, services, data dependencies, backups, deploy
@@ -493,7 +493,7 @@ Make Ophelia operation history easy to inspect.
 Add:
 
 ```bash
-./cli/ship receipts list --app dragon-writer --json
+./cli/ship receipts list --app demo-service --json
 ./cli/ship receipts show <receipt-id> --json
 ```
 
@@ -542,7 +542,7 @@ Create the initial Ophelia pack structure for an app.
 Add:
 
 ```bash
-./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads
+./cli/ship pack init --app demo-service --environment production --critical --postgres --uploads
 ```
 
 The command creates or updates:
@@ -645,10 +645,10 @@ Treat databases, uploads, volumes, and runtime metadata as portable artifacts.
 Add export and import command families:
 
 ```bash
-./cli/ship app export plan dragon-writer --environment production --json
-./cli/ship app export create dragon-writer --environment production --confirm <token>
-./cli/ship app import plan ./exports/dragon-writer.production.export.tar.zst --json
-./cli/ship app import apply ./exports/dragon-writer.production.export.tar.zst --confirm <token>
+./cli/ship app export plan demo-service --environment production --json
+./cli/ship app export create demo-service --environment production --confirm <token>
+./cli/ship app import plan ./exports/demo-service.production.export.tar.zst --json
+./cli/ship app import apply ./exports/demo-service.production.export.tar.zst --confirm <token>
 ```
 
 Export bundles should include runtime metadata, release metadata, checksums,
@@ -657,7 +657,7 @@ target changes before restoring data.
 
 **User experience**
 
-Moving Dragon Writer becomes a planned artifact flow rather than a manual SSH
+Moving Demo Service becomes a planned artifact flow rather than a manual SSH
 procedure.
 
 **Why it improves the product**
@@ -698,8 +698,8 @@ Prove that an app backup/export can restore into an isolated target.
 Add:
 
 ```bash
-./cli/ship app restore-drill plan dragon-writer --environment production --json
-./cli/ship app restore-drill apply dragon-writer --environment production --confirm <token>
+./cli/ship app restore-drill plan demo-service --environment production --json
+./cli/ship app restore-drill apply demo-service --environment production --confirm <token>
 ```
 
 The drill restores into an isolated namespace or target profile, starts only the
@@ -746,8 +746,8 @@ Coordinate the risky transition from source host to target host.
 Add:
 
 ```bash
-./cli/ship app cutover plan dragon-writer --from spaceship --to ovh --json
-./cli/ship app cutover apply dragon-writer --from spaceship --to ovh --confirm <token>
+./cli/ship app cutover plan demo-service --from source-host --to target-host --json
+./cli/ship app cutover apply demo-service --from source-host --to target-host --confirm <token>
 ```
 
 The plan checks readiness, backup freshness, target import status, restore drill
@@ -775,7 +775,7 @@ Transformational
 **Dependencies or future opportunities unlocked**
 
 Depends on packs, export/import, restore drills, readiness, backup status, and
-route conflict scanning. Unlocks safe Spaceship exit.
+route conflict scanning. Unlocks safe source host exit.
 
 **Technical insight and implementation tips**
 
@@ -802,14 +802,14 @@ Target shape:
 
 ```text
 ophelia-edge
-dragon-writer-production-internal
+demo-service-production-internal
 lumen-production-internal
-stillup-production-internal
+retained-app-production-internal
 ```
 
 **User experience**
 
-Dragon Writer, Lumen, Stillup, and SaaS apps can live on the same host without
+Demo Service, Lumen, Retained App, and SaaS apps can live on the same host without
 accidental coupling.
 
 **Why it improves the product**
@@ -931,9 +931,9 @@ inbox, run ledger, mobile visibility, and safer LLM automation.
 
 - Update `manifest-spec.md` as fields graduate from draft to implemented.
 - Add operator examples to `operator-runbook.md`.
-- Add app-specific Dragon Writer examples.
+- Add app-specific Demo Service examples.
 - Add Lumen Ops adapter docs once JSON action descriptors stabilize.
-- Keep `dragon-writer-migration-runbook.md` aligned with implemented commands.
+- Keep `demo-service-migration-runbook.md` aligned with implemented commands.
 
 ## Out Of Scope For This Selected Batch
 
@@ -945,5 +945,5 @@ The following ideas remain useful but are not part of this selected scope:
 - full web UI
 - automatic DNS mutation
 - automatic cleanup of duplicate apps or old containers
-- automatic Quark, Prism, or OpenClaw decommissioning
+- automatic Legacy Console, Legacy Runtime, or Legacy Orchestration decommissioning
 - Kubernetes or Nomad support

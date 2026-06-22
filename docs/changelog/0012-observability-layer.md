@@ -114,7 +114,7 @@ emitted and the payloads are redacted.
 - `PYTHONPATH=src python3 -m unittest discover -s tests`
 - `PYTHON=python3 make validate-examples`
 - `./cli/ship schema manifest --json`
-- `./cli/ship observability status --app dragon-writer --environment production --json`
+- `./cli/ship observability status --app demo-service --environment production --json`
 - `PYTHON=python3 make docs-check`
 - `git diff --check`
 

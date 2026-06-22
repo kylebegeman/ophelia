@@ -14,7 +14,7 @@ class RemediationTests(unittest.TestCase):
     def test_to_dict_shape(self) -> None:
         rem = Remediation(
             summary="Plan a restore drill.",
-            commands=["ship app restore-drill plan dragon-writer --environment production --json"],
+            commands=["ship app restore-drill plan demo-service --environment production --json"],
             docs=["docs/portable-app-pack-spec.md"],
         )
         payload = rem.to_dict()

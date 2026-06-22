@@ -39,8 +39,8 @@
 | [0035](0035-no-probe-live-gate.md) | 2026-06-22 | landed | No-probe live gate | live-hydration, cli, command-catalog, docs, tests |
 | [0036](0036-live-evidence-promotion-plan.md) | 2026-06-22 | landed | Live evidence promotion plan | live-hydration, cli, command-catalog, docs, tests |
 | [0037](0037-reviewed-hydration-fixture-evidence.md) | 2026-06-22 | landed | Reviewed hydration fixture evidence | fixtures, live-hydration, docs, tests |
-| [0038](0038-quark-staging-live-snapshot-attempt.md) | 2026-06-22 | landed | Quark staging live snapshot attempt | live-hydration, runtime, docs |
-| [0039](0039-quark-staging-partial-live-evidence.md) | 2026-06-22 | landed | Quark staging partial live evidence | live-hydration, runtime, docs |
+| [0038](0038-legacy-console-staging-live-snapshot-attempt.md) | 2026-06-22 | landed | Legacy Console staging live snapshot attempt | live-hydration, runtime, docs |
+| [0039](0039-legacy-console-staging-partial-live-evidence.md) | 2026-06-22 | landed | Legacy Console staging partial live evidence | live-hydration, runtime, docs |
 | [0040](0040-source-of-truth-and-fixture-first-validation.md) | 2026-06-22 | landed | Source-of-truth and fixture-first validation | docs, fixtures, command-catalog, tests |
 | [0041](0041-app-adoption-plan.md) | 2026-06-22 | landed | App adoption plan | cli, adoption, command-catalog, docs, tests |
 | [0042](0042-adoption-fixture-repos.md) | 2026-06-22 | landed | Adoption fixture repos | fixtures, adoption, tests, docs |
@@ -53,3 +53,4 @@
 | [0049](0049-remove-private-scratchpad-notes.md) | 2026-06-22 | landed | Remove private scratchpad notes | open-source, docs, audit, tests |
 | [0050](0050-public-safe-operator-docs.md) | 2026-06-22 | landed | Public-safe operator docs | open-source, docs |
 | [0051](0051-open-source-launch-prep.md) | 2026-06-22 | landed | Open source launch prep | open-source, docs, ci, manifests, examples, governance |
+| [0052](0052-public-warning-cleanup.md) | 2026-06-22 | landed | Public warning cleanup | open-source, manifests, docs, tests, audit |

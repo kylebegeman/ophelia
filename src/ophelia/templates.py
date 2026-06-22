@@ -95,21 +95,21 @@ def render_env_example(manifest: Manifest) -> str:
         if key not in manifest.env and key not in service_secret_keys:
             lines.append(f"{key}=replace-me")
 
-    if manifest.profile == "prism" and manifest.prism is not None:
+    if manifest.profile == "console" and manifest.console is not None:
         lines.extend(
             [
                 "",
-                "# Prism profile defaults",
-                f"PRISM_CONSOLE_SURFACE={manifest.prism.surface}",
-                "PRISM_CONSOLE_SETUP_TOKEN=replace-me",
-                "PRISM_MFA_ENCRYPTION_KEY=replace-me",
-                "PRISM_CREDENTIAL_ENCRYPTION_KEY=replace-me",
+                "# Console profile defaults",
+                f"OPHELIA_CONSOLE_SURFACE={manifest.console.surface}",
+                "OPHELIA_CONSOLE_SETUP_TOKEN=replace-me",
+                "OPHELIA_CONSOLE_MFA_ENCRYPTION_KEY=replace-me",
+                "OPHELIA_CONSOLE_CREDENTIAL_ENCRYPTION_KEY=replace-me",
             ]
         )
-        if manifest.prism.console_asset_path:
-            lines.append(f"PRISM_CONSOLE_ASSET_PATH={manifest.prism.console_asset_path}")
-        if manifest.prism.admin_domain:
-            lines.append(f"# Dedicated Prism admin host routed by Ophelia: {manifest.prism.admin_domain}")
+        if manifest.console.console_asset_path:
+            lines.append(f"OPHELIA_CONSOLE_ASSET_PATH={manifest.console.console_asset_path}")
+        if manifest.console.admin_domain:
+            lines.append(f"# Dedicated console admin host routed by Ophelia: {manifest.console.admin_domain}")
 
     return "\n".join(lines) + "\n"
 
@@ -443,10 +443,10 @@ def _group_routes_by_domain(manifest: Manifest) -> "OrderedDict[str, List[RouteC
 
 def effective_routes(manifest: Manifest) -> List[RouteConfig]:
     routes = list(manifest.routes)
-    if manifest.profile == "prism" and manifest.prism and manifest.prism.admin_domain:
+    if manifest.profile == "console" and manifest.console and manifest.console.admin_domain:
         domains = {route.domain for route in routes}
-        if manifest.prism.admin_domain not in domains:
-            routes.append(RouteConfig(domain=manifest.prism.admin_domain, service=_default_service_name(manifest)))
+        if manifest.console.admin_domain not in domains:
+            routes.append(RouteConfig(domain=manifest.console.admin_domain, service=_default_service_name(manifest)))
     return routes
 
 
@@ -553,4 +553,4 @@ def _default_service_name(manifest: Manifest) -> str:
         return "web"
     if manifest.services:
         return next(iter(manifest.services.keys()))
-    raise ValueError(f"Manifest {manifest.app} does not expose a service for Prism routing.")
+    raise ValueError(f"Manifest {manifest.app} does not expose a service for console routing.")

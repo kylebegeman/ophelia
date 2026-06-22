@@ -4163,8 +4163,8 @@ def _env_required_by(manifest: Manifest, key: str) -> str:
         return "data.redis" if manifest.data.redis else "addons.redis"
     if key in manifest.env:
         return "manifest.env"
-    if key.startswith("PRISM_"):
-        return "prism"
+    if key.startswith("OPHELIA_CONSOLE_"):
+        return "console"
     return "runtime"
 
 

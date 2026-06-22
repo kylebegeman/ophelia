@@ -23,16 +23,16 @@ contract with synthetic fixtures before any retained product is migrated.
 ## Changed Areas
 
 - `docs/ophelia-source-of-truth.md`: adds the durable source-of-truth rule.
-- `README.md`: points active examples at fixtures and frames Quark as legacy.
+- `README.md`: points active examples at fixtures and frames Legacy Console as legacy.
 - `docs/architecture.md`: updates the ownership boundary around Ophelia.
 - `docs/live-hydration.md`, `docs/live-drill-profiles.md`, and
   `docs/live-readiness-lane.md`: move primary examples to fixtures.
-- `Makefile`: removes Quark-specific hydration shortcut targets.
+- `Makefile`: removes Legacy Console-specific hydration shortcut targets.
 - `src/ophelia/command_catalog.py` and
   `src/ophelia/commands/live_hydration.py`: update catalog examples to
   fixture-backed commands.
 - `tests/test_live_hydration.py` and `tests/test_live_drills.py`: stop using
-  Quark as the active behavior test path.
+  Legacy Console as the active behavior test path.
 
 ## Contract Impact
 
@@ -53,5 +53,5 @@ or production state is mutated.
 
 ## Follow-Ups
 
-- Define retained-product adoption artifacts for `stillup` and `clearedtorun`
+- Define retained-product adoption artifacts for `retained-app` and `retained-secondary-app`
   when their deployment or migration phase begins.

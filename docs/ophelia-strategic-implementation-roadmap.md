@@ -79,10 +79,10 @@ rebuilt:
   and target path checklists without copying files.
 - A committed reviewed fixture evidence kit for rehearsing validation,
   promotion planning, and probe review without live runtime values.
-- The first bounded Quark staging live snapshot attempt, with a real runtime app
+- The first bounded Legacy Console staging live snapshot attempt, with a real runtime app
   root, review scaffold, and documented remaining evidence blockers.
-- A follow-up Quark staging evidence pass that writes non-secret structural env
-  keys and name-only GitHub observations for verified Prism staging secrets.
+- A follow-up Legacy Console staging evidence pass that writes non-secret structural env
+  keys and name-only GitHub observations for verified Legacy Runtime staging secrets.
 - A source-of-truth correction that makes fixtures the active validation
   substrate and treats old deployments as legacy inventory until an explicit
   adoption, migration, or deployment phase starts.
@@ -616,7 +616,7 @@ running HTTP, Docker, authenticated provider, or mutation probes.
 
 **Work items:**
 
-- Add `config/ophelia-live-drills.yml` with local runtime baseline and Quark
+- Add `config/ophelia-live-drills.yml` with local runtime baseline and Legacy Console
   Ops production/staging focused profiles.
 - Run first read-only live baseline against repo manifests and
   `~/ophelia-runtime`.
@@ -863,31 +863,31 @@ app suite.
 promote evidence, run probes, call providers, refresh state, execute workflows,
 or mutate production. It is a synthetic fixture rehearsal only.
 
-## Phase 18: Quark Staging Live Snapshot Attempt
+## Phase 18: Legacy Console Staging Live Snapshot Attempt
 
 **Status:** Landed in changelog record
-[`0038`](changelog/0038-quark-staging-live-snapshot-attempt.md).
+[`0038`](changelog/0038-legacy-console-staging-live-snapshot-attempt.md).
 
-**Goal:** Start the real Quark staging hydration path while preserving the
+**Goal:** Start the real Legacy Console staging hydration path while preserving the
 secret and no-probe safety boundary.
 
 **Work items:**
 
-- Inspect the current `quark-ops-staging` hydration report and local host
+- Inspect the current `legacy-console-ops-staging` hydration report and local host
   readiness.
 - Check GitHub secret-name availability through `gh` without reading values.
 - Create the empty runtime app root at
-  `~/ophelia-runtime/apps/quark-ops-staging`.
+  `~/ophelia-runtime/apps/legacy-console-ops-staging`.
 - Write template-only evidence review files under
-  `~/ophelia-runtime/hydration/quark-ops-staging/staging`.
+  `~/ophelia-runtime/hydration/legacy-console-ops-staging/staging`.
 - Rerun hydration, evidence validation, promotion planning, and probe gate.
 - Document the exact commands, safe mutations, non-mutations, results, and
   remaining blockers in private operator notes outside the public repo.
 
 **Dependencies:** Phase 16 promotion plan, Phase 15 probe gate, and the local
-Quark staging live drill profile.
+Legacy Console staging live drill profile.
 
-**Milestone commit:** `docs: record quark staging live snapshot attempt`
+**Milestone commit:** `docs: record legacy-console staging live snapshot attempt`
 
 **Definition of done:**
 
@@ -904,32 +904,32 @@ observation files, or host inventory facts with guessed data. The next step
 requires real operator-provided runtime env values and truthful provider/host
 evidence outside Git.
 
-## Phase 19: Quark Staging Partial Live Evidence
+## Phase 19: Legacy Console Staging Partial Live Evidence
 
 **Status:** Landed in changelog record
-[`0039`](changelog/0039-quark-staging-partial-live-evidence.md).
+[`0039`](changelog/0039-legacy-console-staging-partial-live-evidence.md).
 
-**Goal:** Move the Quark staging baseline forward using only evidence that can
+**Goal:** Move the Legacy Console staging baseline forward using only evidence that can
 be verified without reading or inventing secret values.
 
 **Work items:**
 
-- Read the upstream `bagelworks/prism` Quark image workflow to confirm staging
+- Read the upstream `example/console-runtime` Legacy Console image workflow to confirm staging
   secret-name mappings.
 - Write non-secret structural env keys to
-  `~/ophelia-runtime/apps/quark-ops-staging/env`.
-- Write name-only GitHub secret observations for the three verified Prism
+  `~/ophelia-runtime/apps/legacy-console-ops-staging/env`.
+- Write name-only GitHub secret observations for the three verified Legacy Runtime
   staging secrets to
-  `~/ophelia-runtime/github/secret-observations/quark-ops-staging.staging.json`.
+  `~/ophelia-runtime/github/secret-observations/legacy-console-ops-staging.staging.json`.
 - Rerun hydration, probe gate, and focused live-readiness summaries.
 - Document the commands, runtime evidence written, improved counts, remaining
   blockers, and safety boundary in private operator notes outside the public
   repo.
 
 **Dependencies:** Phase 18 live snapshot attempt and GitHub CLI read access to
-the Prism repository metadata.
+the Legacy Runtime repository metadata.
 
-**Milestone commit:** `docs: record quark staging partial live evidence`
+**Milestone commit:** `docs: record legacy-console staging partial live evidence`
 
 **Definition of done:**
 
@@ -956,14 +956,14 @@ production deployment phase is explicitly approved.
 **Work items:**
 
 - Add [Ophelia Source Of Truth](ophelia-source-of-truth.md).
-- Remove uncommitted Quark-specific deploy/env setup work from this phase.
-- Remove Quark-specific hydration Make shortcuts from the active test surface.
+- Remove uncommitted Legacy Console-specific deploy/env setup work from this phase.
+- Remove Legacy Console-specific hydration Make shortcuts from the active test surface.
 - Update command catalog and hydration descriptor examples to use fixture
   profiles.
 - Update the operator runbook to show generic `ship` flows rather than a
   product-specific deploy wrapper.
 - Document local live profiles as legacy inventory/adoption snapshots only.
-- Keep retained-product direction focused on `stillup` and `clearedtorun`, with
+- Keep retained-product direction focused on `retained-app` and `retained-secondary-app`, with
   future product-specific artifacts added only during adoption/deployment work.
 
 **Dependencies:** Phase 17 reviewed fixture evidence and the Phase 18/19 lesson
@@ -977,12 +977,12 @@ that old live deployments can drift into architecture if used as test anchors.
   adapt to it.
 - Quick-start, command catalog, hydration docs, and Make targets use fixtures as
   the default examples.
-- Quark and other old deployments are framed as legacy inventory, not future
+- Legacy Console and other old deployments are framed as legacy inventory, not future
   product architecture.
 - No real product deployment, provider mutation, env value collection, or live
   probe is run.
 
-**Boundary:** Phase 20 does not delete historical Quark records or decommission
+**Boundary:** Phase 20 does not delete historical Legacy Console records or decommission
 old runtime state. It corrects the active development path. Real retained-app
 deployment work belongs in a later approved phase.
 
@@ -1200,8 +1200,8 @@ Phase 0 docs
                             -> Phase 15 no-probe live gate
                               -> Phase 16 live evidence promotion plan
                                 -> Phase 17 reviewed hydration fixture evidence
-                                  -> Phase 18 quark staging live snapshot attempt
-                                    -> Phase 19 quark staging partial live evidence
+                                  -> Phase 18 legacy-console staging live snapshot attempt
+                                    -> Phase 19 legacy-console staging partial live evidence
                                       -> Phase 20 source-of-truth fixture-first validation
                                         -> Phase 21 app adoption plan contract
                                           -> Phase 22 future-app adoption fixture repos

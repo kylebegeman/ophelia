@@ -26,7 +26,7 @@ checks structure and safety without promoting, copying, or printing values.
 - `src/ophelia/commands/live_hydration.py`: adds
   `ship live-hydration validate-evidence`.
 - `src/ophelia/command_catalog.py`: adds validation examples.
-- `Makefile`: adds `live-hydration-validate-evidence-quark-staging`.
+- `Makefile`: adds `live-hydration-validate-evidence-legacy-console-staging`.
 - `tests/test_live_hydration.py`: covers missing directories, template warnings,
   secret-value blocking, CLI output, and catalog visibility.
 - README, live-hydration docs, roadmap, findings, and scratchpad docs updated.
@@ -51,7 +51,7 @@ observations, host inventory, state DB files, or workflow artifacts.
 ## Verification
 
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_hydration`
-- `make live-hydration-validate-evidence-quark-staging`
+- `make live-hydration-validate-evidence-legacy-console-staging`
 - `python3 -m compileall -q src/ophelia/live_hydration.py src/ophelia/commands/live_hydration.py src/ophelia/command_catalog.py`
 - `PYTHONPATH=src python3 -m ophelia.docs_check`
 - `git diff --check`

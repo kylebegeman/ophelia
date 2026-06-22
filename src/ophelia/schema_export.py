@@ -27,7 +27,7 @@ SCHEMA_ID = "https://ophelia.local/schemas/manifest.v1.json"
 
 # Top-level required fields. Chosen to keep every examples/*.ophelia.yml valid:
 # `services` is intentionally omitted because static/tunnel/redirect manifests
-# (portfolio, aspectavy-*) do not declare services. The manifest parser still
+# (portfolio, demo-docs-*) do not declare services. The manifest parser still
 # enforces kind-specific requirements that JSON Schema cannot express cleanly.
 REQUIRED_TOP_LEVEL: List[str] = ["version", "app", "kind", "routes"]
 
@@ -39,13 +39,13 @@ REQUIRED_TOP_LEVEL: List[str] = ["version", "app", "kind", "routes"]
 _ENUM_BY_PATH: Dict[str, List[Any]] = {
     "kind": ["service", "multi-service", "static", "tunnel", "redirect"],
     "environment": ["dev", "staging", "production"],
-    "profile": ["prism"],
+    "profile": ["console"],
     "edge.catch_all.http_redirect_status": [301, 302, 307, 308],
     "pack.portability": ["critical", "standard", "static"],
     "networking.edge": ["shared"],
     "networking.internal": ["shared", "per-app"],
     "edge.tls.mode": ["auto", "internal", "custom"],
-    "prism.surface": ["console", "quark"],
+    "console.surface": ["console", "root"],
     "verify_policy.failure_mode": ["hard", "warn"],
     "observability.metrics.format": ["prometheus", "json", "none"],
     "observability.metrics.auth": ["none", "bearer_env", "basic_env"],

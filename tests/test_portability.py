@@ -82,16 +82,16 @@ class PortabilityTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_portable_manifest())
                 manifest = load_manifest(manifest_path)
                 deploy_bundle(manifest, manifest_path, runtime_root)
-                (runtime_root / "apps" / "dragon-writer" / "env").write_text(
-                    "OPHELIA_APP=dragon-writer\nDATABASE_URL=super-secret\n"
+                (runtime_root / "apps" / "demo-service" / "env").write_text(
+                    "OPHELIA_APP=demo-service\nDATABASE_URL=super-secret\n"
                 )
 
                 plan = export_plan(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -131,7 +131,7 @@ class PortabilityTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_portable_manifest())
                 app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
                 external_compose = root / "outside-compose.yml"
@@ -140,14 +140,14 @@ class PortabilityTests(unittest.TestCase):
                 (app_root / "compose.yml").symlink_to(external_compose)
 
                 plan = export_plan(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
                     ophelia_root=root,
                 )
                 receipt = export_create(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -164,7 +164,7 @@ class PortabilityTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 uploads_root = root / "uploads"
                 uploads_root.mkdir()
                 (uploads_root / "draft.txt").write_text("private draft text\n")
@@ -173,7 +173,7 @@ class PortabilityTests(unittest.TestCase):
                 app_root = deploy_bundle(manifest, manifest_path, runtime_root)
                 (app_root / "env").write_text("DATABASE_URL=postgres://user:secret@example/db\nAPI_TOKEN=super-secret\n")
                 plan = export_plan(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -181,7 +181,7 @@ class PortabilityTests(unittest.TestCase):
                 )
 
                 blocked = export_create(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -189,7 +189,7 @@ class PortabilityTests(unittest.TestCase):
                     ophelia_root=root,
                 )
                 receipt = export_create(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -200,7 +200,7 @@ class PortabilityTests(unittest.TestCase):
                 bundle_tar_path = Path(str(receipt["bundle_tar_path"]))
                 imported = import_plan(bundle_path, runtime_root=runtime_root, ophelia_root=root)
                 imported_from_tar = import_plan(bundle_tar_path, runtime_root=runtime_root, ophelia_root=root)
-                listed = receipt_list_report(runtime_root, app="dragon-writer")
+                listed = receipt_list_report(runtime_root, app="demo-service")
                 bundle_manifest_exists = (bundle_path / "manifest.json").exists()
                 bundle_tar_exists = bundle_tar_path.exists()
                 source_host_exists = (bundle_path / "source-host.json").exists()
@@ -226,8 +226,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertNotIn("super-secret", bundle_text)
         self.assertNotIn("postgres://user:secret", bundle_text)
         self.assertIn("<redacted>", bundle_text)
-        self.assertEqual("dragon-writer", imported["app"])
-        self.assertEqual("dragon-writer", imported_from_tar["app"])
+        self.assertEqual("demo-service", imported["app"])
+        self.assertEqual("demo-service", imported_from_tar["app"])
         self.assertIn("data/volumes/uploads.tar", {item["path"] for item in imported["source_artifacts"]["data_archives"]})
         self.assertIn("app.export.create", {item["operation"] for item in listed["receipts"]})
 
@@ -307,21 +307,21 @@ class PortabilityTests(unittest.TestCase):
                 runtime_root = root / "runtime"
                 uploads_root = root / "uploads"
                 uploads_root.mkdir()
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_portable_manifest_with_env_secret())
                 manifest = load_manifest(manifest_path)
                 app_root = deploy_bundle(manifest, manifest_path, runtime_root)
                 database_url = "postgres://writer:secret-password@db.example.test:5432/dragon_writer?sslmode=require"
                 (app_root / "env").write_text(f"DATABASE_URL={database_url}\nAPI_TOKEN=super-secret\n")
                 plan_without_postgres = export_plan(
-                    "dragon-writer",
+                    "demo-service",
                     "production",
                     runtime_root,
                     manifest_path,
                     root,
                 )
                 plan = export_plan(
-                    "dragon-writer",
+                    "demo-service",
                     "production",
                     runtime_root,
                     manifest_path,
@@ -338,7 +338,7 @@ class PortabilityTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="fixture-sha\n", stderr="")
 
                 blocked = export_create(
-                    "dragon-writer",
+                    "demo-service",
                     "production",
                     runtime_root,
                     manifest_path,
@@ -351,7 +351,7 @@ class PortabilityTests(unittest.TestCase):
                     side_effect=fake_run,
                 ):
                     receipt = export_create(
-                        "dragon-writer",
+                        "demo-service",
                         "production",
                         runtime_root,
                         manifest_path,
@@ -377,10 +377,10 @@ class PortabilityTests(unittest.TestCase):
                     json.dumps(
                         {
                             "receipt_type": "app.export.plan",
-                            "app": "dragon-writer",
+                            "app": "demo-service",
                             "environment": "production",
-                            "domains": ["dragonwriter.example.net"],
-                            "routes": [{"domain": "dragonwriter.example.net", "service": "web"}],
+                            "domains": ["demo-service.example.net"],
+                            "routes": [{"domain": "demo-service.example.net", "service": "web"}],
                             "data_dependencies": {
                                 "postgres": {
                                     "mode": "shared-postgres-database",
@@ -398,7 +398,7 @@ class PortabilityTests(unittest.TestCase):
                             "verification_checks": [
                                 {
                                     "name": "health",
-                                    "url": "https://dragonwriter.example.net/health",
+                                    "url": "https://demo-service.example.net/health",
                                     "expect_status": 200,
                                 }
                             ],
@@ -410,7 +410,7 @@ class PortabilityTests(unittest.TestCase):
                 plan = import_plan(metadata_path, runtime_root=root / "runtime", ophelia_root=root)
 
         self.assertEqual("app.import.plan", plan["receipt_type"])
-        self.assertEqual("dragon-writer", plan["app"])
+        self.assertEqual("demo-service", plan["app"])
         self.assertEqual("production", plan["environment"])
         self.assertEqual([], plan["blockers"])
         self.assertTrue(plan["apply_supported"])
@@ -426,10 +426,10 @@ class PortabilityTests(unittest.TestCase):
                     json.dumps(
                         {
                             "receipt_type": "app.export.plan",
-                            "app": "dragon-writer",
+                            "app": "demo-service",
                             "environment": "production",
-                            "domains": ["dragonwriter.example.net"],
-                            "routes": [{"domain": "dragonwriter.example.net", "service": "web"}],
+                            "domains": ["demo-service.example.net"],
+                            "routes": [{"domain": "demo-service.example.net", "service": "web"}],
                             "data_dependencies": {
                                 "postgres": {
                                     "mode": "shared-postgres-database",
@@ -437,7 +437,7 @@ class PortabilityTests(unittest.TestCase):
                                 }
                             },
                             "env_shape": [{"key": "DATABASE_URL", "secret_value_redacted": True}],
-                            "verification_checks": [{"name": "health", "url": "https://dragonwriter.example.net/health"}],
+                            "verification_checks": [{"name": "health", "url": "https://demo-service.example.net/health"}],
                         }
                     )
                     + "\n"
@@ -451,7 +451,7 @@ class PortabilityTests(unittest.TestCase):
                     ophelia_root=root,
                 )
                 preview_path = Path(str(receipt["preview_path"]))
-                listed = receipt_list_report(runtime_root, app="dragon-writer")
+                listed = receipt_list_report(runtime_root, app="demo-service")
                 preview_files = {path.name for path in preview_path.iterdir()}
 
         self.assertTrue(plan["apply_supported"])
@@ -459,7 +459,7 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual("succeeded", receipt["status"])
         self.assertIn("import-plan.json", preview_files)
         self.assertIn("source-artifacts.json", preview_files)
-        self.assertFalse((runtime_root / "apps" / "dragon-writer" / "manifest.lock.json").exists())
+        self.assertFalse((runtime_root / "apps" / "demo-service" / "manifest.lock.json").exists())
         self.assertIn("app.import.apply", {item["operation"] for item in listed["receipts"]})
 
     def test_restore_drill_apply_writes_isolated_receipt(self) -> None:
@@ -1219,29 +1219,29 @@ class PortabilityTests(unittest.TestCase):
             )
 
             plan = isolation_plan(
-                "dragon-writer",
+                "demo-service",
                 "production",
                 runtime_root=root / "runtime",
                 manifest_path=manifest_path,
             )
 
         self.assertEqual("per-app", plan["mode"])
-        self.assertEqual(["ophelia-edge", "dragon-writer-production-internal"], plan["target_networks"])
+        self.assertEqual(["ophelia-edge", "demo-service-production-internal"], plan["target_networks"])
         self.assertEqual([], plan["warnings"])
 
     def test_env_shape_diff_redacts_values_and_reports_statuses(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_portable_manifest())
             manifest = load_manifest(manifest_path)
             deploy_bundle(manifest, manifest_path, runtime_root)
-            (runtime_root / "apps" / "dragon-writer" / "env").write_text(
+            (runtime_root / "apps" / "demo-service" / "env").write_text(
                 "DATABASE_URL=postgres://user:password@example/db\nEXTRA_SECRET=secret-value\n"
             )
 
-            report = env_shape_diff_report("dragon-writer", "production", runtime_root, manifest_path)
+            report = env_shape_diff_report("demo-service", "production", runtime_root, manifest_path)
 
         statuses = {item["key"]: item["status"] for item in report["entries"]}
         self.assertEqual("present", statuses["DATABASE_URL"])
@@ -1254,15 +1254,15 @@ class PortabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_portable_manifest())
-            backup_root = runtime_root / "backups" / "apps" / "dragon-writer" / "20260620T120000Z-fixture"
+            backup_root = runtime_root / "backups" / "apps" / "demo-service" / "20260620T120000Z-fixture"
             backup_root.mkdir(parents=True)
             (backup_root / "backup-manifest.json").write_text(
                 json.dumps(
                     {
                         "backup_id": "20260620T120000Z-fixture",
-                        "app": "dragon-writer",
+                        "app": "demo-service",
                         "created_at": _iso(datetime.now(timezone.utc) - timedelta(minutes=10)),
                         "coverage": {"release_metadata": True, "app_env": True},
                         "database": {"postgres": True, "mode": "metadata-only"},
@@ -1271,7 +1271,7 @@ class PortabilityTests(unittest.TestCase):
                 + "\n"
             )
 
-            report = backup_status_report("dragon-writer", "production", runtime_root, manifest_path)
+            report = backup_status_report("demo-service", "production", runtime_root, manifest_path)
 
         self.assertEqual("fresh", report["freshness"]["status"])
         self.assertEqual([], report["blockers"])
@@ -1283,7 +1283,7 @@ class PortabilityTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_portable_manifest())
                 (root / "neighbor.ophelia.yml").write_text(
                     """
@@ -1301,23 +1301,23 @@ routes:
                 release = json.loads((app_root / "release.json").read_text())
                 (app_root / "active_release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
                 _write_filled_env(app_root)
-                _write_backup(runtime_root, "dragon-writer")
+                _write_backup(runtime_root, "demo-service")
                 drill_root = app_root / "restore-drills"
                 drill_root.mkdir()
                 (drill_root / "successful-drill.json").write_text(
                     json.dumps(
                         {
                             "operation": "app.restore-drill.apply",
-                            "operation_id": "app.restore-drill.apply.dragon-writer.production.fixture",
+                            "operation_id": "app.restore-drill.apply.demo-service.production.fixture",
                             "status": "succeeded",
-                            "app": "dragon-writer",
+                            "app": "demo-service",
                             "environment": "production",
                         }
                     )
                     + "\n"
                 )
 
-                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+                report = app_readiness_report("demo-service", "production", runtime_root, manifest_path)
 
         self.assertEqual([], report["blockers"])
         self.assertIn(report["readiness_level"], {"ready", "warning"})
@@ -1331,7 +1331,7 @@ routes:
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_portable_manifest())
                 (root / "neighbor.ophelia.yml").write_text(
                     """
@@ -1349,23 +1349,23 @@ routes:
                 release = json.loads((app_root / "release.json").read_text())
                 (app_root / "active_release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
                 _write_filled_env(app_root)
-                _write_backup(runtime_root, "dragon-writer")
+                _write_backup(runtime_root, "demo-service")
                 drill_root = app_root / "restore-drills"
                 drill_root.mkdir()
                 (drill_root / "successful-drill.json").write_text(
                     json.dumps(
                         {
                             "operation": "app.restore-drill.apply",
-                            "operation_id": "app.restore-drill.apply.dragon-writer.production.fixture",
+                            "operation_id": "app.restore-drill.apply.demo-service.production.fixture",
                             "status": "succeeded",
-                            "app": "dragon-writer",
+                            "app": "demo-service",
                             "environment": "production",
                         }
                     )
                     + "\n"
                 )
 
-                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+                report = app_readiness_report("demo-service", "production", runtime_root, manifest_path)
 
         self.assertNotIn("neighbor.example.com", json.dumps(report["warnings"]))
         self.assertNotIn("missing_verification_checks", {item["code"] for item in report["warnings"]})
@@ -1373,16 +1373,16 @@ routes:
     def test_receipt_browser_lists_and_shows_receipts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir) / "runtime"
-            receipt_root = runtime_root / "apps" / "dragon-writer" / "receipts"
+            receipt_root = runtime_root / "apps" / "demo-service" / "receipts"
             receipt_root.mkdir(parents=True)
             receipt_path = receipt_root / "export-create.json"
             receipt_path.write_text(
                 json.dumps(
                     {
                         "operation": "app.export.create",
-                        "operation_id": "app.export.create.dragon-writer.production.fixture",
+                        "operation_id": "app.export.create.demo-service.production.fixture",
                         "status": "succeeded",
-                        "app": "dragon-writer",
+                        "app": "demo-service",
                         "environment": "production",
                         "inputs_redacted": True,
                     }
@@ -1390,8 +1390,8 @@ routes:
                 + "\n"
             )
 
-            listed = receipt_list_report(runtime_root, app="dragon-writer", environment="production")
-            shown = receipt_show_report("app.export.create.dragon-writer.production.fixture", runtime_root)
+            listed = receipt_list_report(runtime_root, app="demo-service", environment="production")
+            shown = receipt_show_report("app.export.create.demo-service.production.fixture", runtime_root)
 
         self.assertEqual(1, len(listed["receipts"]))
         self.assertEqual("app.export.create", listed["receipts"][0]["operation"])
@@ -1400,7 +1400,7 @@ routes:
     def test_pack_init_preview_is_read_only_and_write_refuses_partial_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            preview = pack_init_report("dragon-writer", "production", True, True, False, True, root)
+            preview = pack_init_report("demo-service", "production", True, True, False, True, root)
             self.assertTrue(preview["dry_run"])
             self.assertFalse((root / "ophelia" / "runbook.md").exists())
             self.assertTrue(
@@ -1412,10 +1412,10 @@ routes:
             existing = root / "ophelia" / "runbook.md"
             existing.parent.mkdir()
             existing.write_text("existing\n")
-            blocked = pack_init_report("dragon-writer", "production", True, True, False, True, root, write=True)
+            blocked = pack_init_report("demo-service", "production", True, True, False, True, root, write=True)
             clean_root = root / "clean"
             written = pack_init_report(
-                "dragon-writer",
+                "demo-service",
                 "production",
                 True,
                 True,
@@ -1699,10 +1699,10 @@ verify:
 def _portable_manifest() -> str:
     return """
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer@sha256:aaaaaaaa
+image: ghcr.io/example/demo-service@sha256:aaaaaaaa
 pack:
   portability: critical
   owner: personal
@@ -1712,7 +1712,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.net
     service: web
 data:
   postgres:
@@ -1738,7 +1738,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.net/health
 """.strip() + "\n"
 
 
@@ -1794,10 +1794,10 @@ pack:
 def _portable_manifest_with_env_secret() -> str:
     return """
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer@sha256:aaaaaaaa
+image: ghcr.io/example/demo-service@sha256:aaaaaaaa
 env:
   API_TOKEN: super-secret
 pack:
@@ -1809,7 +1809,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.net
     service: web
 data:
   postgres:
@@ -1835,7 +1835,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.net/health
 """.strip() + "\n"
 
 

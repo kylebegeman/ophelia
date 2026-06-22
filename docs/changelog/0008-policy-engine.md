@@ -134,7 +134,7 @@ prove will block rather than silently pass.
 - `PYTHON=python3 make validate-examples`
 - `./cli/ship policy validate --json` (pure JSON; exit 0)
 - `./cli/ship policy explain --json` (pure JSON)
-- `./cli/ship policy evaluate --operation app.traffic.apply --app dragon-writer
+- `./cli/ship policy evaluate --operation app.traffic.apply --app demo-service
   --environment production` (blocked, exit 1); same with
   `--has-target-health-check --has-rollback` (ok, exit 0)
 - `git diff --check`

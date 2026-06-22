@@ -20,7 +20,7 @@ is also served at `GET /schema/manifest`.
 
 ## Why
 
-Agents (Lumen, Quark) need a machine-readable manifest contract they can
+Agents (Lumen, Legacy Console) need a machine-readable manifest contract they can
 validate against before authoring or deploying a manifest, and operators need a
 fast first smoke command that confirms an install is healthy on a fresh host
 before running anything that could mutate state. The schema is derived from the
@@ -33,7 +33,7 @@ instead of drifting as a hand-maintained artifact.
   2020-12 schema from `ophelia.manifest` dataclasses using `dataclasses.fields`
   and type hints, with an explicit enum side-table keyed by dotted field path
   (kind, environment, profile, redirect_status, edge.catch_all.http_redirect_status,
-  pack.portability, networking.edge/internal, edge.tls.mode, prism.surface,
+  pack.portability, networking.edge/internal, edge.tls.mode, console.surface,
   verify_policy.failure_mode). `manifest_json_schema_text()` serializes it with
   `indent=2, sort_keys=True`. Top-level `required` is `["version", "app",
   "kind", "routes"]`; `additionalProperties` is `true` everywhere to match the
@@ -82,7 +82,7 @@ mutated.
 - `PYTHON=python3 make validate-examples`
 - jsonschema conformance tests RAN (jsonschema 4.25.1 installed): all six
   `examples/*.ophelia.yml` validate against the exported schema, including the
-  dragonwriter critical pack.
+  demo-service critical pack.
 - `git diff --check`
 
 ## Follow-Ups

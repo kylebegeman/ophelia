@@ -21,15 +21,15 @@ def _iso(value: datetime) -> str:
 def _manifest_text(*, health_url: str | None = None, with_metrics: bool = False, with_secret_env: bool = False) -> str:
     lines = [
         "version: 1",
-        "app: dragon-writer",
+        "app: demo-service",
         "environment: production",
         "kind: service",
-        "image: ghcr.io/example/dragon-writer:latest",
+        "image: ghcr.io/example/demo-service:latest",
         "services:",
         "  web:",
         "    port: 3000",
         "routes:",
-        "  - domain: dragonwriter.example.test",
+        "  - domain: demo-service.example.test",
         "    service: web",
         "data:",
         "  backups:",
@@ -50,16 +50,16 @@ def _manifest_text(*, health_url: str | None = None, with_metrics: bool = False,
 
 def _seed_runtime(root: Path, *, with_backup: bool, with_failed_receipt: bool) -> Path:
     runtime_root = root / "runtime"
-    app_root = runtime_root / "apps" / "dragon-writer"
+    app_root = runtime_root / "apps" / "demo-service"
     (app_root / "receipts").mkdir(parents=True)
     if with_backup:
-        backup_root = runtime_root / "backups" / "apps" / "dragon-writer" / "20260620T120000Z-fixture"
+        backup_root = runtime_root / "backups" / "apps" / "demo-service" / "20260620T120000Z-fixture"
         backup_root.mkdir(parents=True)
         (backup_root / "backup-manifest.json").write_text(
             json.dumps(
                 {
                     "backup_id": "20260620T120000Z-fixture",
-                    "app": "dragon-writer",
+                    "app": "demo-service",
                     "created_at": _iso(datetime.now(timezone.utc) - timedelta(minutes=10)),
                     "coverage": {"app_env": True},
                 }
@@ -73,7 +73,7 @@ def _seed_runtime(root: Path, *, with_backup: bool, with_failed_receipt: bool) -
                     "kind": "ophelia.receipt",
                     "operation": "app.deploy.apply",
                     "operation_id": "deploy-failed-1",
-                    "app": "dragon-writer",
+                    "app": "demo-service",
                     "environment": "production",
                     "status": "failed",
                     "started_at": _iso(datetime.now(timezone.utc)),
@@ -162,7 +162,7 @@ class ObservabilityStatusTests(unittest.TestCase):
             urlreq.urlopen = _boom
             try:
                 report = obs.observability_status(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -188,7 +188,7 @@ class ObservabilityStatusTests(unittest.TestCase):
             runtime_root = _seed_runtime(root, with_backup=False, with_failed_receipt=False)
 
             report = obs.observability_status(
-                "dragon-writer",
+                "demo-service",
                 environment="production",
                 runtime_root=runtime_root,
                 manifest_path=manifest_path,
@@ -220,7 +220,7 @@ class ObservabilityStatusTests(unittest.TestCase):
             urlreq.urlopen = _timeout
             try:
                 report = obs.observability_status(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=runtime_root,
                     manifest_path=manifest_path,
@@ -242,7 +242,7 @@ class ObservabilityStatusTests(unittest.TestCase):
             runtime_root = _seed_runtime(root, with_backup=False, with_failed_receipt=False)
 
             report = obs.observability_status(
-                "dragon-writer",
+                "demo-service",
                 environment="production",
                 runtime_root=runtime_root,
                 manifest_path=manifest_path,
@@ -261,7 +261,7 @@ class ObservabilityStatusTests(unittest.TestCase):
             runtime_root = _seed_runtime(root, with_backup=False, with_failed_receipt=False)
 
             report = obs.observability_status(
-                "dragon-writer",
+                "demo-service",
                 environment="production",
                 runtime_root=runtime_root,
                 manifest_path=manifest_path,
@@ -282,7 +282,7 @@ class ObservabilityPlanExportTests(unittest.TestCase):
             runtime_root = _seed_runtime(root, with_backup=False, with_failed_receipt=False)
 
             report = obs.observability_plan(
-                "dragon-writer",
+                "demo-service",
                 environment="production",
                 runtime_root=runtime_root,
                 manifest_path=manifest_path,
@@ -301,7 +301,7 @@ class ObservabilityPlanExportTests(unittest.TestCase):
             runtime_root = _seed_runtime(root, with_backup=True, with_failed_receipt=True)
 
             report = obs.observability_export(
-                "dragon-writer",
+                "demo-service",
                 environment="production",
                 runtime_root=runtime_root,
                 manifest_path=manifest_path,
@@ -330,7 +330,7 @@ class DashboardObservabilityTests(unittest.TestCase):
             report = dashboard_data(runtime_root=runtime_root, manifests_dir=manifests_dir)
             apps = report.get("apps", [])
             self.assertTrue(apps)
-            row = next(entry for entry in apps if entry["app"] == "dragon-writer")
+            row = next(entry for entry in apps if entry["app"] == "demo-service")
             self.assertIsNotNone(row["observability"])
             self.assertTrue(row["observability"]["health_configured"])
             self.assertEqual("fresh", row["observability"]["backup_freshness"])
@@ -349,7 +349,7 @@ class DashboardObservabilityTests(unittest.TestCase):
 
             report = dashboard_data(runtime_root=runtime_root, manifests_dir=manifests_dir)
 
-            row = next(entry for entry in report["apps"] if entry["app"] == "dragon-writer")
+            row = next(entry for entry in report["apps"] if entry["app"] == "demo-service")
             self.assertIsNotNone(row["traffic_status"])
             self.assertEqual("ok", row["traffic_status"]["status"])
             self.assertIsInstance(report["traffic_status"], dict)
@@ -375,7 +375,7 @@ class ObservabilityScheduleTests(unittest.TestCase):
             self.assertEqual("ophelia.observability_schedule_run", report["kind"])
             self.assertEqual("succeeded", report["status"])
             self.assertEqual(1, report["totals"]["app_count"])
-            self.assertEqual("dragon-writer", report["apps"][0]["app"])
+            self.assertEqual("demo-service", report["apps"][0]["app"])
             latest = runtime_root / "observability" / "latest.json"
             self.assertTrue(latest.exists())
             run_artifacts = list((runtime_root / "observability" / "runs").glob("*.json"))

@@ -60,5 +60,5 @@ deployment state.
 
 ## Follow-Ups
 
-- Use adoption plans for `stillup` and `clearedtorun` only when their explicit
+- Use adoption plans for `retained-app` and `retained-secondary-app` only when their explicit
   retained-product adoption or deployment phase begins.

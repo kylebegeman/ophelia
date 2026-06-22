@@ -1,4 +1,4 @@
-# 0039: Quark Staging Partial Live Evidence
+# 0039: Legacy Console Staging Partial Live Evidence
 
 Date: 2026-06-22
 
@@ -6,24 +6,24 @@ Status: landed
 
 ## Summary
 
-Adds the first partial real evidence for Quark staging after the live snapshot
+Adds the first partial real evidence for Legacy Console staging after the live snapshot
 attempt. The runtime env now contains only non-secret structural keys, and the
 runtime secret-observation store records name-only GitHub observations for the
-three Prism staging secrets verified from the upstream Quark workflow.
+three Legacy Runtime staging secrets verified from the upstream Legacy Console workflow.
 
 ## Changes
 
-- Wrote `~/ophelia-runtime/apps/quark-ops-staging/env` with:
+- Wrote `~/ophelia-runtime/apps/legacy-console-ops-staging/env` with:
   - `OPHELIA_APP`
-  - `PRISM_CONSOLE_ASSET_PATH`
-  - `PRISM_CONSOLE_SURFACE`
+  - `OPHELIA_CONSOLE_ASSET_PATH`
+  - `OPHELIA_CONSOLE_SURFACE`
 - Wrote
-  `~/ophelia-runtime/github/secret-observations/quark-ops-staging.staging.json`
+  `~/ophelia-runtime/github/secret-observations/legacy-console-ops-staging.staging.json`
   with name-only mappings for:
-  - `QUARK_STAGING_SETUP_TOKEN` -> `PRISM_CONSOLE_SETUP_TOKEN`
-  - `QUARK_STAGING_CREDENTIAL_ENCRYPTION_KEY` ->
-    `PRISM_CREDENTIAL_ENCRYPTION_KEY`
-  - `QUARK_STAGING_MFA_ENCRYPTION_KEY` -> `PRISM_MFA_ENCRYPTION_KEY`
+  - `LEGACY_CONSOLE_STAGING_SETUP_TOKEN` -> `OPHELIA_CONSOLE_SETUP_TOKEN`
+  - `LEGACY_CONSOLE_STAGING_CREDENTIAL_ENCRYPTION_KEY` ->
+    `OPHELIA_CONSOLE_CREDENTIAL_ENCRYPTION_KEY`
+  - `LEGACY_CONSOLE_STAGING_MFA_ENCRYPTION_KEY` -> `OPHELIA_CONSOLE_MFA_ENCRYPTION_KEY`
 - Reran hydration, probe gate, and focused live-readiness summaries.
 - Recorded private operator notes with commands, results, improved counts, and
   remaining blockers. Those scratchpad notes are intentionally not part of the

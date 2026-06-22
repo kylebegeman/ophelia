@@ -10,7 +10,7 @@ commits: []
 
 ## Summary
 
-Phase 3 adds three read-only validation surfaces that let agents (Lumen, Quark)
+Phase 3 adds three read-only validation surfaces that let agents (Lumen, Legacy Console)
 and operators check the risky edges of a move before any mutation is planned,
 without ever exposing a secret value or touching a VPS.
 
@@ -109,7 +109,7 @@ range cannot drift between the CLI plan path and the validator.
 - `ship providers validate --config <ok>.json --json` (status ok)
 - `ship providers validate --config <raw-token>.json --json` (status blocked,
   `provider_token_must_be_env_ref`, token value absent from output)
-- `ship secrets audit examples/dragonwriter.ophelia.yml --environment production
+- `ship secrets audit examples/demo-service.ophelia.yml --environment production
   --json` (pure JSON)
 - `git diff --check`
 

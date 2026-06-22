@@ -15,31 +15,31 @@ class OperationSchemaDigestTests(unittest.TestCase):
     def test_plan_envelope_includes_redacted_digest(self) -> None:
         plan = plan_envelope(
             operation="backup.create",
-            app="dragon-writer",
+            app="demo-service",
             environment="production",
             summary="Create a production backup.",
             blockers=[],
             warnings=[issue("backup_window_open", "Backup window is currently open.")],
             checks=[{"name": "storage", "ok": True}],
-            artifacts=[artifact("backups/dragon-writer", "directory")],
+            artifacts=[artifact("backups/demo-service", "directory")],
             confirmation_required=True,
             confirmation_token="non-secret-token",
             exact_apply_input={
                 "command": (
-                    "ship backup create dragon-writer "
+                    "ship backup create demo-service "
                     "--token super-secret-value "
                     "--database-url postgres://user:password@db.example.com/app "
                     "--confirm CONFIRMATION_TOKEN"
                 )
             },
             risk="high",
-            changes=[{"path": "backups/dragon-writer", "change": "create"}],
+            changes=[{"path": "backups/demo-service", "change": "create"}],
         )
 
         digest = plan["digest"]
         encoded_digest = json.dumps(digest)
         self.assertEqual("backup.create", digest["operation"])
-        self.assertEqual("dragon-writer", digest["app"])
+        self.assertEqual("demo-service", digest["app"])
         self.assertEqual("production", digest["environment"])
         self.assertEqual("high", digest["risk"])
         self.assertEqual("awaiting_confirmation", digest["status"])
@@ -56,7 +56,7 @@ class OperationSchemaDigestTests(unittest.TestCase):
     def test_receipt_envelope_digest_summarizes_rollback(self) -> None:
         receipt = receipt_envelope(
             operation="app.traffic.apply",
-            app="dragon-writer",
+            app="demo-service",
             environment="production",
             status="succeeded",
             started_at="2026-06-21T12:00:00Z",

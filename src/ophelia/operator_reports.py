@@ -217,8 +217,8 @@ def _used_by(manifest: Manifest, key: str) -> List[str]:
     for service in manifest.services.values():
         if key in service.env:
             uses.append(f"service:{service.name}")
-    if manifest.profile == "prism" and key.startswith("PRISM_"):
-        uses.append("prism")
+    if manifest.profile == "console" and key.startswith("OPHELIA_CONSOLE_"):
+        uses.append("console")
     return uses or ["app"]
 
 

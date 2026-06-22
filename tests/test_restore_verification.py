@@ -34,12 +34,12 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
-            _write_backup(runtime_root, "dragon-writer", with_checksums=True)
+            _write_backup(runtime_root, "demo-service", with_checksums=True)
 
             before = _snapshot(runtime_root)
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
             after = _snapshot(runtime_root)
 
         self.assertEqual(before, after)
@@ -55,10 +55,10 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
 
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
 
         self.assertIsNone(plan["confirmation_token"])
         codes = {item["code"] for item in plan["blockers"]}
@@ -68,7 +68,7 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(
                 _critical_manifest()
                 .replace("command: pg_restore", "command: pg_restore --password hunter2")
@@ -77,9 +77,9 @@ class RestoreVerificationTests(unittest.TestCase):
                     "command: ophelia/checks/data-verify.sh --api-token sk-live-secret",
                 )
             )
-            _write_backup(runtime_root, "dragon-writer", with_checksums=True)
+            _write_backup(runtime_root, "demo-service", with_checksums=True)
 
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
 
         blob = json.dumps(plan)
         self.assertNotIn("hunter2", blob)
@@ -95,22 +95,22 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
-            _write_backup(runtime_root, "dragon-writer", with_checksums=True)
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            _write_backup(runtime_root, "demo-service", with_checksums=True)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
 
-            drills_dir = runtime_root / "apps" / "dragon-writer" / "restore-drills"
+            drills_dir = runtime_root / "apps" / "demo-service" / "restore-drills"
 
             # Empty token => error, no work.
-            empty = backup_verify_apply("dragon-writer", "production", runtime_root, confirm="", manifest_path=manifest_path)
+            empty = backup_verify_apply("demo-service", "production", runtime_root, confirm="", manifest_path=manifest_path)
             self.assertEqual("ophelia.error", empty["kind"])
             self.assertEqual("confirmation_token_missing", empty["blockers"][0]["code"])
             self.assertFalse(drills_dir.exists())
 
             # Wrong token => error, no work.
             wrong = backup_verify_apply(
-                "dragon-writer", "production", runtime_root, confirm="not-the-token", manifest_path=manifest_path
+                "demo-service", "production", runtime_root, confirm="not-the-token", manifest_path=manifest_path
             )
             self.assertEqual("ophelia.error", wrong["kind"])
             self.assertEqual("confirmation_token_mismatch", wrong["blockers"][0]["code"])
@@ -118,7 +118,7 @@ class RestoreVerificationTests(unittest.TestCase):
 
             # Correct token => receipt written under restore-drills.
             receipt = backup_verify_apply(
-                "dragon-writer",
+                "demo-service",
                 "production",
                 runtime_root,
                 confirm=str(plan["confirmation_token"]),
@@ -138,34 +138,34 @@ class RestoreVerificationTests(unittest.TestCase):
             # Nothing was written into the production app bundle proper (only the
             # restore-drills + rehearsals areas), and nothing deleted: the source
             # backup tree is intact.
-            app_dir = runtime_root / "apps" / "dragon-writer"
+            app_dir = runtime_root / "apps" / "demo-service"
             self.assertFalse((app_dir / "env").exists())
             self.assertFalse((app_dir / "compose.yml").exists())
-            self.assertTrue((runtime_root / "rehearsals" / "dragon-writer").exists())
+            self.assertTrue((runtime_root / "rehearsals" / "demo-service").exists())
             self.assertTrue(
-                (runtime_root / "backups" / "apps" / "dragon-writer").exists()
+                (runtime_root / "backups" / "apps" / "demo-service").exists()
             )
-            self.assertTrue(_backup_dir(runtime_root, "dragon-writer").joinpath("backup-manifest.json").exists())
+            self.assertTrue(_backup_dir(runtime_root, "demo-service").joinpath("backup-manifest.json").exists())
 
     def test_apply_refuses_target_resolving_into_production_app_dir(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
-            _write_backup(runtime_root, "dragon-writer", with_checksums=True)
+            _write_backup(runtime_root, "demo-service", with_checksums=True)
 
             # Force the plan to advertise a rehearsal target inside the production
             # app dir; the apply must refuse and write nothing.
-            unsafe_target = str(runtime_root / "apps" / "dragon-writer")
+            unsafe_target = str(runtime_root / "apps" / "demo-service")
 
             def _unsafe(runtime, app, backup_id):  # noqa: ANN001
                 return unsafe_target
 
             with mock.patch.object(rv, "_rehearsal_target", _unsafe):
-                plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+                plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
                 receipt = backup_verify_apply(
-                    "dragon-writer",
+                    "demo-service",
                     "production",
                     runtime_root,
                     confirm=str(plan["confirmation_token"]),
@@ -175,8 +175,8 @@ class RestoreVerificationTests(unittest.TestCase):
         self.assertEqual("ophelia.error", receipt["kind"])
         self.assertEqual("unsafe_rehearsal_target", receipt["blockers"][0]["code"])
         # Nothing written: no restore-drills receipt, no production app env file.
-        self.assertFalse((runtime_root / "apps" / "dragon-writer" / "restore-drills").exists())
-        self.assertFalse((runtime_root / "apps" / "dragon-writer" / "env").exists())
+        self.assertFalse((runtime_root / "apps" / "demo-service" / "restore-drills").exists())
+        self.assertFalse((runtime_root / "apps" / "demo-service" / "env").exists())
 
     # ------------------------------------------------------------------ #
     # missing-checksum severity depends on criticality
@@ -185,13 +185,13 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
-            _write_backup(runtime_root, "dragon-writer", with_checksums=False)
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            _write_backup(runtime_root, "demo-service", with_checksums=False)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
 
             receipt = backup_verify_apply(
-                "dragon-writer",
+                "demo-service",
                 "production",
                 runtime_root,
                 confirm=str(plan["confirmation_token"]),
@@ -238,17 +238,17 @@ class RestoreVerificationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_critical_manifest())
-                app_root = runtime_root / "apps" / "dragon-writer"
+                app_root = runtime_root / "apps" / "demo-service"
                 app_root.mkdir(parents=True)
                 _write_release(app_root)
                 _write_filled_env(app_root)
-                _write_backup(runtime_root, "dragon-writer", with_checksums=True)
+                _write_backup(runtime_root, "demo-service", with_checksums=True)
                 # No restore-drill receipt; only a successful verification receipt.
-                _write_verification_receipt(runtime_root, "dragon-writer", "production", status="succeeded")
+                _write_verification_receipt(runtime_root, "demo-service", "production", status="succeeded")
 
-                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+                report = app_readiness_report("demo-service", "production", runtime_root, manifest_path)
 
         # The verification receipt satisfies the restore_drill factor: no
         # restore_drill_missing blocker even though there is no drill receipt.
@@ -269,15 +269,15 @@ class RestoreVerificationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_critical_manifest())
-                app_root = runtime_root / "apps" / "dragon-writer"
+                app_root = runtime_root / "apps" / "demo-service"
                 app_root.mkdir(parents=True)
                 _write_release(app_root)
                 _write_filled_env(app_root)
-                _write_backup(runtime_root, "dragon-writer", with_checksums=True)
+                _write_backup(runtime_root, "demo-service", with_checksums=True)
 
-                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+                report = app_readiness_report("demo-service", "production", runtime_root, manifest_path)
 
         blocker_codes = {item["code"] for item in report["blockers"]}
         self.assertIn("restore_drill_missing", blocker_codes)
@@ -290,12 +290,12 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
-            _write_backup(runtime_root, "dragon-writer", with_checksums=True)
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            _write_backup(runtime_root, "demo-service", with_checksums=True)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
             receipt = backup_verify_apply(
-                "dragon-writer",
+                "demo-service",
                 "production",
                 runtime_root,
                 confirm=str(plan["confirmation_token"]),
@@ -303,7 +303,7 @@ class RestoreVerificationTests(unittest.TestCase):
             )
             verify_id = receipt["verify_id"]
 
-            listing = restore_drills_list("dragon-writer", "production", runtime_root)
+            listing = restore_drills_list("demo-service", "production", runtime_root)
             shown = restore_drills_show(verify_id, runtime_root)
 
         self.assertEqual("ophelia.restore_drills", listing["kind"])
@@ -317,20 +317,20 @@ class RestoreVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
-            _write_backup(runtime_root, "dragon-writer", with_checksums=True, canary=True)
+            _write_backup(runtime_root, "demo-service", with_checksums=True, canary=True)
 
-            plan = backup_verify_plan("dragon-writer", "production", runtime_root, manifest_path=manifest_path)
+            plan = backup_verify_plan("demo-service", "production", runtime_root, manifest_path=manifest_path)
             receipt = backup_verify_apply(
-                "dragon-writer",
+                "demo-service",
                 "production",
                 runtime_root,
                 confirm=str(plan["confirmation_token"]),
                 manifest_path=manifest_path,
             )
             verify_id = receipt["verify_id"]
-            listing = restore_drills_list("dragon-writer", "production", runtime_root)
+            listing = restore_drills_list("demo-service", "production", runtime_root)
             shown = restore_drills_show(verify_id, runtime_root)
 
         for payload in (plan, receipt, listing, shown):
@@ -345,11 +345,11 @@ class RestoreVerificationTests(unittest.TestCase):
     def test_list_skips_malformed_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir) / "runtime"
-            drills_dir = runtime_root / "apps" / "dragon-writer" / "restore-drills"
+            drills_dir = runtime_root / "apps" / "demo-service" / "restore-drills"
             drills_dir.mkdir(parents=True)
             (drills_dir / "broken.json").write_text("{not valid json")
 
-            listing = restore_drills_list("dragon-writer", "production", runtime_root)
+            listing = restore_drills_list("demo-service", "production", runtime_root)
 
         self.assertEqual("ophelia.restore_drills", listing["kind"])
         self.assertEqual([], listing["drills"])
@@ -398,13 +398,13 @@ def _write_backup(runtime_root: Path, app: str, *, with_checksums: bool, canary:
 
 
 def _write_release(app_root: Path) -> None:
-    release = {"release_id": "rel-fixture", "image": "ghcr.io/example/dragon-writer@sha256:aaaaaaaa"}
+    release = {"release_id": "rel-fixture", "image": "ghcr.io/example/demo-service@sha256:aaaaaaaa"}
     (app_root / "release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
     (app_root / "active_release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
 
 
 def _write_filled_env(app_root: Path) -> None:
-    (app_root / "env").write_text("OPHELIA_APP=dragon-writer\n")
+    (app_root / "env").write_text("OPHELIA_APP=demo-service\n")
 
 
 def _write_verification_receipt(runtime_root: Path, app: str, environment: str, *, status: str) -> None:
@@ -415,7 +415,7 @@ def _write_verification_receipt(runtime_root: Path, app: str, environment: str, 
             {
                 "kind": "ophelia.receipt",
                 "operation": "backup.verify.apply",
-                "operation_id": "backup.verify.apply.dragon-writer.production.fixture",
+                "operation_id": "backup.verify.apply.demo-service.production.fixture",
                 "verify_id": "verify-20260621T120000000000Z-fixture",
                 "status": status,
                 "app": app,
@@ -435,10 +435,10 @@ def _iso(value: datetime) -> str:
 def _critical_manifest() -> str:
     return """
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer@sha256:aaaaaaaa
+image: ghcr.io/example/demo-service@sha256:aaaaaaaa
 pack:
   portability: critical
   owner: personal
@@ -448,7 +448,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.net
     service: web
 data:
   postgres:
@@ -467,7 +467,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.net/health
 """.strip() + "\n"
 
 

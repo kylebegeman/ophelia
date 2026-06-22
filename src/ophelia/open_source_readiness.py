@@ -92,7 +92,10 @@ _RULES: Sequence[AuditRule] = (
     AuditRule(
         code="private_or_legacy_product_reference",
         severity="warning",
-        pattern=re.compile(r"\b(" + "|".join(re.escape(term) for term in _PRIVATE_PRODUCT_TERMS) + r")\b", re.IGNORECASE),
+        pattern=re.compile(
+            r"(?<![A-Za-z0-9])(" + "|".join(re.escape(term) for term in _PRIVATE_PRODUCT_TERMS) + r")(?![A-Za-z0-9])",
+            re.IGNORECASE,
+        ),
         message="Private, retained, or legacy product name found in tracked source.",
         recommendation="Use synthetic fixture app names in public docs and tests; keep real-product adoption notes in private or explicitly scoped deployment docs.",
     ),

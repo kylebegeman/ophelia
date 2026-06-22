@@ -23,14 +23,14 @@ def verification_checks(manifest: Manifest) -> List[VerificationCheck]:
     if manifest.verify:
         return manifest.verify
 
-    if manifest.profile == "prism":
+    if manifest.profile == "console":
         domains = [route.domain for route in manifest.routes]
-        if manifest.prism and manifest.prism.admin_domain:
-            domains.insert(0, manifest.prism.admin_domain)
+        if manifest.console and manifest.console.admin_domain:
+            domains.insert(0, manifest.console.admin_domain)
         if domains:
             primary = domains[0]
             checks = [VerificationCheck(name="health", url=f"https://{primary}/health")]
-            if manifest.prism and manifest.prism.surface == "quark":
+            if manifest.console and manifest.console.surface == "root":
                 checks.extend(
                     [
                         VerificationCheck(name="landing", url=f"https://{primary}/"),

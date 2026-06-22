@@ -18,7 +18,7 @@ through `ship commands catalog --json` and `GET /commands`, plus an additive
 
 ## Why
 
-Agents (Lumen, Quark) need one machine-readable way to discover every command
+Agents (Lumen, Legacy Console) need one machine-readable way to discover every command
 with explicit risk, mutation, and confirmation metadata, and one consistent
 error shape across CLI and HTTP. The foundation modules give every later phase a
 single source of truth for redaction, findings/remediations, and error payloads

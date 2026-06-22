@@ -41,11 +41,11 @@ class HostInventoryTests(unittest.TestCase):
             self.assertEqual(str(config_path), report["config_path"])
             host_ids = {host["id"] for host in report["hosts"]}
             self.assertIn("local", host_ids)
-            self.assertIn("ovh-gra", host_ids)
-            ovh = next(host for host in report["hosts"] if host["id"] == "ovh-gra")
-            self.assertEqual("ovh", ovh["provider"])
-            self.assertEqual(102400, ovh["capacity"]["disk_free_mb"])
-            self.assertTrue(ovh["capabilities"]["postgres"])
+            self.assertIn("target-eu", host_ids)
+            target_host = next(host for host in report["hosts"] if host["id"] == "target-eu")
+            self.assertEqual("target-host", target_host["provider"])
+            self.assertEqual(102400, target_host["capacity"]["disk_free_mb"])
+            self.assertTrue(target_host["capabilities"]["postgres"])
             self.assertNotIn("super-secret", json.dumps(report))
             self.assertFalse(runtime_root.exists(), "inventory collection must not create runtime state")
 
@@ -57,7 +57,7 @@ class HostInventoryTests(unittest.TestCase):
 
             with patch.dict("os.environ", {"OPHELIA_SKIP_DOCKER_STATUS": "1"}):
                 report = host_readiness(
-                    "ovh-gra",
+                    "target-eu",
                     root / "runtime",
                     root,
                     root / "manifests",
@@ -66,7 +66,7 @@ class HostInventoryTests(unittest.TestCase):
 
         self.assertEqual(HOST_READINESS_KIND, report["kind"])
         self.assertEqual("ok", report["status"])
-        self.assertEqual("ovh-gra", report["hosts"][0]["host_id"])
+        self.assertEqual("target-eu", report["hosts"][0]["host_id"])
         self.assertEqual([], report["blockers"])
 
     def test_app_placement_recommends_host_with_required_capabilities(self) -> None:
@@ -79,21 +79,21 @@ class HostInventoryTests(unittest.TestCase):
 
             with patch.dict("os.environ", {"OPHELIA_SKIP_DOCKER_STATUS": "1"}):
                 plan = app_placement_plan(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=root / "runtime",
                     manifest_path=manifest_path,
                     ophelia_root=root,
                     config_path=config_path,
                     source_host="local",
-                    target_host="ovh-gra",
+                    target_host="target-eu",
                 )
 
         self.assertEqual(APP_PLACEMENT_PLAN_KIND, plan["kind"])
         self.assertTrue(plan["read_only"])
         self.assertEqual("ready", plan["status"])
-        self.assertEqual("ovh-gra", plan["recommended_host"])
-        recommended = next(item for item in plan["placements"] if item["host_id"] == "ovh-gra")
+        self.assertEqual("target-eu", plan["recommended_host"])
+        recommended = next(item for item in plan["placements"] if item["host_id"] == "target-eu")
         self.assertEqual("recommended", recommended["recommendation"])
         self.assertEqual([], recommended["blockers"])
         self.assertTrue(plan["requirements"]["required_capabilities"]["postgres"])
@@ -109,13 +109,13 @@ class HostInventoryTests(unittest.TestCase):
 
             with patch.dict("os.environ", {"OPHELIA_SKIP_DOCKER_STATUS": "1"}):
                 plan = app_placement_plan(
-                    "dragon-writer",
+                    "demo-service",
                     environment="production",
                     runtime_root=root / "runtime",
                     manifest_path=manifest_path,
                     ophelia_root=root,
                     config_path=config_path,
-                    target_host="ovh-gra",
+                    target_host="target-eu",
                 )
 
         self.assertEqual("blocked", plan["status"])
@@ -129,9 +129,9 @@ def _host_config(postgres: bool = True) -> str:
     return f"""
 version: 1
 hosts:
-  - id: ovh-gra
-    name: OVH GRA runtime
-    provider: ovh
+  - id: target-eu
+    name: Target EU runtime
+    provider: target-host
     region: gra
     arch: amd64
     roles:
@@ -158,10 +158,10 @@ hosts:
 def _postgres_manifest() -> str:
     return """
 version: 1
-app: dragon-writer
+app: demo-service
 kind: service
 environment: production
-image: ghcr.io/example/dragon-writer:latest
+image: ghcr.io/example/demo-service:latest
 resources:
   memory: 512m
 services:

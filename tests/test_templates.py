@@ -17,19 +17,19 @@ class TemplateRenderTests(unittest.TestCase):
         manifest = self._load(
             """
 version: 1
-app: aspectavy
+app: demo-docs
 kind: tunnel
 tunnel_target: host.docker.internal:3501
 routes:
-  - domain: docs.bagels.top
+  - domain: docs.example.com
     path: /api/openapi.json
-  - domain: docs.bagels.top
+  - domain: docs.example.com
     path: /api/admin-cli.json
-  - domain: docs.bagels.top
+  - domain: docs.example.com
     path: /api/ai/defaults.json
-  - domain: docs.bagels.top
+  - domain: docs.example.com
     rewrite_prefix: /docs
-  - domain: admin.bagels.top
+  - domain: admin.example.com
     rewrite_prefix: /admin
 """
         )
@@ -54,14 +54,14 @@ routes:
         manifest = self._load(
             """
 version: 1
-app: pokedex-dev
+app: demo-tunnel-dev
 kind: tunnel
 routes:
-  - domain: dev.pokedex.example.net
+  - domain: dev.demo-tunnel.example.net
     path_prefix: /api
     strip_prefix: /api
     upstream: host.docker.internal:3711
-  - domain: dev.pokedex.example.net
+  - domain: dev.demo-tunnel.example.net
     upstream: host.docker.internal:3712
 """
         )
@@ -78,19 +78,19 @@ routes:
         manifest = self._load(
             """
 version: 1
-app: www-bagels-top
+app: www-example-com
 kind: redirect
-redirect_to: https://bagels.top{uri}
+redirect_to: https://example.com{uri}
 redirect_status: 308
 routes:
-  - domain: www.bagels.top
+  - domain: www.example.com
 """
         )
 
         rendered = render_caddy(manifest)
 
-        self.assertIn("www.bagels.top {", rendered)
-        self.assertIn("redir https://bagels.top{uri} 308", rendered)
+        self.assertIn("www.example.com {", rendered)
+        self.assertIn("redir https://example.com{uri} 308", rendered)
 
     def test_edge_tls_internal_renders_site_tls_directive(self) -> None:
         manifest = self._load(

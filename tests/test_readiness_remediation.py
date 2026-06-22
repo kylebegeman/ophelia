@@ -27,17 +27,17 @@ class ReadinessRemediationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_critical_manifest())
                 manifest = load_manifest(manifest_path)
                 app_root = deploy_bundle(manifest, manifest_path, runtime_root)
                 release = json.loads((app_root / "release.json").read_text())
                 (app_root / "active_release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
                 _write_filled_env(app_root)
-                _write_backup(runtime_root, "dragon-writer")
+                _write_backup(runtime_root, "demo-service")
                 # Intentionally NO restore-drill receipt.
 
-                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+                report = app_readiness_report("demo-service", "production", runtime_root, manifest_path)
 
         self.assertEqual("blocked", report["readiness_level"])
         blockers_by_code = {item["code"]: item for item in report["blockers"]}
@@ -47,7 +47,7 @@ class ReadinessRemediationTests(unittest.TestCase):
         self.assertTrue(remediation["requires_human_approval"])
         self.assertTrue(
             any(
-                command.startswith("ship app restore-drill plan dragon-writer --environment production")
+                command.startswith("ship app restore-drill plan demo-service --environment production")
                 and command.endswith("--json")
                 for command in remediation["commands"]
             ),
@@ -97,15 +97,15 @@ class ReadinessRemediationTests(unittest.TestCase):
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
                 # Fixture A: critical app, fully ready (drill present).
-                crit_path = root / "dragonwriter.ophelia.yml"
+                crit_path = root / "demo-service.ophelia.yml"
                 crit_path.write_text(_critical_manifest())
                 crit_manifest = load_manifest(crit_path)
                 crit_app_root = deploy_bundle(crit_manifest, crit_path, runtime_root)
                 crit_release = json.loads((crit_app_root / "release.json").read_text())
                 (crit_app_root / "active_release.json").write_text(json.dumps(crit_release, indent=2, sort_keys=True) + "\n")
                 _write_filled_env(crit_app_root)
-                _write_backup(runtime_root, "dragon-writer")
-                _write_restore_drill(crit_app_root, "dragon-writer")
+                _write_backup(runtime_root, "demo-service")
+                _write_restore_drill(crit_app_root, "demo-service")
 
                 # Fixture B: static app.
                 static_root = root / "static-site"
@@ -119,7 +119,7 @@ class ReadinessRemediationTests(unittest.TestCase):
                 (static_app_root / "active_release.json").write_text(json.dumps(static_release, indent=2, sort_keys=True) + "\n")
                 _write_filled_env(static_app_root)
 
-                crit_report = app_readiness_report("dragon-writer", "production", runtime_root, crit_path)
+                crit_report = app_readiness_report("demo-service", "production", runtime_root, crit_path)
                 static_report = app_readiness_report("static-portable", "staging", runtime_root, static_path)
 
         for report in (crit_report, static_report):
@@ -185,14 +185,14 @@ class ReadinessRemediationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 runtime_root = root / "runtime"
-                manifest_path = root / "dragonwriter.ophelia.yml"
+                manifest_path = root / "demo-service.ophelia.yml"
                 manifest_path.write_text(_critical_manifest())
                 manifest = load_manifest(manifest_path)
                 app_root = deploy_bundle(manifest, manifest_path, runtime_root)
                 _write_filled_env(app_root)
-                _write_backup(runtime_root, "dragon-writer")
+                _write_backup(runtime_root, "demo-service")
 
-                report = app_readiness_report("dragon-writer", "production", runtime_root, manifest_path)
+                report = app_readiness_report("demo-service", "production", runtime_root, manifest_path)
 
         sources = report["source_reports"]
         self.assertIn("secrets_audit", sources)
@@ -206,7 +206,7 @@ class ReadinessRemediationTests(unittest.TestCase):
     def test_pack_validation_exposes_score_details_rollup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(_critical_manifest())
             manifest = load_manifest(manifest_path)
             report = pack_validation_report(manifest, manifest_path, manifest_dir=root)
@@ -296,10 +296,10 @@ def _write_restore_drill(app_root: Path, app: str) -> None:
 def _critical_manifest() -> str:
     return """
 version: 1
-app: dragon-writer
+app: demo-service
 environment: production
 kind: service
-image: ghcr.io/example/dragon-writer@sha256:aaaaaaaa
+image: ghcr.io/example/demo-service@sha256:aaaaaaaa
 pack:
   portability: critical
   owner: personal
@@ -309,7 +309,7 @@ services:
   web:
     port: 3000
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.net
     service: web
 data:
   postgres:
@@ -335,7 +335,7 @@ data:
     offsite_required: true
 verify:
   - name: health
-    url: https://dragonwriter.example.net/health
+    url: https://demo-service.example.net/health
 """.strip() + "\n"
 
 

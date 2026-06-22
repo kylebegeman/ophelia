@@ -8,7 +8,7 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `app`: stable app slug
 - `kind`: `service`, `multi-service`, `static`, `tunnel`, or `redirect`
 - `environment`: optional `dev`, `staging`, or `production`
-- `profile`: optional deployment preset, currently `prism`
+- `profile`: optional deployment preset, currently `console`
 - `image`: default container image reference for service-based apps
 - `services`: named service definitions
 - `routes`: public routing definitions
@@ -22,7 +22,7 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `redirect_to`: destination for redirect apps
 - `redirect_status`: redirect status for redirect apps
 - `verify`: optional post-deploy HTTP verification checks
-- `prism`: Prism-specific config when `profile: prism`
+- `console`: Console-specific config when `profile: console`
 - `pack`: optional portable app pack metadata used by inventory, movement plans, and Lumen Ops receipts
 - `host_requirements`: optional target host capability requirements
 - `networking`: optional Compose network topology, defaulting to shared compatibility
@@ -371,17 +371,17 @@ strings, or fragments.
 Traffic rollback restores captured previous provider state from a traffic
 receipt and refuses deletion-only rollback cases.
 
-## Prism Profile
+## Console Profile
 
-Use `profile: prism` when the manifest is primarily hosting a Prism runtime or a Prism-backed operator surface.
+Use `profile: console` when the manifest is primarily hosting an Ophelia console runtime or operator surface.
 
 Additional fields:
 
-- `prism.admin_domain`: optional dedicated admin host that should proxy to the primary Prism service
-- `prism.console_asset_path`: optional in-container path for a mounted Console bundle
-- `prism.surface`: `console` or `quark`
+- `console.admin_domain`: optional dedicated admin host that should proxy to the primary console service
+- `console.console_asset_path`: optional in-container path for a mounted Console bundle
+- `console.surface`: `console` or `root`
 
-When `prism.admin_domain` is set, Ophelia will synthesize a route for that host if you did not already declare one explicitly.
+When `console.admin_domain` is set, Ophelia will synthesize a route for that host if you did not already declare one explicitly.
 
 ## Verification Checks
 
@@ -422,12 +422,12 @@ verify_policy:
   failure_mode: hard
 ```
 
-Prism manifests infer verification checks when `verify` is omitted:
+Console manifests infer verification checks when `verify` is omitted:
 
 - `surface: console`
   - `https://<primary-domain-or-admin-domain>/health`
   - `https://<primary-domain-or-admin-domain>/console`
-- `surface: quark`
+- `surface: root`
   - `https://<primary-domain-or-admin-domain>/health`
   - `https://<primary-domain-or-admin-domain>/`
   - `https://<primary-domain-or-admin-domain>/console`
@@ -441,7 +441,7 @@ Each service `mounts` item accepts:
 - `read_only`: boolean, default `true`
 - `bind`: when `true`, mount the source path directly from the VPS instead of copying it into the runtime bundle first
 
-This is the primary way to ship Prism-hosted Console bundles or other static operator assets alongside an app image without baking them into the container first.
+This is the primary way to ship console bundles or other static operator assets alongside an app image without baking them into the container first.
 
 Use `bind: true` for persistent host paths such as uploads or local backup directories that should survive deploys and accept writes at runtime.
 
@@ -466,13 +466,13 @@ Named Docker volume ids include the app and environment, for example
 `demo-service-production-uploads`, so staging and production apps on the same
 host do not share data accidentally.
 
-## Example: Prism-backed console surface
+## Example: Console-backed operator surface
 
 ```yaml
 version: 1
 app: demo-console
 environment: production
-profile: prism
+profile: console
 kind: service
 image: ghcr.io/example/console-runtime:latest
 
@@ -483,8 +483,8 @@ services:
   web:
     port: 8080
     env:
-      PRISM_CONSOLE_SURFACE: console
-      PRISM_CONSOLE_ASSET_PATH: /opt/prism/console
+      OPHELIA_CONSOLE_SURFACE: console
+      OPHELIA_CONSOLE_ASSET_PATH: /opt/console/console
     healthcheck:
       path: /health
 
@@ -496,9 +496,9 @@ addons:
   postgres: true
   redis: true
 
-prism:
+console:
   admin_domain: console.example.com
-  console_asset_path: /opt/prism/console
+  console_asset_path: /opt/console/console
   surface: console
 
 verify:

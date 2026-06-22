@@ -67,7 +67,7 @@ tokens, so apply cannot silently target a different receipt if `latest` changes.
 - `PYTHONPATH=src python3 -m unittest tests.test_operation_refs tests.test_workflows tests.test_state_db tests.test_command_catalog`
 - `PYTHONPATH=src python3 -m unittest discover -s tests`
 - `PYTHONPATH=src python3 -m ophelia.docs_check`
-- `./cli/ship workflow run latest:dragon-writer --preview --runtime-root <tmp> --json`
+- `./cli/ship workflow run latest:demo-service --preview --runtime-root <tmp> --json`
 - `./cli/ship commands catalog --json | python3 -m json.tool`
 - `PYTHON=python3 make validate-examples`
 - `git diff --check`

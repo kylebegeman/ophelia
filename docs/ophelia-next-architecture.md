@@ -37,9 +37,9 @@ backup, receipt, and migration primitives. Existing deployments are inputs to a
 future migration or decommission plan, not architecture anchors for new core
 behavior.
 
-Quark, Prism, and OpenClaw are legacy platform/runtime components for the current
-OVH deployment. Lumen replaces them as the long-term product and control plane.
-New Ophelia architecture should not preserve Quark, Prism, or OpenClaw as target
+Legacy Console, Legacy Runtime, and Legacy Orchestration are legacy platform/runtime components for the current
+target host deployment. Lumen replaces them as the long-term product and control plane.
+New Ophelia architecture should not preserve Legacy Console, Legacy Runtime, or Legacy Orchestration as target
 foundations. Treat their `/opt/...` deployments as inventory, migration context,
 or future decommission targets only. Deleting or modifying them remains a
 separate approved cleanup operation.
@@ -237,7 +237,7 @@ Each app data dependency should declare one ownership mode:
 | `host-volume` | App owns a named Docker volume or host bind path. | Uploads, static state, generated artifacts. |
 | `object-store` | App owns an object bucket or prefix. | Upload-heavy apps or future S3/B2-compatible storage. |
 
-For critical personal data apps such as Dragon Writer, prefer `app-postgres` or
+For critical personal data apps such as Demo Service, prefer `app-postgres` or
 an equally strong `shared-postgres-database` export/import contract. If a shared
 database pool is used, Ophelia must still know exactly how to dump, restore,
 verify, and rehearse that one app database.

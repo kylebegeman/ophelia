@@ -44,7 +44,7 @@ class VerificationPolicy:
 
 
 @dataclass
-class PrismConfig:
+class ConsoleConfig:
     admin_domain: Optional[str] = None
     console_asset_path: Optional[str] = None
     surface: str = "console"
@@ -240,7 +240,7 @@ class Manifest:
     redirect_status: int = 308
     verify: List[VerificationCheck] = field(default_factory=list)
     verify_policy: VerificationPolicy = field(default_factory=VerificationPolicy)
-    prism: Optional[PrismConfig] = None
+    console: Optional[ConsoleConfig] = None
     pack: PackConfig = field(default_factory=PackConfig)
     host_requirements: HostRequirementsConfig = field(default_factory=HostRequirementsConfig)
     networking: NetworkingConfig = field(default_factory=NetworkingConfig)
@@ -291,7 +291,7 @@ def load_manifest(path: Path) -> Manifest:
     edge = _parse_edge(raw.get("edge", {}))
     verify = _parse_verifications(raw.get("verify", []))
     verify_policy = _parse_verification_policy(raw.get("verify_policy", {}))
-    prism = _parse_prism(raw.get("prism"))
+    console = _parse_console(raw.get("console"))
     pack = _parse_pack(raw.get("pack"))
     host_requirements = _parse_host_requirements(raw.get("host_requirements"))
     networking = _parse_networking(raw.get("networking"))
@@ -319,7 +319,7 @@ def load_manifest(path: Path) -> Manifest:
         redirect_status=_optional_int(raw.get("redirect_status"), "redirect_status") or 308,
         verify=verify,
         verify_policy=verify_policy,
-        prism=prism,
+        console=console,
         pack=pack,
         host_requirements=host_requirements,
         networking=networking,
@@ -608,19 +608,19 @@ def _parse_verification_policy(raw: Any) -> VerificationPolicy:
     )
 
 
-def _parse_prism(raw: Any) -> Optional[PrismConfig]:
+def _parse_console(raw: Any) -> Optional[ConsoleConfig]:
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ManifestError("`prism` must be a mapping.")
+        raise ManifestError("`console` must be a mapping.")
 
-    surface = _optional_str(raw.get("surface"), "prism.surface") or "console"
-    if surface not in {"console", "quark"}:
-        raise ManifestError("`prism.surface` must be `console` or `quark`.")
+    surface = _optional_str(raw.get("surface"), "console.surface") or "console"
+    if surface not in {"console", "root"}:
+        raise ManifestError("`console.surface` must be `console` or `root`.")
 
-    return PrismConfig(
-        admin_domain=_optional_str(raw.get("admin_domain"), "prism.admin_domain"),
-        console_asset_path=_optional_str(raw.get("console_asset_path"), "prism.console_asset_path"),
+    return ConsoleConfig(
+        admin_domain=_optional_str(raw.get("admin_domain"), "console.admin_domain"),
+        console_asset_path=_optional_str(raw.get("console_asset_path"), "console.console_asset_path"),
         surface=surface,
     )
 
@@ -947,8 +947,8 @@ def _validate_manifest(manifest: Manifest) -> None:
             f"`kind` must be one of {sorted(allowed_kinds)}, got `{manifest.kind}`."
         )
 
-    if manifest.profile not in {None, "prism"}:
-        raise ManifestError("`profile` must be omitted or set to `prism`.")
+    if manifest.profile not in {None, "console"}:
+        raise ManifestError("`profile` must be omitted or set to `console`.")
 
     if manifest.kind in {"service", "multi-service"}:
         if not manifest.services:
@@ -983,13 +983,13 @@ def _validate_manifest(manifest: Manifest) -> None:
     ):
         raise ManifestError("Tunnel apps require `tunnel_target` or per-route `upstream` values.")
 
-    if manifest.profile == "prism":
+    if manifest.profile == "console":
         if manifest.kind not in {"service", "multi-service"}:
-            raise ManifestError("`profile: prism` requires a service-based manifest.")
-        if manifest.prism is None:
-            raise ManifestError("`profile: prism` requires a `prism` mapping.")
-        if manifest.prism.admin_domain and not any(route.service or route.upstream for route in manifest.routes):
-            raise ManifestError("Prism manifests need at least one proxy route target.")
+            raise ManifestError("`profile: console` requires a service-based manifest.")
+        if manifest.console is None:
+            raise ManifestError("`profile: console` requires a `console` mapping.")
+        if manifest.console.admin_domain and not any(route.service or route.upstream for route in manifest.routes):
+            raise ManifestError("Console manifests need at least one proxy route target.")
 
     if manifest.kind in {"service", "multi-service", "tunnel"}:
         _validate_proxy_routes(manifest)

@@ -404,20 +404,20 @@ values. The fixture Postgres app now carries a committed evidence directory that
 validates cleanly, produces a promotion checklist, and moves the probe gate to
 operator review without executing probes.
 
-The first Quark staging snapshot attempt clarified the real-live boundary: it
+The first Legacy Console staging snapshot attempt clarified the real-live boundary: it
 is safe to create the empty runtime app root and scaffold review templates, but
 env values, provider-observed secret names, active release metadata, and host
 capability facts still need truthful external sources before any probe or
 promotion step should proceed.
 
-The follow-up Quark staging evidence pass moved the real baseline forward
+The follow-up Legacy Console staging evidence pass moved the real baseline forward
 without crossing that boundary: non-secret structural env keys and verified
 GitHub secret-name mappings were written to the local runtime, while
 database/Redis values, release metadata, and host facts remain blocked until
 truthful sources are available.
 
-That Quark work is historical legacy evidence, not the forward product model.
+That Legacy Console work is historical legacy evidence, not the forward product model.
 The active improvement direction is fixture-first and contract-first: Ophelia
 defines the right runtime, safety, receipt, readiness, and migration behavior,
-then retained products such as `stillup` and `clearedtorun` adapt to that
+then retained products such as `retained-app` and `retained-secondary-app` adapt to that
 contract during explicit adoption or deployment phases.

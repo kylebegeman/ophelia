@@ -22,7 +22,7 @@ and necessary for operators to understand missing secret-name observations.
 
 ## Changed Areas
 
-- `config/ophelia-live-drills.yml`: adds local file baseline plus Quark Ops
+- `config/ophelia-live-drills.yml`: adds local file baseline plus Legacy Console Ops
   production/staging focused profiles.
 - `src/ophelia/live_drills.py`: expands `~` in profile paths.
 - `src/ophelia/live_readiness.py`: preserves secret-provider metadata
@@ -58,7 +58,7 @@ commands were not run.
 
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest tests.test_live_drills tests.test_live_readiness`
 - `./cli/ship live-readiness run --runtime-root ~/ophelia-runtime --manifests-dir manifests --host-config config/ophelia-hosts.yml --provider-config config/ophelia-integrations.yml --allow-blocked --json`
-- `./cli/ship live-drills run quark-ops-production-file-baseline --profiles config/ophelia-live-drills.yml --json`
+- `./cli/ship live-drills run legacy-console-ops-production-file-baseline --profiles config/ophelia-live-drills.yml --json`
 - `./cli/ship live-drills run local-file-baseline --profiles config/ophelia-live-drills.yml --json`
 - `python3 -m compileall -q src/ophelia/live_readiness.py src/ophelia/live_drills.py`
 - `PYTHONPATH=src OPHELIA_SKIP_DOCKER_STATUS=1 python3 -m unittest discover -s tests`

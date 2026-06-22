@@ -377,7 +377,7 @@ class ActionTests(unittest.TestCase):
             result = run_job(
                 "pack.init.preview",
                 {
-                    "app": "dragon-writer",
+                    "app": "demo-service",
                     "environment": "production",
                     "critical": True,
                     "postgres": True,

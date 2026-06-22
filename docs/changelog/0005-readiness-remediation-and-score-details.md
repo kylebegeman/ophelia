@@ -26,7 +26,7 @@ unchanged.
 
 ## Why
 
-Agents (Lumen, Quark) and operators could read *what* was wrong but had to infer
+Agents (Lumen, Legacy Console) and operators could read *what* was wrong but had to infer
 the fix. Mapping each known finding code to a typed remediation, and rolling the
 existing portability score up by category, turns the readiness report into a
 ranked to-do list whose commands are safe, typed Ophelia plan forms (never raw
@@ -99,10 +99,10 @@ and counts only with `values_redacted: True`. A high score never hides blockers:
 
 - `PYTHON=python3 make compile`
 - `PYTHONPATH=src python3 -m unittest discover -s tests` (180 tests, OK)
-- `./cli/ship app readiness dragon-writer --environment production --json`
+- `./cli/ship app readiness demo-service --environment production --json`
   (pure JSON; new keys present; `score_details` points sum to score, max_points
   sum to 100; `secrets_audit` pointer redacted)
-- `./cli/ship pack validate examples/aspectavy-production-mirror.ophelia.yml
+- `./cli/ship pack validate examples/demo-docs-production-mirror.ophelia.yml
   --json` (`score_details` present)
 - `PYTHON=python3 make validate-examples`
 - `git diff --check`

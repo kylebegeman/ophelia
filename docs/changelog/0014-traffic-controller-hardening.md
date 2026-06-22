@@ -157,7 +157,7 @@ stored. `ship traffic status` performs no network probe and needs no credentials
 - `PYTHON=python3 make compile`
 - `PYTHONPATH=src python3 -m unittest discover -s tests` (304 tests, OK)
 - `PYTHON=python3 make validate-examples`
-- `./cli/ship traffic status --app dragon-writer --environment production --json`
+- `./cli/ship traffic status --app demo-service --environment production --json`
   (parses as JSON)
 - `PYTHON=python3 make docs-check`
 - `git diff --check`

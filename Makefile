@@ -63,7 +63,7 @@ open-source-audit:
 	@./cli/ship open-source audit --allow-blocked --json
 
 open-source-audit-strict:
-	@./cli/ship open-source audit --json
+	@./cli/ship open-source audit --fail-on-warnings --json
 
 test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -v

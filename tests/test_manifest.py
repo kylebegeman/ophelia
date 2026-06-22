@@ -22,7 +22,7 @@ app: broken
 kind: tunnel
 tunnel_target: host.docker.internal:3501
 routes:
-  - domain: docs.bagels.top
+  - domain: docs.example.com
     service: api
     upstream: host.docker.internal:3501
 """
@@ -32,10 +32,10 @@ routes:
     def test_redirect_manifest_requires_redirect_target(self) -> None:
         manifest = """
 version: 1
-app: www-bagels-top
+app: www-example-com
 kind: redirect
 routes:
-  - domain: www.bagels.top
+  - domain: www.example.com
 """
         with self.assertRaises(ManifestError):
             self._load(manifest)
@@ -228,14 +228,14 @@ routes:
     def test_tunnel_manifest_supports_route_upstreams(self) -> None:
         manifest = """
 version: 1
-app: pokedex-dev
+app: demo-tunnel-dev
 kind: tunnel
 routes:
-  - domain: dev.pokedex.example.net
+  - domain: dev.demo-tunnel.example.net
     path_prefix: /api
     strip_prefix: /api
     upstream: host.docker.internal:3711
-  - domain: dev.pokedex.example.net
+  - domain: dev.demo-tunnel.example.net
     upstream: host.docker.internal:3712
 """
         loaded = self._load(manifest)
@@ -320,21 +320,21 @@ edge:
         self.assertIn("BOOP_INTERNAL_RUNTIME_TOKEN=replace-me", bundle[Path("env.example")])
         self.assertNotIn(Path("caddy/global.d/boop.caddy"), bundle)
 
-    def test_prism_profile_supports_env_files_mounts_and_verification(self) -> None:
+    def test_console_profile_supports_env_files_mounts_and_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "env").mkdir()
             (root / "assets" / "console").mkdir(parents=True)
             (root / "env" / "shared.env").write_text("APP_ENV=production\n")
             (root / "assets" / "console" / "index.html").write_text("<html></html>\n")
-            manifest_path = root / "quark.ophelia.yml"
+            manifest_path = root / "console.ophelia.yml"
             manifest_path.write_text(
                 """
 version: 1
-app: quark-ops
-profile: prism
+app: demo-console
+profile: console
 kind: service
-image: ghcr.io/example/quark-ops:latest
+image: ghcr.io/example/demo-console:latest
 env_files:
   - env/shared.env
 services:
@@ -342,15 +342,15 @@ services:
     port: 8080
     mounts:
       - source: assets/console
-        target: /opt/quark/console
+        target: /opt/ophelia-console
         read_only: true
 routes:
   - domain: ops.example.net
     service: web
-prism:
+console:
   admin_domain: admin.ops.example.net
-  console_asset_path: /opt/quark/console
-  surface: quark
+  console_asset_path: /opt/ophelia-console
+  surface: root
 verify:
   - name: health
     url: https://ops.example.net/health
@@ -360,31 +360,31 @@ verify:
 
             loaded = load_manifest(manifest_path)
 
-        self.assertEqual("prism", loaded.profile)
+        self.assertEqual("console", loaded.profile)
         self.assertEqual(["env/shared.env"], loaded.env_files)
-        self.assertEqual("admin.ops.example.net", loaded.prism.admin_domain if loaded.prism else None)
-        self.assertEqual("quark", loaded.prism.surface if loaded.prism else None)
+        self.assertEqual("admin.ops.example.net", loaded.console.admin_domain if loaded.console else None)
+        self.assertEqual("root", loaded.console.surface if loaded.console else None)
         self.assertEqual(1, len(loaded.services["web"].mounts))
-        self.assertEqual("/opt/quark/console", loaded.services["web"].mounts[0].target)
+        self.assertEqual("/opt/ophelia-console", loaded.services["web"].mounts[0].target)
         self.assertEqual(1, len(loaded.verify))
         self.assertEqual("https://ops.example.net/health", loaded.verify[0].url)
 
-    def test_prism_profile_synthesizes_admin_domain_route(self) -> None:
+    def test_console_profile_synthesizes_admin_domain_route(self) -> None:
         manifest = """
 version: 1
-app: quark-ops
-profile: prism
+app: demo-console
+profile: console
 kind: service
-image: ghcr.io/example/quark-ops:latest
+image: ghcr.io/example/demo-console:latest
 services:
   web:
     port: 8080
 routes:
   - domain: ops.example.net
     service: web
-prism:
+console:
   admin_domain: admin.ops.example.net
-  surface: quark
+  surface: root
 """
         loaded = self._load(manifest)
 
@@ -400,14 +400,14 @@ prism:
             (root / "assets" / "console").mkdir(parents=True)
             (root / "env" / "shared.env").write_text("APP_ENV=production\n")
             (root / "assets" / "console" / "index.html").write_text("<html></html>\n")
-            manifest_path = root / "quark.ophelia.yml"
+            manifest_path = root / "console.ophelia.yml"
             manifest_path.write_text(
                 """
 version: 1
-app: quark-ops
-profile: prism
+app: demo-console
+profile: console
 kind: service
-image: ghcr.io/example/quark-ops:latest
+image: ghcr.io/example/demo-console:latest
 env_files:
   - env/shared.env
 services:
@@ -417,11 +417,11 @@ services:
       - env/shared.env
     mounts:
       - source: assets/console
-        target: /opt/quark/console
+        target: /opt/ophelia-console
 routes:
   - domain: ops.example.net
     service: web
-prism:
+console:
   admin_domain: ops.example.net
 """.strip()
                 + "\n"
@@ -434,19 +434,19 @@ prism:
         assert compose is not None
         self.assertIn("./env.d/01-shared.env", compose)
         self.assertIn("./env.d/web-01-shared.env", compose)
-        self.assertIn("./artifacts/web-01-console:/opt/quark/console:ro", compose)
+        self.assertIn("./artifacts/web-01-console:/opt/ophelia-console:ro", compose)
 
     def test_render_compose_supports_bind_mounts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "persistent" / "uploads").mkdir(parents=True)
-            manifest_path = root / "dragonwriter.ophelia.yml"
+            manifest_path = root / "demo-service.ophelia.yml"
             manifest_path.write_text(
                 """
 version: 1
-app: dragon-writer
+app: demo-service
 kind: multi-service
-image: ghcr.io/example/dragon-writer:latest
+image: ghcr.io/example/demo-service:latest
 services:
   web:
     port: 3000
@@ -456,7 +456,7 @@ services:
         read_only: false
         bind: true
 routes:
-  - domain: dragonwriter.example.net
+  - domain: demo-service.example.net
     service: web
 """.strip()
                 + "\n"
@@ -607,22 +607,22 @@ routes:
         self.assertIn('          - "web"', compose)
         self.assertNotIn("  ophelia-internal:\n    external: true", compose)
 
-    def test_quark_surface_infers_root_host_verification_checks(self) -> None:
+    def test_root_surface_infers_root_host_verification_checks(self) -> None:
         manifest = """
 version: 1
-app: quark-ops
-profile: prism
+app: demo-console
+profile: console
 kind: service
-image: ghcr.io/example/prism:latest
+image: ghcr.io/example/console:latest
 services:
   web:
     port: 8080
 routes:
   - domain: ops.example.net
     service: web
-prism:
+console:
   admin_domain: ops.example.net
-  surface: quark
+  surface: root
 """
         loaded = self._load(manifest)
 
