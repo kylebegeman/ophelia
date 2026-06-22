@@ -26,3 +26,4 @@
 | [0022](0022-phase-4-resumable-workflow-orchestrator.md) | 2026-06-22 | landed | Phase 4 resumable workflow orchestrator | workflows, state, command-catalog, docs, tests |
 | [0023](0023-phase-5-github-app-and-secret-provider-contracts.md) | 2026-06-22 | landed | Phase 5 GitHub App and secret provider contracts | github, secrets, providers, drift, doctor, command-catalog, docs, tests |
 | [0024](0024-phase-6-host-inventory-and-placement-planning.md) | 2026-06-22 | landed | Phase 6 host inventory and placement planning | hosts, placement, workflows, lumen, command-catalog, docs, tests |
+| [0025](0025-read-only-live-readiness-lane.md) | 2026-06-22 | landed | Read-only live readiness lane | live-readiness, cli, hosts, placement, observability, secrets, drift, docs, tests |

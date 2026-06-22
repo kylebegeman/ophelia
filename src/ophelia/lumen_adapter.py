@@ -68,6 +68,7 @@ _SURFACES: List[str] = [
     "secret_providers",
     "host_inventory",
     "placement",
+    "live_readiness",
 ]
 
 

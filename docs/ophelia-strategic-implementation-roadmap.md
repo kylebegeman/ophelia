@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-5 landed
+Status: selected next-stage roadmap, Phases 1-6 landed plus read-only live readiness lane
 
 Date: 2026-06-21
 
@@ -52,6 +52,8 @@ rebuilt:
 - Traffic status, traffic provider plans, and rollback receipts.
 - Observability status, export, dashboard aggregates, and schedule runner.
 - Backup, restore verification, export/import, and restore drill receipts.
+- Read-only host inventory, host readiness, app placement planning, and the
+  live readiness aggregate lane.
 
 ## Implementation Rules
 
@@ -355,6 +357,28 @@ recommendation surface; it does not reserve hosts or execute migrations.
 - Host inventory is read-only by default.
 - Placement plans do not mutate hosts.
 - App move workflows can consume placement recommendations.
+
+## Parallel Lane: Read-Only Live Readiness
+
+**Goal:** Start using real staging/prod runtime values safely before live
+mutation hardening.
+
+**Work items:**
+
+- Aggregate host inventory/readiness, provider status, state status, Lumen
+  dashboard data, app readiness, placement, observability, secrets, and drift.
+- Keep HTTP and Docker probes disabled unless explicitly requested.
+- Report observation file paths for GitHub, secret-provider, host, and
+  observability snapshots.
+- Prove the lane does not call apply/create/rebuild/refresh operations or write
+  state/observability artifacts.
+
+**Contract:** `ship live-readiness run --json` emits
+`kind: "ophelia.live_readiness_report"`.
+
+**Boundary:** This lane is for real inspection and gap discovery. Actual live
+provider mutations, migration rehearsals, and production applies remain Phase 9
+hardening work.
 
 ## Phase 7: Contracted Plugin System
 
