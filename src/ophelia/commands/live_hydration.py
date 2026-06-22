@@ -7,7 +7,7 @@ from pathlib import Path
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..live_drills import DEFAULT_LOCAL_LIVE_DRILL_PROFILES
-from ..live_hydration import LIVE_HYDRATION_KIND, live_hydration_report
+from ..live_hydration import LIVE_HYDRATION_KIND, LIVE_HYDRATION_SCAFFOLD_KIND, live_hydration_report, live_hydration_scaffold
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -37,6 +37,31 @@ def register(subparsers: _SubParsersAction) -> None:
     report_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     report_parser.set_defaults(handler=run_report)
 
+    scaffold_parser = hydration_subparsers.add_parser(
+        "scaffold",
+        help="Build or write non-secret evidence templates for one hydration baseline",
+    )
+    _add_common_args(scaffold_parser)
+    scaffold_parser.add_argument("--output-dir", type=Path, help="Template output directory. Defaults under <runtime_root>/hydration/<app>/<environment>.")
+    scaffold_parser.add_argument("--write", action="store_true", help="Write scaffold template files. Without this, only print the plan.")
+    scaffold_parser.add_argument("--force", action="store_true", help="Overwrite existing scaffold files when used with --write.")
+    scaffold_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    scaffold_parser.set_defaults(handler=run_scaffold)
+
+
+def _add_common_args(parser) -> None:
+    parser.add_argument("--profile", help="Live drill profile id")
+    parser.add_argument("--profiles", type=Path, default=DEFAULT_LOCAL_LIVE_DRILL_PROFILES)
+    parser.add_argument("--app", help="App id when not using a profile")
+    parser.add_argument("--environment", choices=["dev", "staging", "production"])
+    parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    parser.add_argument("--manifests-dir", type=Path, default=REPO_ROOT / "manifests")
+    parser.add_argument("--ophelia-root", type=Path, default=REPO_ROOT)
+    parser.add_argument("--manifest", type=Path, help="Explicit app manifest path")
+    parser.add_argument("--host-config", type=Path, help="Optional host inventory config JSON/YAML")
+    parser.add_argument("--provider-config", type=Path, help="Optional integrations config JSON/YAML")
+    parser.add_argument("--target-host", help="Optional target host id for placement hydration")
+
 
 def run_report(args: Namespace) -> int:
     report = live_hydration_report(
@@ -63,6 +88,38 @@ def run_report(args: Namespace) -> int:
         _print_items("Blockers", report.get("blockers", []))
         _print_items("Warnings", report.get("warnings", []))
     return 0 if report.get("status") != "blocked" or args.allow_blocked else 1
+
+
+def run_scaffold(args: Namespace) -> int:
+    report = live_hydration_scaffold(
+        app=args.app,
+        environment=args.environment,
+        profile=args.profile,
+        profiles_path=args.profiles,
+        runtime_root=args.runtime_root,
+        manifests_dir=args.manifests_dir,
+        ophelia_root=args.ophelia_root,
+        manifest_path=args.manifest,
+        host_config=args.host_config,
+        provider_config=args.provider_config,
+        target_host=args.target_host,
+        output_dir=args.output_dir,
+        write=args.write,
+        force=args.force,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(report.get("summary", "Live hydration scaffold."))
+        print(f"Status: {report.get('status')}")
+        print(f"Output: {report.get('output_dir')}")
+        for item in report.get("files", []) if isinstance(report.get("files"), list) else []:
+            if isinstance(item, dict):
+                state = "written" if item.get("written") else "planned"
+                print(f"  - {item.get('kind')}: {item.get('path')} ({state})")
+        _print_items("Blockers", report.get("blockers", []))
+        _print_items("Warnings", report.get("warnings", []))
+    return 0 if report.get("status") != "blocked" else 1
 
 
 def _print_items(label: str, value: object) -> None:
@@ -118,6 +175,53 @@ register_cli_descriptor(
         safety_notes=[
             "Read-only report. Does not create runtime files, run probes, refresh state, or mutate providers.",
             "Secret values are never emitted; secret provider sections report names, booleans, paths, and counts only.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship live-hydration scaffold",
+        operation="live_hydration.scaffold",
+        summary="Create non-secret evidence templates for one live hydration baseline.",
+        risk="low",
+        mutates_state=True,
+        requires_confirmation=False,
+        plan_command="ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
+        apply_command="ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --write --json",
+        json_kind=LIVE_HYDRATION_SCAFFOLD_KIND,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "profile": {"type": "string"},
+                "profiles": {"type": "string"},
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "runtime_root": {"type": "string"},
+                "manifests_dir": {"type": "string"},
+                "ophelia_root": {"type": "string"},
+                "manifest": {"type": "string"},
+                "host_config": {"type": "string"},
+                "provider_config": {"type": "string"},
+                "target_host": {"type": "string"},
+                "output_dir": {"type": "string"},
+                "write": {"type": "boolean"},
+                "force": {"type": "boolean"},
+                "json": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.live_hydration_scaffold.v1",
+        artifacts=[],
+        examples=[
+            "ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
+            "ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --output-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --write --json",
+        ],
+        safety_notes=[
+            "Default mode is dry-run and read-only.",
+            "With --write, only template files are written under the scaffold output directory; live env, release, and provider observation paths are not modified.",
+            "Templates contain names and placeholders only, never secret values.",
         ],
     )
 )

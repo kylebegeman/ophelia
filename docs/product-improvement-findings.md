@@ -377,3 +377,9 @@ one-app evidence gaps for runtime paths, env-key presence, secret-name
 observations, release metadata, host capabilities, and drift review. They keep
 the live path practical by turning a broad no-go baseline into ordered,
 read-only steps before probes or production rehearsals.
+
+Live hydration scaffolds extend that path with template-only evidence kits for
+one app. They are dry-run by default and write only to a separate hydration
+workspace, which helps operators collect real env shape, provider observations,
+release metadata, and host capability facts without accidentally changing
+readiness inputs.

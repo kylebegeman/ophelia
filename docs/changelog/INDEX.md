@@ -34,3 +34,4 @@
 | [0030](0030-live-drill-profiles.md) | 2026-06-22 | landed | Live drill profiles | live-readiness, hardening, fixtures, cli, api, command-catalog, docs, tests |
 | [0031](0031-live-test-baseline-and-secret-metadata.md) | 2026-06-22 | landed | Live test baseline and secret metadata | live-readiness, live-drills, redaction, config, docs, tests |
 | [0032](0032-live-baseline-hydration-report.md) | 2026-06-22 | landed | Live baseline hydration report | live-hydration, live-readiness, live-drills, cli, api, command-catalog, docs, tests |
+| [0033](0033-live-evidence-scaffold-templates.md) | 2026-06-22 | landed | Live evidence scaffold templates | live-hydration, cli, command-catalog, docs, tests |

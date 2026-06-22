@@ -126,6 +126,15 @@ before enabling probes:
 Hydration reports use the same profile resolution but return ordered evidence
 steps instead of validating an expected drill state.
 
+To prepare operator-reviewed evidence without touching live runtime paths, run:
+
+```bash
+./cli/ship live-hydration scaffold \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --json
+```
+
 ## Safety Contract
 
 Live drills are read-only:

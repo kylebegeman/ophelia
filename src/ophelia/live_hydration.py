@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .drift import manifest_drift
@@ -15,6 +16,7 @@ from .runtime import active_release, latest_release_id, list_releases
 from .secret_providers import secret_provider_report
 
 LIVE_HYDRATION_KIND = "ophelia.live_hydration_report"
+LIVE_HYDRATION_SCAFFOLD_KIND = "ophelia.live_hydration_scaffold"
 
 
 def live_hydration_report(
@@ -113,6 +115,100 @@ def live_hydration_report(
     payload = _base_payload(resolved, blockers, warnings, sections=sections, hydration_steps=hydration_steps)
     payload["status"] = status
     payload["summary"] = f"Live hydration for {resolved_app}/{resolved_environment}: {status}; {len(hydration_steps)} step(s)."
+    return _redact(payload)
+
+
+def live_hydration_scaffold(
+    *,
+    app: Optional[str] = None,
+    environment: Optional[str] = None,
+    profile: Optional[str] = None,
+    profiles_path: Path = DEFAULT_LOCAL_LIVE_DRILL_PROFILES,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    ophelia_root: Path = REPO_ROOT,
+    manifest_path: Optional[Path] = None,
+    host_config: Optional[Path] = None,
+    provider_config: Optional[Path] = None,
+    target_host: Optional[str] = None,
+    output_dir: Optional[Path] = None,
+    write: bool = False,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Build or write a non-secret evidence scaffold for one hydration report."""
+    report = live_hydration_report(
+        app=app,
+        environment=environment,
+        profile=profile,
+        profiles_path=profiles_path,
+        runtime_root=runtime_root,
+        manifests_dir=manifests_dir,
+        ophelia_root=ophelia_root,
+        manifest_path=manifest_path,
+        host_config=host_config,
+        provider_config=provider_config,
+        target_host=target_host,
+    )
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    resolved_app = _optional_str(report.get("app"))
+    resolved_environment = _optional_str(report.get("environment"))
+    resolved_runtime_root = Path(str(report.get("runtime_root") or runtime_root))
+    if report.get("status") in {"blocked", "warning"}:
+        warnings.append(
+            issue(
+                "hydration_report_not_clean",
+                f"Hydration report is {report.get('status')}; scaffold templates are for collecting evidence, not satisfying readiness.",
+                "hydration",
+            )
+        )
+    if resolved_app is None:
+        blockers.append(issue("live_hydration_scaffold_app_missing", "Scaffold requires a resolved app.", "app"))
+    if resolved_environment is None:
+        blockers.append(issue("live_hydration_scaffold_environment_missing", "Scaffold requires a resolved environment.", "environment"))
+    if report.get("manifest_path") is None:
+        blockers.append(issue("live_hydration_scaffold_manifest_missing", "Scaffold requires a resolved manifest path.", "manifest"))
+
+    scaffold_root = Path(output_dir) if output_dir is not None else resolved_runtime_root / "hydration" / (resolved_app or "unknown") / (resolved_environment or "unknown")
+    files: List[Dict[str, Any]] = []
+    if not blockers and resolved_app is not None and resolved_environment is not None:
+        files = _scaffold_files(report, scaffold_root, resolved_app, resolved_environment, resolved_runtime_root)
+        if write:
+            blockers.extend(_write_scaffold_files(files, force=force))
+
+    status = "blocked" if blockers else "warning" if warnings else "ok"
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": LIVE_HYDRATION_SCAFFOLD_KIND,
+        "operation": "live_hydration.scaffold",
+        "operation_id": operation_id("live_hydration.scaffold", resolved_app, resolved_environment),
+        "status": status,
+        "app": resolved_app,
+        "environment": resolved_environment,
+        "profile": report.get("profile"),
+        "profiles_path": report.get("profiles_path"),
+        "runtime_root": str(resolved_runtime_root),
+        "output_dir": str(scaffold_root),
+        "manifest_path": report.get("manifest_path"),
+        "host_config": report.get("host_config"),
+        "provider_config": report.get("provider_config"),
+        "read_only": not write,
+        "dry_run": not write,
+        "mutates_state": bool(write),
+        "confirmation_required": False,
+        "write_requested": bool(write),
+        "force": bool(force),
+        "values_redacted": True,
+        "template_only": True,
+        "target_paths": _target_paths(report, resolved_app, resolved_environment, resolved_runtime_root),
+        "hydration_status": report.get("status"),
+        "hydration_blocker_count": len(report.get("blockers", [])) if isinstance(report.get("blockers"), list) else 0,
+        "hydration_warning_count": len(report.get("warnings", [])) if isinstance(report.get("warnings"), list) else 0,
+        "files": files,
+        "blockers": _dedupe_issues(blockers),
+        "warnings": _dedupe_issues(warnings),
+        "summary": f"Live hydration scaffold for {resolved_app or 'unknown'}/{resolved_environment or 'unknown'}: {status}; {len(files)} template file(s).",
+    }
     return _redact(payload)
 
 
@@ -310,6 +406,201 @@ def _release_section(runtime_root: Path, app: str) -> Dict[str, Any]:
     }
 
 
+def _scaffold_files(report: Dict[str, Any], scaffold_root: Path, app: str, environment: str, runtime_root: Path) -> List[Dict[str, Any]]:
+    env_keys, secret_keys, host_capabilities = _scaffold_inputs(report)
+    target_paths = _target_paths(report, app, environment, runtime_root)
+    file_specs = [
+        ("readme", scaffold_root / "README.md", _scaffold_readme(app, environment, report, target_paths)),
+        ("runtime_env_template", scaffold_root / "env.required.template", _env_template(env_keys, target_paths.get("runtime_env"))),
+        (
+            "github_secret_observation_template",
+            scaffold_root / "github-secret-observation.template.json",
+            _json_text(_github_secret_observation_template(app, environment, secret_keys, target_paths.get("github_secret_observation"))),
+        ),
+        (
+            "release_metadata_template",
+            scaffold_root / "release-metadata.template.json",
+            _json_text(_release_metadata_template(app, environment, report, target_paths)),
+        ),
+        ("host_capabilities_template", scaffold_root / "host-capabilities.template.yml", _host_capabilities_template(host_capabilities, target_paths.get("host_config"))),
+    ]
+    files: List[Dict[str, Any]] = []
+    for kind, path, content in file_specs:
+        files.append(
+            {
+                "kind": kind,
+                "path": str(path),
+                "exists": path.exists(),
+                "bytes": len(content.encode("utf-8")),
+                "sha256": _sha256_text(content),
+                "written": False,
+                "content": content,
+                "values_redacted": True,
+                "template_only": True,
+            }
+        )
+    return files
+
+
+def _write_scaffold_files(files: List[Dict[str, Any]], *, force: bool) -> List[Dict[str, str]]:
+    blockers: List[Dict[str, str]] = []
+    for item in files:
+        path = Path(str(item.get("path") or ""))
+        content = item.get("content")
+        if not isinstance(content, str):
+            blockers.append(issue("live_hydration_scaffold_content_invalid", f"Scaffold content is invalid for {path}.", str(path)))
+            item["written"] = False
+            continue
+        if path.exists() and not force:
+            blockers.append(issue("live_hydration_scaffold_file_exists", f"Refusing to overwrite existing scaffold file: {path}", str(path)))
+            item["written"] = False
+            continue
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        except OSError as exc:
+            blockers.append(issue("live_hydration_scaffold_write_failed", f"Failed to write scaffold file {path}: {exc}", str(path)))
+            item["written"] = False
+            continue
+        item["exists"] = True
+        item["written"] = True
+    return blockers
+
+
+def _scaffold_inputs(report: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    sections = report.get("sections") if isinstance(report.get("sections"), dict) else {}
+    env = sections.get("env") if isinstance(sections.get("env"), dict) else {}
+    secrets = sections.get("secrets") if isinstance(sections.get("secrets"), dict) else {}
+    host = sections.get("host") if isinstance(sections.get("host"), dict) else {}
+    env_keys = sorted(set(_str_list(env.get("missing_required")) + _str_list(env.get("placeholder_required"))))
+    secret_keys = sorted(set(_str_list(secrets.get("missing_required"))))
+    host_capabilities = host.get("required_capabilities") if isinstance(host.get("required_capabilities"), dict) else {}
+    return env_keys, secret_keys, host_capabilities
+
+
+def _target_paths(report: Dict[str, Any], app: Optional[str], environment: Optional[str], runtime_root: Path) -> Dict[str, str]:
+    app_name = app or "unknown"
+    env_name = environment or "unknown"
+    return {
+        "runtime_app_root": str(runtime_root / "apps" / app_name),
+        "runtime_env": str(runtime_root / "apps" / app_name / "env"),
+        "github_secret_observation": str(runtime_root / "github" / "secret-observations" / f"{app_name}.{env_name}.json"),
+        "active_release": str(runtime_root / "apps" / app_name / "active_release.json"),
+        "legacy_release": str(runtime_root / "apps" / app_name / "release.json"),
+        "releases_dir": str(runtime_root / "apps" / app_name / "releases"),
+        "host_config": str(report.get("host_config")) if report.get("host_config") else "",
+    }
+
+
+def _scaffold_readme(app: str, environment: str, report: Dict[str, Any], target_paths: Dict[str, str]) -> str:
+    env_keys, secret_keys, host_capabilities = _scaffold_inputs(report)
+    lines = [
+        f"# Live Hydration Evidence Scaffold: {app}/{environment}",
+        "",
+        "This directory contains templates only. It is safe to generate and review,",
+        "but it is not runtime evidence by itself.",
+        "",
+        "Do not store real secret values in this directory or in Git.",
+        "",
+        "Target paths:",
+        f"- runtime env: {target_paths['runtime_env']}",
+        f"- GitHub secret-name observation: {target_paths['github_secret_observation']}",
+        f"- active release metadata: {target_paths['active_release']}",
+        f"- host inventory: {target_paths['host_config'] or 'not configured'}",
+        "",
+        "Template contents:",
+        f"- env.required.template: {len(env_keys)} required env key placeholder(s)",
+        f"- github-secret-observation.template.json: {len(secret_keys)} secret name placeholder(s)",
+        f"- release-metadata.template.json: release metadata fields to collect from the live runtime",
+        f"- host-capabilities.template.yml: {sum(1 for value in host_capabilities.values() if value)} required host capability flag(s)",
+        "",
+        "Safe workflow:",
+        "1. Fill runtime env values only in the real runtime env target, outside Git.",
+        "2. Replace the secret observation template with names collected from the provider.",
+        "3. Populate release metadata from an actual active/latest runtime release.",
+        "4. Merge host capabilities into the real host inventory after review.",
+        "5. Rerun `ship live-hydration report` before enabling probes.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _env_template(keys: List[str], target_path: Optional[str]) -> str:
+    lines = [
+        "# Required env-key placeholders for live hydration.",
+        "# Fill real values only in the runtime env target, never in Git.",
+        f"# Runtime target: {target_path or 'unknown'}",
+        "",
+    ]
+    lines.extend(f"{key}=" for key in keys)
+    return "\n".join(lines) + "\n"
+
+
+def _github_secret_observation_template(app: str, environment: str, keys: List[str], target_path: Optional[str]) -> Dict[str, Any]:
+    return {
+        "template": True,
+        "values_redacted": True,
+        "app": app,
+        "environment": environment,
+        "target_path": target_path,
+        "instructions": "Replace this template with names observed from the provider before copying it to the target path.",
+        "environments": {
+            environment: {
+                "secrets": [{"name": key, "observed": False} for key in keys],
+            }
+        },
+    }
+
+
+def _release_metadata_template(app: str, environment: str, report: Dict[str, Any], target_paths: Dict[str, str]) -> Dict[str, Any]:
+    return {
+        "template": True,
+        "values_redacted": True,
+        "app": app,
+        "environment": environment,
+        "release_id": "replace-with-real-release-id",
+        "source_manifest": report.get("manifest_path"),
+        "manifest_path": report.get("manifest_path"),
+        "git_sha": "replace-with-deployed-git-sha-if-known",
+        "images": [],
+        "generated_files": [],
+        "deployed_at": "replace-with-real-deploy-timestamp",
+        "target_paths": {
+            "active_release": target_paths.get("active_release"),
+            "legacy_release": target_paths.get("legacy_release"),
+            "releases_dir": target_paths.get("releases_dir"),
+        },
+    }
+
+
+def _host_capabilities_template(capabilities: Dict[str, Any], target_path: Optional[str]) -> str:
+    required = {key: value for key, value in capabilities.items() if value}
+    lines = [
+        "# Host capability inventory template for live hydration.",
+        "# Merge reviewed capability facts into the real host inventory.",
+        f"# Host inventory target: {target_path or 'unknown'}",
+        "version: 1",
+        "hosts:",
+        "  - id: replace-with-host-id",
+        "    capabilities:",
+    ]
+    if required:
+        lines.extend(f"      {key}: true" for key in sorted(required))
+    else:
+        lines.append("      docker: true")
+    return "\n".join(lines) + "\n"
+
+
+def _json_text(payload: Dict[str, Any]) -> str:
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def _sha256_text(content: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 def _host_section(placement: Dict[str, Any]) -> Dict[str, Any]:
     requirements = placement.get("requirements") if isinstance(placement.get("requirements"), dict) else {}
     required_capabilities = requirements.get("required_capabilities") if isinstance(requirements.get("required_capabilities"), dict) else {}
@@ -440,6 +731,10 @@ def _entry_keys(entries: List[Dict[str, Any]]) -> List[str]:
     return sorted(str(entry.get("key")) for entry in entries if isinstance(entry.get("key"), str))
 
 
+def _str_list(value: Any) -> List[str]:
+    return [str(item) for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
 def _issues(value: Any) -> List[Dict[str, str]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
@@ -466,6 +761,7 @@ def _redact(payload: Dict[str, Any]) -> Dict[str, Any]:
         safe_keys={
             "confirmation_required",
             "dry_run",
+            "github_secret_observation",
             "github_secret_observations",
             "mutates_state",
             "probe_policy",

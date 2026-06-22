@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-12 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-13 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -69,6 +69,8 @@ rebuilt:
   results against `~/ophelia-runtime`.
 - Focused live hydration reports that turn one blocked live app baseline into
   ordered runtime/env/secret-name/release/host evidence steps before probes.
+- Live hydration scaffold templates for collecting one app's non-secret
+  runtime, provider observation, release, and host capability evidence.
 
 ## Implementation Rules
 
@@ -664,6 +666,45 @@ drift reports.
 record secret-name observations, refresh state, run probes, call providers, or
 execute workflows. It identifies the exact evidence to collect first.
 
+## Phase 13: Live Evidence Scaffold Templates
+
+**Status:** Landed in changelog record
+[`0033`](changelog/0033-live-evidence-scaffold-templates.md).
+
+**Goal:** Make the first live evidence collection step repeatable and safe
+before touching consumed runtime files or enabling probes.
+
+**Work items:**
+
+- Add `ship live-hydration scaffold` as a dry-run-first companion to hydration
+  reports.
+- Generate template-only files for env shape, GitHub secret-name observations,
+  release metadata, host capabilities, and operator instructions.
+- Keep scaffold output under a separate hydration workspace by default, not
+  `apps/<app>/env`, `active_release.json`, provider observation paths, or host
+  inventory files.
+- Add `--write` and `--force` guards for explicit scaffold template writes.
+- Expose command catalog examples, `make live-hydration-scaffold-quark-staging`,
+  tests, and docs.
+
+**Dependencies:** Phase 12 hydration reports and Phase 11 local profile
+baselines.
+
+**Milestone commit:** `feat: add live evidence scaffold templates`
+
+**Definition of done:**
+
+- Dry-run scaffold output is redacted, useful, and writes nothing.
+- `--write` creates templates only under the requested scaffold directory.
+- Existing scaffold files are not overwritten without `--force`.
+- Docs make clear that templates are not readiness evidence until replaced by
+  reviewed real observations.
+
+**Boundary:** Phase 13 does not create or edit consumed runtime env files,
+release metadata, provider observation files, host inventory, state DB files,
+or workflow artifacts. It does not run HTTP, Docker, authenticated provider, or
+production probes.
+
 ## Phase Dependency Graph
 
 ```text
@@ -680,6 +721,7 @@ Phase 0 docs
                   -> Phase 10 live drill profiles
                     -> Phase 11 live test baseline
                       -> Phase 12 live hydration reports
+                        -> Phase 13 live evidence scaffold templates
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

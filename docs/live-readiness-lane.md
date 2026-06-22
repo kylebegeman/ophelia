@@ -75,6 +75,16 @@ Hydration reports do not run HTTP/Docker checks. They list missing runtime
 paths, env-key presence, secret-name observations, release metadata, host
 capability evidence, and drift review steps for one focused app.
 
+Use the scaffold command to create non-secret templates for those evidence
+items in a separate review directory:
+
+```bash
+ship live-hydration scaffold \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --json
+```
+
 ## What It Runs
 
 Top-level checks:
@@ -145,7 +155,8 @@ Use this lane now for staging and production inspection:
 3. Run without probes first.
 4. Review blockers, warnings, drift, missing observations, and placement output.
 5. Run a focused `ship live-hydration report` for the first target app.
-6. Opt into `--probe-http` and `--check-docker` only after the file-only report
+6. Generate and review `ship live-hydration scaffold` templates for that app.
+7. Opt into `--probe-http` and `--check-docker` only after the file-only report
    is understood.
 
 Use production hardening and live drill profiles for read-only migration
