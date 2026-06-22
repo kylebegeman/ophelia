@@ -129,6 +129,10 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
     "manifest.explain": ["ship explain examples/dragonwriter.ophelia.yml --json"],
     "manifest.diff": ["ship diff examples/portfolio.ophelia.yml --json"],
     "manifest.conflicts": ["ship inspect conflicts --json"],
+    "pack.init.preview": [
+        "ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json",
+        "ship pack init --app demo-static --environment staging --directory ../demo-static --include-manifest --kind static --domain demo-static.example.com --json",
+    ],
     "deploy.plan": ["ship deploy examples/portfolio.ophelia.yml --plan --json"],
     "deploy.apply": ["ship deploy examples/portfolio.ophelia.yml --apply --confirm <token>"],
     "backup.plan": ["ship backup plan dragon-writer --json"],

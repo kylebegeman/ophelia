@@ -1431,6 +1431,97 @@ routes:
             self.assertFalse(written["blockers"])
             self.assertTrue(script_executable)
 
+    def test_pack_init_can_scaffold_valid_service_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            preview = pack_init_report(
+                "demo-service",
+                "staging",
+                False,
+                True,
+                False,
+                False,
+                root,
+                include_manifest=True,
+                manifest_kind="service",
+                domain="demo-service.fixture.invalid",
+                image="ghcr.io/ophelia-fixtures/demo-service@sha256:aaaaaaaa",
+            )
+            preview_manifest_exists = (root / ".ophelia.yml").exists()
+            written = pack_init_report(
+                "demo-service",
+                "staging",
+                False,
+                True,
+                False,
+                False,
+                root,
+                write=True,
+                include_manifest=True,
+                manifest_kind="service",
+                domain="demo-service.fixture.invalid",
+                image="ghcr.io/ophelia-fixtures/demo-service@sha256:aaaaaaaa",
+            )
+            manifest_path = root / ".ophelia.yml"
+            manifest = load_manifest(manifest_path)
+            blocked = pack_init_report(
+                "demo-service",
+                "staging",
+                False,
+                True,
+                False,
+                False,
+                root,
+                write=True,
+                include_manifest=True,
+                manifest_kind="service",
+                domain="demo-service.fixture.invalid",
+                image="ghcr.io/ophelia-fixtures/demo-service@sha256:aaaaaaaa",
+            )
+
+        self.assertTrue(preview["dry_run"])
+        self.assertFalse(preview_manifest_exists)
+        self.assertFalse(written["blockers"])
+        self.assertEqual("demo-service", manifest.app)
+        self.assertEqual("service", manifest.kind)
+        self.assertIn("file_exists", {item["code"] for item in blocked["blockers"]})
+
+    def test_pack_init_can_scaffold_valid_static_manifest_and_asset_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            blocked = pack_init_report(
+                "demo-static",
+                "staging",
+                False,
+                False,
+                False,
+                False,
+                root,
+                include_manifest=True,
+                manifest_kind="static",
+            )
+            written = pack_init_report(
+                "demo-static",
+                "staging",
+                False,
+                False,
+                False,
+                False,
+                root,
+                write=True,
+                include_manifest=True,
+                manifest_kind="static",
+                domain="demo-static.fixture.invalid",
+                static_root="public",
+            )
+            manifest = load_manifest(root / ".ophelia.yml")
+            index_exists = (root / "public" / "index.html").exists()
+
+        self.assertIn("manifest_domain_required", {item["code"] for item in blocked["blockers"]})
+        self.assertFalse(written["blockers"])
+        self.assertEqual("static", manifest.kind)
+        self.assertTrue(index_exists)
+
     def test_pack_and_app_plan_commands_emit_json(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         env = {**os.environ, "OPHELIA_SKIP_DOCKER_STATUS": "1"}

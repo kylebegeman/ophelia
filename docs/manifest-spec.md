@@ -336,10 +336,14 @@ Portable pack and readiness commands are read-only by default:
 ./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
 ./cli/ship receipts list --app dragon-writer --json
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ```
 
 `ship pack init` previews by default. It writes scaffold files only when
 `--write` is passed, and refuses to overwrite existing files without `--force`.
+With `--include-manifest`, it also previews or writes `.ophelia.yml`; service
+manifests require `--domain` and `--image`, and static manifests require
+`--domain`.
 `ship app export create` is confirmation-gated. By default it writes metadata,
 redacted runtime files, local static/volume archives for declared local sources,
 checksums, receipts, and a deterministic `.tar` archive of that bundle. Pass

@@ -36,6 +36,12 @@ def register(subparsers: _SubParsersAction) -> None:
     init.add_argument("--redis", action="store_true", help="Include Redis data contract snippet")
     init.add_argument("--uploads", action="store_true", help="Include uploads volume contract snippet")
     init.add_argument("--directory", type=Path, default=Path("."), help="App repo root")
+    init.add_argument("--include-manifest", action="store_true", help="Also scaffold .ophelia.yml in --directory")
+    init.add_argument("--kind", dest="manifest_kind", choices=["service", "static"], default="service", help="Manifest kind when --include-manifest is used")
+    init.add_argument("--domain", help="Primary route domain when --include-manifest is used")
+    init.add_argument("--image", help="Service image when --include-manifest --kind service is used")
+    init.add_argument("--port", type=int, default=8080, help="Service port when --include-manifest --kind service is used")
+    init.add_argument("--static-root", default="public", help="Static root when --include-manifest --kind static is used")
     init.add_argument("--write", action="store_true", help="Write scaffold files")
     init.add_argument("--force", action="store_true", help="Overwrite scaffold files when --write is used")
     init.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
@@ -94,6 +100,12 @@ def run_init(args: Namespace) -> int:
         root=args.directory,
         write=args.write,
         force=args.force,
+        include_manifest=args.include_manifest,
+        manifest_kind=args.manifest_kind,
+        domain=args.domain,
+        image=args.image,
+        port=args.port,
+        static_root=args.static_root,
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))

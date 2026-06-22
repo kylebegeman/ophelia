@@ -178,9 +178,17 @@ def adoption_plan(
     )
 
     resolved_environment = _resolved_environment(environment, manifest)
-    next_commands = _next_commands(app, resolved_environment, repo_root, resolved_manifest_path, runtime_root)
+    manifest_exists = resolved_manifest_path.exists()
+    next_commands = _next_commands(
+        app,
+        resolved_environment,
+        repo_root,
+        resolved_manifest_path,
+        runtime_root,
+        manifest_exists=manifest_exists,
+    )
     gates = _adoption_gates(
-        manifest_present=resolved_manifest_path.exists(),
+        manifest_present=manifest_exists,
         manifest_valid=manifest is not None,
         pack_ok=bool(pack_validation and pack_validation.get("ok")),
         artifacts_complete=not missing_artifacts and not non_executable_artifacts,
@@ -212,7 +220,7 @@ def adoption_plan(
         mutates_state=False,
         repo_path=str(repo_root),
         manifest_path=str(resolved_manifest_path),
-    required_artifacts=artifacts,
+        required_artifacts=artifacts,
         pack_validation=deep_redact(pack_validation),
         adoption_gates=gates,
         next_commands=next_commands,
@@ -292,74 +300,133 @@ def _next_commands(
     repo_root: Path,
     manifest_path: Path,
     runtime_root: Path,
+    manifest_exists: bool,
 ) -> List[Dict[str, Any]]:
     manifest_for_command = _display_path(manifest_path)
     repo_for_command = _display_path(repo_root)
     runtime_for_command = _display_path(runtime_root)
     environment_args = [] if environment == "unknown" else ["--environment", environment]
-    return [
-        _command_payload(
-            command_id="preview-pack-scaffold",
-            phase="repo-contract",
-            description="Preview the standard Ophelia artifact scaffold for this repo.",
-            argv=[
-                "ship",
-                "pack",
-                "init",
-                "--app",
-                app,
-                *environment_args,
-                "--directory",
-                repo_for_command,
-                "--json",
-            ],
-        ),
-        _command_payload(
-            command_id="validate-pack",
-            phase="repo-contract",
-            description="Validate the app manifest and pack contract.",
-            argv=["ship", "pack", "validate", manifest_for_command, "--json"],
-        ),
-        _command_payload(
-            command_id="explain-pack",
-            phase="repo-contract",
-            description="Inspect the data, host, route, verification, and movement contract.",
-            argv=["ship", "pack", "explain", manifest_for_command, "--json"],
-        ),
-        _command_payload(
-            command_id="readiness-later",
-            phase="runtime-readiness",
-            description="Run after truthful runtime state exists for the app.",
-            argv=[
-                "ship",
-                "app",
-                "readiness",
-                app,
-                *environment_args,
-                "--manifest",
-                manifest_for_command,
-                "--runtime-root",
-                runtime_for_command,
-                "--json",
-            ],
-        ),
-        _command_payload(
-            command_id="runbook-later",
-            phase="operator-handoff",
-            description="Generate an operator runbook from readiness evidence.",
-            argv=[
-                "ship",
-                "app",
-                "runbook",
-                app,
-                *environment_args,
-                "--manifest",
-                manifest_for_command,
-                "--runtime-root",
-                runtime_for_command,
-            ],
-        ),
-    ]
+    commands: List[Dict[str, Any]] = []
+    if manifest_exists:
+        commands.append(
+            _command_payload(
+                command_id="preview-pack-scaffold",
+                phase="repo-contract",
+                description="Preview the standard Ophelia support artifact scaffold for this repo.",
+                argv=[
+                    "ship",
+                    "pack",
+                    "init",
+                    "--app",
+                    app,
+                    *environment_args,
+                    "--directory",
+                    repo_for_command,
+                    "--json",
+                ],
+            )
+        )
+    else:
+        commands.extend(
+            [
+                _command_payload(
+                    command_id="preview-service-bootstrap",
+                    phase="repo-contract",
+                    description="Preview a service manifest plus standard Ophelia support artifacts.",
+                    argv=[
+                        "ship",
+                        "pack",
+                        "init",
+                        "--app",
+                        app,
+                        *environment_args,
+                        "--directory",
+                        repo_for_command,
+                        "--include-manifest",
+                        "--kind",
+                        "service",
+                        "--domain",
+                        "<domain>",
+                        "--image",
+                        "<image>",
+                        "--json",
+                    ],
+                ),
+                _command_payload(
+                    command_id="preview-static-bootstrap",
+                    phase="repo-contract",
+                    description="Preview a static manifest plus standard Ophelia support artifacts.",
+                    argv=[
+                        "ship",
+                        "pack",
+                        "init",
+                        "--app",
+                        app,
+                        *environment_args,
+                        "--directory",
+                        repo_for_command,
+                        "--include-manifest",
+                        "--kind",
+                        "static",
+                        "--domain",
+                        "<domain>",
+                        "--static-root",
+                        "public",
+                        "--json",
+                    ],
+                ),
+            ]
+        )
+    commands.extend(
+        [
+            _command_payload(
+                command_id="validate-pack",
+                phase="repo-contract",
+                description="Validate the app manifest and pack contract.",
+                argv=["ship", "pack", "validate", manifest_for_command, "--json"],
+            ),
+            _command_payload(
+                command_id="explain-pack",
+                phase="repo-contract",
+                description="Inspect the data, host, route, verification, and movement contract.",
+                argv=["ship", "pack", "explain", manifest_for_command, "--json"],
+            ),
+            _command_payload(
+                command_id="readiness-later",
+                phase="runtime-readiness",
+                description="Run after truthful runtime state exists for the app.",
+                argv=[
+                    "ship",
+                    "app",
+                    "readiness",
+                    app,
+                    *environment_args,
+                    "--manifest",
+                    manifest_for_command,
+                    "--runtime-root",
+                    runtime_for_command,
+                    "--json",
+                ],
+            ),
+            _command_payload(
+                command_id="runbook-later",
+                phase="operator-handoff",
+                description="Generate an operator runbook from readiness evidence.",
+                argv=[
+                    "ship",
+                    "app",
+                    "runbook",
+                    app,
+                    *environment_args,
+                    "--manifest",
+                    manifest_for_command,
+                    "--runtime-root",
+                    runtime_for_command,
+                ],
+            ),
+        ]
+    )
+    return commands
 
 
 def _command_payload(command_id: str, phase: str, description: str, argv: List[str]) -> Dict[str, Any]:

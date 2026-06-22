@@ -1135,6 +1135,51 @@ but not executable.
 **Boundary:** Phase 24 does not execute hooks or checks. It only writes and
 validates file mode metadata.
 
+## Phase 25: Manifest Bootstrap For App Repos
+
+**Status:** Landed in changelog record
+[`0045`](changelog/0045-manifest-bootstrap-for-app-repos.md).
+
+**Goal:** Make the future-app bootstrap path complete: a repo with no
+`.ophelia.yml` can now get a valid service or static manifest from the same
+preview-first `pack init` flow that creates support artifacts.
+
+**Work items:**
+
+- Add `ship pack init --include-manifest`.
+- Support `--kind service` with required `--domain` and `--image`.
+- Support `--kind static` with required `--domain` and `--static-root`
+  defaulting to `public`.
+- Keep preview-first behavior, `--write`, `--force`, and overwrite guards for
+  `.ophelia.yml` and static placeholder files.
+- Update adoption plans so missing-manifest repos show service and static
+  bootstrap command alternatives.
+- Extend action input schemas and command catalog examples.
+- Add tests for service/static manifest generation, overwrite refusal,
+  adoption next commands, and CLI smoke validation.
+- Update README, manifest spec, portable pack spec, app adoption docs, and this
+  roadmap.
+
+**Dependencies:** Phase 21 adoption planning and Phase 24 scaffold script mode
+handling.
+
+**Milestone commit:** `feat: bootstrap app manifests with pack init`
+
+**Definition of done:**
+
+- `pack init --include-manifest --kind service ... --write` creates a manifest
+  that `ship pack validate` accepts.
+- `pack init --include-manifest --kind static ... --write` creates a manifest
+  and minimal static asset root that `ship pack validate` accepts.
+- Existing support-file-only `pack init` behavior remains preview-first and
+  overwrite-safe.
+- Adoption no longer leaves missing-manifest repos with only support-file
+  scaffold commands.
+
+**Boundary:** Phase 25 does not deploy generated apps, create live env values,
+  pick real domains/images for operators, or mutate provider/GitHub/runtime
+  state.
+
 ## Phase Dependency Graph
 
 ```text
@@ -1163,6 +1208,7 @@ Phase 0 docs
                                           -> Phase 22 future-app adoption fixture repos
                                             -> Phase 23 pack command metadata redaction
                                               -> Phase 24 pack scaffold executable scripts
+                                                -> Phase 25 manifest bootstrap for app repos
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

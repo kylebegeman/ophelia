@@ -253,11 +253,19 @@ default should be secret refs and redacted env shape.
 ./cli/ship pack validate path/to/.ophelia.yml
 ./cli/ship pack explain path/to/.ophelia.yml
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
+./cli/ship pack init --app demo-static --environment staging --directory ../demo-static --include-manifest --kind static --domain demo-static.example.com --json
 ```
 
 `pack init` is preview-only unless `--write` is passed. It refuses to overwrite
 existing scaffold files unless `--force` is also passed. Generated hook and
 check scripts are written executable.
+
+With `--include-manifest`, `pack init` also plans `.ophelia.yml`. Service
+manifests require `--domain` and `--image`; static manifests require
+`--domain` and write a minimal static asset root (`public/` by default). The
+same preview, `--write`, and `--force` overwrite policy applies to the manifest
+and static placeholder files.
 
 `pack validate --json` and `pack explain --json` redact data-contract command
 metadata before output. Secret-shaped flags, key/value arguments, and

@@ -152,6 +152,7 @@ make production-hardening-fixtures
 ./cli/ship workflow cancel latest:dragon-writer --json
 ./cli/ship receipts list --app dragon-writer --json
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ./cli/ship app adoption plan demo-app --repo-path ../demo-app --environment staging --json
 ./cli/ship inspect conflicts
 ./cli/ship status
@@ -231,7 +232,8 @@ starting SSH and never prints their values.
 24. Phase 22 has landed: committed future-app adoption fixture repos now validate the Ophelia repo contract without using legacy products as examples.
 25. Phase 23 has landed: pack validation, pack explanation, export command summaries, and adoption-embedded pack validation now scrub secret-shaped command literals.
 26. Phase 24 has landed: `pack init` now writes executable hook/check scripts and adoption planning reports non-executable required scripts as warnings.
-27. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+27. Phase 25 has landed: `pack init --include-manifest` now previews or writes valid service/static `.ophelia.yml` bootstraps for app repos.
+28. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
@@ -282,7 +284,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship workflow list|plan|show|run|pause|resume|cancel` for resumable, receipt-backed workflow orchestration. `run --preview` resolves nodes without executing them; mutating nodes pause until `--confirm-node NODE_ID=TOKEN` is supplied from that node's own plan.
 - `ship providers github status` and `ship secrets providers` for GitHub App/gh and secret-reference provider readiness without reading or printing secret values.
 - `ship app github plan|apply --github-provider auto|gh|github-app` for provider-aware GitHub provisioning; `gh` remains the apply fallback unless a GitHub App runner is configured.
-- `ship pack init` for preview-first app pack scaffolding; pass `--write` before it creates files.
+- `ship pack init` for preview-first app pack scaffolding; pass `--include-manifest` to scaffold `.ophelia.yml`, and pass `--write` before it creates files.
 - `ship deploy --apply --confirm <token>` for confirmed production apply.
 - `ship releases <app>` and `ship release show <app> <release-id>` for release history.
 - `ship rollback plan|apply` for file-level rollback from release bundle snapshots.

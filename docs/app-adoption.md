@@ -46,6 +46,11 @@ warnings because `ship pack init` can scaffold them in a preview-first flow.
 Hook and check scripts are expected to be executable; present but non-executable
 scripts are warnings.
 
+When `.ophelia.yml` is missing, `next_commands` includes service and static
+`ship pack init --include-manifest` bootstrap options. Fill in the real domain
+and, for services, image before running the command. `pack init` still previews
+by default; add `--write` only after reviewing the plan.
+
 ## What It Emits
 
 The JSON output is an `ophelia.plan` with:

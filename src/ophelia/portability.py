@@ -1514,6 +1514,12 @@ def pack_init_report(
     root: Path,
     write: bool = False,
     force: bool = False,
+    include_manifest: bool = False,
+    manifest_kind: str = "service",
+    domain: Optional[str] = None,
+    image: Optional[str] = None,
+    port: int = 8080,
+    static_root: str = "public",
 ) -> Dict[str, object]:
     base = root / "ophelia"
     files = {
@@ -1525,8 +1531,32 @@ def pack_init_report(
         base / "hooks" / "unfreeze.sh": "#!/usr/bin/env sh\nset -eu\n# Add app unfreeze behavior here.\n",
         base / "hooks" / "post-import.sh": "#!/usr/bin/env sh\nset -eu\n# Add target-side post-import checks here.\n",
     }
+    blockers = _pack_init_manifest_blockers(
+        include_manifest=include_manifest,
+        manifest_kind=manifest_kind,
+        domain=domain,
+        image=image,
+        port=port,
+        static_root=static_root,
+        root=root,
+    )
+    if include_manifest and not blockers:
+        files[root / ".ophelia.yml"] = _pack_init_manifest_file(
+            app=app,
+            environment=environment,
+            critical=critical,
+            postgres=postgres,
+            redis=redis,
+            uploads=uploads,
+            manifest_kind=manifest_kind,
+            domain=str(domain),
+            image=image,
+            port=port,
+            static_root=static_root,
+        )
+        if manifest_kind == "static":
+            files[root / static_root / "index.html"] = _pack_init_static_index(app)
     planned = []
-    blockers = []
     written = []
     for path, content in files.items():
         exists = path.exists()
@@ -1548,7 +1578,16 @@ def pack_init_report(
                 path.chmod(0o755)
             written.append(str(path))
 
-    snippet = _pack_init_manifest_snippet(app, environment, critical, postgres, redis, uploads)
+    snippet = _pack_init_manifest_snippet(
+        app,
+        environment,
+        critical,
+        postgres,
+        redis,
+        uploads,
+        manifest_kind=manifest_kind,
+        static_root=static_root,
+    )
     return report_envelope(
         "pack.init",
         app,
@@ -1563,11 +1602,114 @@ def pack_init_report(
         planned_files=planned,
         written_files=written,
         manifest_snippet=snippet,
+        include_manifest=include_manifest,
+        manifest_kind=manifest_kind,
+        manifest_path=str(root / ".ophelia.yml") if include_manifest else None,
     )
 
 
 def _pack_init_executable(path: Path) -> bool:
     return path.suffix == ".sh" and any(part in {"checks", "hooks"} for part in path.parts)
+
+
+def _pack_init_manifest_blockers(
+    *,
+    include_manifest: bool,
+    manifest_kind: str,
+    domain: Optional[str],
+    image: Optional[str],
+    port: int,
+    static_root: str,
+    root: Path,
+) -> List[Dict[str, str]]:
+    if not include_manifest:
+        return []
+    blockers: List[Dict[str, str]] = []
+    if manifest_kind not in {"service", "static"}:
+        blockers.append(schema_issue("manifest_kind_invalid", "`--kind` must be `service` or `static`."))
+    if not domain:
+        blockers.append(schema_issue("manifest_domain_required", "`--domain` is required with `--include-manifest`."))
+    if manifest_kind == "service" and not image:
+        blockers.append(schema_issue("manifest_image_required", "`--image` is required for service manifests."))
+    if isinstance(port, bool) or not isinstance(port, int) or port <= 0:
+        blockers.append(schema_issue("manifest_port_invalid", "`--port` must be a positive integer."))
+    if manifest_kind == "static":
+        static_root_path = Path(static_root)
+        if static_root_path.is_absolute() or ".." in static_root_path.parts or not str(static_root).strip():
+            blockers.append(schema_issue("manifest_static_root_invalid", "`--static-root` must be a relative path inside --directory."))
+        elif (root / static_root_path).resolve().is_relative_to(root.resolve()) is False:
+            blockers.append(schema_issue("manifest_static_root_invalid", "`--static-root` must stay inside --directory."))
+    return blockers
+
+
+def _pack_init_manifest_file(
+    *,
+    app: str,
+    environment: Optional[str],
+    critical: bool,
+    postgres: bool,
+    redis: bool,
+    uploads: bool,
+    manifest_kind: str,
+    domain: str,
+    image: Optional[str],
+    port: int,
+    static_root: str,
+) -> str:
+    lines = ["version: 1", f"app: {app}"]
+    if environment:
+        lines.append(f"environment: {environment}")
+    lines.append(f"kind: {manifest_kind}")
+    if manifest_kind == "service":
+        lines.extend(
+            [
+                "",
+                "services:",
+                "  web:",
+                f"    image: {image}",
+                f"    port: {port}",
+                "    healthcheck:",
+                "      path: /health",
+                "",
+                "routes:",
+                f"  - domain: {domain}",
+                "    service: web",
+                "",
+                "verify:",
+                "  - name: health",
+                f"    url: https://{domain}/health",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"static_root: {static_root}",
+                "",
+                "routes:",
+                f"  - domain: {domain}",
+                "",
+                "verify:",
+                "  - name: health",
+                f"    url: https://{domain}/",
+            ]
+        )
+    lines.extend(["", _pack_init_manifest_snippet(app, environment, critical, postgres, redis, uploads, manifest_kind=manifest_kind, static_root=static_root).rstrip()])
+    return "\n".join(lines) + "\n"
+
+
+def _pack_init_static_index(app: str) -> str:
+    return (
+        "<!doctype html>\n"
+        "<html lang=\"en\">\n"
+        "  <head>\n"
+        "    <meta charset=\"utf-8\">\n"
+        f"    <title>{app}</title>\n"
+        "  </head>\n"
+        "  <body>\n"
+        f"    <main><h1>{app}</h1></main>\n"
+        "  </body>\n"
+        "</html>\n"
+    )
 
 
 def receipt_list_report(
@@ -4310,27 +4452,21 @@ def _pack_init_manifest_snippet(
     postgres: bool,
     redis: bool,
     uploads: bool,
+    manifest_kind: str = "service",
+    static_root: str = "public",
 ) -> str:
-    lines = [
-        "pack:",
-        f"  portability: {'critical' if critical else 'standard'}",
-        "  owner: personal",
-        f"  description: {app} {environment or 'environment'} app",
-        "  deploy_binding_file: ophelia/deploy.json",
-        "",
-        "host_requirements:",
-        "  min_memory: 1g",
-        "  min_disk_free: 20g",
-        "  requires_edge: true",
-        "  requires_docker: true",
-        "",
-        "networking:",
-        "  internal: per-app",
-        "",
-        "data:",
-    ]
+    service_based = manifest_kind != "static"
+    data_lines: List[str] = ["data:"]
+    if manifest_kind == "static":
+        data_lines.extend(
+            [
+                "  static_assets:",
+                "    - name: static-root",
+                f"      source: {static_root}",
+            ]
+        )
     if postgres:
-        lines.extend(
+        data_lines.extend(
             [
                 "  postgres:",
                 "    mode: shared-postgres-database",
@@ -4345,9 +4481,9 @@ def _pack_init_manifest_snippet(
             ]
         )
     if redis:
-        lines.extend(["  redis:", "    mode: redis-logical-db"])
+        data_lines.extend(["  redis:", "    mode: redis-logical-db"])
     if uploads:
-        lines.extend(
+        data_lines.extend(
             [
                 "  volumes:",
                 "    - name: uploads",
@@ -4357,12 +4493,40 @@ def _pack_init_manifest_snippet(
                 "      import: tar-zstd",
             ]
         )
-    lines.extend(
+    backup_required = critical or postgres or redis or uploads
+    data_lines.extend(
         [
             "  backups:",
-            "    required: true",
-            "    restore_drill_required: true",
-            "    offsite_required: true",
+            f"    required: {_yaml_bool(backup_required)}",
+            f"    restore_drill_required: {_yaml_bool(backup_required)}",
+            f"    offsite_required: {_yaml_bool(backup_required)}",
+        ]
+    )
+    lines = [
+        "pack:",
+        f"  portability: {'critical' if critical else 'static' if manifest_kind == 'static' else 'standard'}",
+        "  owner: personal",
+        f"  description: {app} {environment or 'environment'} app",
+        "  deploy_binding_file: ophelia/deploy.json",
+        "",
+        "host_requirements:",
+        "  min_memory: 1g",
+        "  min_disk_free: 20g",
+        "  requires_edge: true",
+        f"  requires_docker: {_yaml_bool(service_based)}",
+        "",
+    ]
+    if service_based:
+        lines.extend(
+            [
+                "networking:",
+                "  internal: per-app",
+                "",
+            ]
+        )
+    lines.extend(data_lines)
+    lines.extend(
+        [
             "",
             "hooks:",
             "  pre_export: ophelia/hooks/pre-export.sh",
@@ -4372,6 +4536,10 @@ def _pack_init_manifest_snippet(
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def _yaml_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def _receipt_records(

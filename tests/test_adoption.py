@@ -38,7 +38,10 @@ class AdoptionPlanTests(unittest.TestCase):
         self.assertFalse(plan["mutates_state"])
         self.assertFalse(plan["live_values_collected"])
         self.assertIn("adoption_manifest_missing", {item["code"] for item in plan["blockers"]})
-        self.assertIn("ship pack init --app demo-app --environment staging", json.dumps(plan["next_commands"]))
+        command_ids = [item["id"] for item in plan["next_commands"]]
+        self.assertEqual("preview-service-bootstrap", command_ids[0])
+        self.assertEqual("preview-static-bootstrap", command_ids[1])
+        self.assertIn("--include-manifest", plan["next_commands"][0]["argv"])
         self.assertEqual("ship", plan["next_commands"][0]["argv"][0])
 
     def test_valid_repo_reports_contract_and_missing_artifacts(self) -> None:
