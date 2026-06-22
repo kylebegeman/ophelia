@@ -197,6 +197,15 @@ risks in VPS platforms.
 
 **Roadmap phase:** Phase 3
 
+**Implementation status:** Phase 3 foundation landed in changelog
+[`0021`](changelog/0021-phase-3-state-service-and-drift-engine.md). `ship drift`
+now emits bounded snapshots, severity-sorted findings, owners, remediation
+commands, and plan candidates. Local comparisons cover rendered runtime files,
+release metadata, env shape, state index freshness, backup/restore evidence,
+observability schedule artifacts, and receipt-backed traffic/provider state.
+GitHub and live provider observations are explicit `not_observed` slots until
+the GitHub App and provider integration phases add authenticated probes.
+
 ### F-010: The State DB Should Become A Durable Query Service
 
 **Selected item:** Major 6, Durable State Service
@@ -211,6 +220,13 @@ migrations, indexing, refresh jobs, query APIs, and stale-data diagnostics.
 historical analytics, and long-term maintainability.
 
 **Roadmap phase:** Phase 3
+
+**Implementation status:** Phase 3 foundation landed in changelog
+[`0021`](changelog/0021-phase-3-state-service-and-drift-engine.md). The state DB
+schema is now versioned with refresh metadata and freshness checks. Operators
+can run `ship state refresh` to rebuild the local index, `ship state summary` to
+read app aggregates from SQLite without a scan, and Lumen/API consumers can use
+`GET /state/summary`.
 
 ### F-011: Secret Presence Needs Integrations Without Storing Secrets
 
@@ -269,13 +285,14 @@ Highest ROI near-term:
 - F-002 `ship doctor` expansion
 - F-004 Plan/Receipt Search Aliases
 - F-005 Command Catalog Examples
-- F-009 Drift Detection Engine foundation
+- F-009 Drift Detection Engine foundation (landed)
 
 Most strategic long-term:
 
 - F-006 Lumen Operator Console
 - F-007 Full Workflow Orchestrator
 - F-010 Durable State Service
+- F-009 Drift Detection Engine live provider observations
 - F-012 Multi-Host Inventory And Placement
 - F-013 Contracted Plugin System
 
@@ -286,3 +303,5 @@ Fastest visible wins:
 - Add workflow run preview.
 - Add alias resolution for latest receipt selectors.
 - Expand doctor with GitHub/provider/state checks.
+- Run `ship state refresh` and use `ship state summary` for local app
+  aggregates.

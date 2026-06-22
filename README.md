@@ -169,8 +169,9 @@ starting SSH and never prints their values.
 
 1. Phase 1 of the [Strategic Implementation Roadmap](docs/ophelia-strategic-implementation-roadmap.md) has landed: plan digest cards, expanded `ship doctor`, and command catalog examples.
 2. Phase 2 has landed: workflow run preview plus shared plan/receipt search aliases.
-3. Execute Phase 3: durable state service and drift engine foundation.
-4. Continue later phases in dependency order: workflow orchestrator, GitHub App and secrets integrations, multi-host placement, plugin contracts, then the Lumen operator console.
+3. Phase 3 has landed: durable state refresh/summary plus structured drift snapshots, findings, and remediation commands.
+4. Execute Phase 4: resumable, receipt-backed workflow orchestration.
+5. Continue later phases in dependency order: GitHub App and secrets integrations, multi-host placement, plugin contracts, then the Lumen operator console.
 
 ## Deploy Flows
 
@@ -202,12 +203,13 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship app traffic rollback plan|apply` for receipt-backed rollback of file provider traffic changes when previous DNS/Caddy state was captured.
 - `ship app isolation plan` for per-app network compatibility planning; manifests can opt into `networking.internal: per-app`.
 - `ship receipts list|show` for local operation receipt browsing.
+- `ship state refresh|summary` for the local SQLite state service and app aggregates.
 - `ship pack init` for preview-first app pack scaffolding; pass `--write` before it creates files.
 - `ship deploy --apply --confirm <token>` for confirmed production apply.
 - `ship releases <app>` and `ship release show <app> <release-id>` for release history.
 - `ship rollback plan|apply` for file-level rollback from release bundle snapshots.
 - `ship backup plan|create` and `ship restore plan|apply` for backup creation and safe restore previews.
-- `ship drift <manifest>` and `ship drift all` for runtime drift detection.
+- `ship drift <manifest>` and `ship drift all` for runtime/state drift snapshots with severity, owners, remediation commands, and plan candidates.
 - `ship inspect conflicts` for cross-manifest platform conflict scanning.
 - `ship status`, `ship doctor`, and `ship list` for read-only runtime inspection.
 - `ship actions`, `ship jobs`, and `ship api serve` for Quark-facing local job integration.

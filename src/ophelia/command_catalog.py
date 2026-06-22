@@ -162,6 +162,8 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
     "receipts.timeline": ["ship receipts timeline --app dragon-writer --json"],
     "state.status": ["ship state status --json"],
     "state.rebuild": ["ship state rebuild --json"],
+    "state.refresh": ["ship state refresh --json"],
+    "state.summary": ["ship state summary --json"],
     "state.query.receipts": ["ship state query receipts --app dragon-writer --json", "ship state query receipts --ref latest:deploy.apply --json"],
     "workflow.plan": ["ship workflow plan move-app --app dragon-writer --from spaceship --to ovh --environment production --json"],
     "workflow.preview": ["ship workflow run latest:dragon-writer --preview --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --json"],

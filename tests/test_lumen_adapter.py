@@ -75,6 +75,7 @@ class LumenContractTests(unittest.TestCase):
             "readiness",
             "receipts_timeline",
             "state_db",
+            "state_service",
             "policy",
             "workflows",
         ):
@@ -100,8 +101,10 @@ class LumenContractTests(unittest.TestCase):
         self.assertIn("apps", round_tripped)
         self.assertIn("warnings", round_tripped)
         self.assertIn("totals", round_tripped)
+        self.assertIn("state_service", round_tripped)
         self.assertIsInstance(round_tripped["traffic_status"], dict)
         self.assertIsInstance(round_tripped["observability"], dict)
+        self.assertIsInstance(round_tripped["state_service"], dict)
         self.assertEqual(0, round_tripped["traffic_status"]["app_count"])
         self.assertEqual(0, round_tripped["observability"]["app_count"])
 

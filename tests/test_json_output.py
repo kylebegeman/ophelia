@@ -27,6 +27,8 @@ class JsonOutputTests(unittest.TestCase):
                 ["diff", "examples/portfolio.ophelia.yml", "--runtime-root", str(runtime_root), "--json"],
                 ["status", "--runtime-root", str(runtime_root), "--json"],
                 ["doctor", "--runtime-root", str(runtime_root), "--ophelia-root", str(repo), "--json"],
+                ["state", "refresh", "--runtime-root", str(runtime_root), "--manifests-dir", "examples", "--json"],
+                ["state", "summary", "--runtime-root", str(runtime_root), "--json"],
             ]
 
             for command in commands:

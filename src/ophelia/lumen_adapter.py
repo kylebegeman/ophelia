@@ -39,6 +39,7 @@ from .operator_reports import manifest_registry
 from .portability import app_readiness_report, backup_status_report, traffic_status
 from .receipt_index import receipt_timeline
 from .redaction import deep_redact
+from .state_db import state_summary
 
 CAPABILITIES_KIND = "ophelia.lumen.capabilities"
 ACTION_DESCRIPTORS_KIND = "ophelia.lumen.action_descriptors"
@@ -59,6 +60,7 @@ _SURFACES: List[str] = [
     "readiness",
     "receipts_timeline",
     "state_db",
+    "state_service",
     "policy",
     "workflows",
 ]
@@ -182,6 +184,7 @@ def dashboard_data(
         "runtime_root": str(runtime_root),
         "manifests_dir": str(manifests_dir),
         "apps": entries,
+        "state_service": state_summary(runtime_root),
         "warnings": warnings,
         "totals": {
             "app_count": len(entries),

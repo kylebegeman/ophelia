@@ -35,6 +35,8 @@ Quark can call these read-only commands today:
 - `ship receipts show <receipt-id> --json`
 - `ship receipts show latest:<app> --json`
 - `ship workflow run <workflow-id-or-alias> --preview --json`
+- `ship state refresh --json`
+- `ship state summary --json`
 - `ship state query receipts --ref latest:<operation> --json`
 
 Mutating commands require confirmation tokens from their matching plans:
@@ -94,6 +96,8 @@ API endpoints:
 - `GET /registry/releases`
 - `GET /operations`
 - `POST /operations/run`
+- `GET /state/status`
+- `GET /state/summary`
 
 There is no arbitrary shell endpoint. Jobs use typed schemas, idempotency keys,
 job state, audit records, local-only binding, and optional artifact link fields.
@@ -221,6 +225,33 @@ The non-preview `ship workflow run` path still executes only stored nodes marked
 non-mutating, passes commands as argv arrays, and writes a receipt. Both preview
 and run receipts include the shared `digest` block.
 
+## Drift Reports
+
+`ship drift <manifest> --json` emits
+`{"schema_version": 1, "kind": "ophelia.drift_report", ...}`. `ship drift all
+--json` emits `kind: "ophelia.drift_summary"` and aggregates per-manifest
+reports.
+
+Each per-app report preserves the existing `rendered`, `release_metadata`,
+`env`, `summary`, and boolean `drift` fields, then adds:
+
+- `status`: `ok` or `drift`.
+- `severity`: highest finding severity (`info`, `low`, `medium`, `high`,
+  `critical`).
+- `snapshots`: bounded desired/observed comparisons for rendered runtime files,
+  release metadata, env requirements, state index freshness, backup/restore
+  evidence, observability schedule artifacts, traffic/provider receipts, and
+  GitHub settings.
+- `findings`: severity-sorted entries with `code`, `message`, `severity`,
+  `owner`, `path`, `remediation_commands`, and `plan_candidates`.
+- `remediation_commands`: de-duplicated command strings copied from findings.
+- `plan_candidates`: de-duplicated operation suggestions copied from findings.
+
+External GitHub/provider live observations are intentionally represented as
+bounded `not_observed` snapshots until the later GitHub App and provider
+integration phases add authenticated probes. These informational findings do
+not make `drift` true.
+
 ## Provider And Secret Validation (Phase 3)
 
 These are read-only validators. They never print secret values and never
@@ -267,26 +298,39 @@ Diff artifacts are `redacted: true` and referenced by path only inside plans.
 The plan carries the artifact reference, not inline diff content, so secret or
 bulky payloads never land in the plan envelope.
 
-## Runtime State Read-Model (Phase 6)
+## Runtime State Read-Model And Service
 
-`ship state status|rebuild|query receipts --json` exposes a local SQLite
-read-model of runtime state:
+`ship state status|rebuild|refresh|summary|query receipts --json` exposes a
+local SQLite read-model of runtime state:
 
 - `ship state status --json` emits
   `{"schema_version": 1, "kind": "ophelia.state_status", ...}`.
 - `ship state rebuild --json` emits
   `{"schema_version": 1, "kind": "ophelia.state_rebuild", ...}`.
+- `ship state refresh --json` emits
+  `{"schema_version": 1, "kind": "ophelia.state_refresh", ...}` and is the
+  preferred operator verb for updating the local state service.
+- `ship state summary --json` emits
+  `{"schema_version": 1, "kind": "ophelia.state_summary", ...}` and reads app
+  aggregates from SQLite without scanning the runtime tree.
 - `ship state query receipts --json` emits
   `{"schema_version": 1, "kind": "ophelia.state_query", ...}`.
 
-`state rebuild` writes ONLY the local SQLite index under the runtime root. It is
-local index creation, not a VPS mutation, so it does not require a production
-confirmation token.
+`state refresh` and the compatibility `state rebuild` command write ONLY the
+local SQLite index under the runtime root. This is local index creation, not a
+VPS mutation, so it does not require a production confirmation token. Refresh
+metadata includes `refresh_started_at`, `refreshed_at`, schema version, runtime
+root, manifests directory, and freshness status. The index covers apps,
+environments, manifests, routes, releases, receipts, artifacts, checks, backups,
+restore drills, observability schedule runs, traffic state, provider snapshots,
+GitHub provisioning receipts, operation plans, and policy results when those
+files exist locally.
 
 Read-only API endpoints back the same read-model:
 
 ```text
 GET /state/status
+GET /state/summary
 GET /state/apps
 GET /state/receipts
 GET /state/routes

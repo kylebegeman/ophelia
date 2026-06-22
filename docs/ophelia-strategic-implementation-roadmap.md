@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-2 landed
+Status: selected next-stage roadmap, Phases 1-3 landed
 
 Date: 2026-06-21
 
@@ -174,6 +174,9 @@ provider validation.
 
 ## Phase 3: Durable State Service And Drift Engine
 
+**Status:** Landed in changelog record
+[`0021`](changelog/0021-phase-3-state-service-and-drift-engine.md).
+
 **Goal:** Promote state and drift from ad hoc scans into durable, queryable
 product signals.
 
@@ -186,10 +189,11 @@ product signals.
 
 - Version the state DB schema with explicit migrations.
 - Add a refresh/index command that updates apps, manifests, receipts,
-  observability runs, traffic state, backups, releases, GitHub provisioning
-  receipts, and provider snapshots.
+  backups, restore drills, releases, and local receipt-backed traffic and
+  observability snapshots.
 - Add stale-data metadata and freshness checks.
-- Add a local read-only state service mode or API endpoint backed by the DB.
+- Add `ship state refresh`, `ship state summary`, and `GET /state/summary` as
+  local state-service surfaces.
 - Build drift snapshots for:
   - manifest versus rendered runtime files
   - runtime root versus state DB index
@@ -199,6 +203,8 @@ product signals.
   - observability schedule status versus current manifest registry
 - Emit drift reports with severity, owner, remediation commands, and plan
   candidates.
+- Record external GitHub/provider live observations as bounded `not_observed`
+  snapshot slots for now; live API probes remain Phase 5/provider work.
 
 **Dependencies:** Digest fields, operation references, state DB read model,
 traffic status, GitHub provisioning contracts, observability schedule runs.

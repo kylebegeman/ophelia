@@ -20,7 +20,7 @@ from .operator_reports import host_inventory, manifest_registry, release_registr
 from .operation_schema import error_envelope
 from .operations import list_operations, run_operation
 from .schema_export import manifest_json_schema
-from .state_db import SQLITE_AVAILABLE, query_receipts, state_db_path, state_status
+from .state_db import SQLITE_AVAILABLE, query_receipts, state_db_path, state_status, state_summary
 from .workflows import list_workflow_templates, show_workflow
 
 
@@ -85,6 +85,9 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/state/status":
             self._json(state_status(self.runtime_root_value))
+            return
+        if parsed.path == "/state/summary":
+            self._json(state_summary(self.runtime_root_value))
             return
         if parsed.path == "/state/apps":
             self._json(self._state_table("apps", "app"))

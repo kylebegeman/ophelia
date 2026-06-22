@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -16,6 +17,7 @@ from ophelia.state_db import (
     STATE_SCHEMA_VERSION,
     query_receipts,
     rebuild_state,
+    state_summary,
     state_db_path,
     state_status,
 )
@@ -102,6 +104,69 @@ def _build_runtime_root(base: Path) -> Path:
         )
         + "\n"
     )
+    (receipts_root / "traffic-apply.json").write_text(
+        json.dumps(
+            {
+                "operation": "app.traffic.apply",
+                "operation_id": "app.traffic.apply.dragon-writer.production.fixture",
+                "status": "succeeded",
+                "app": "dragon-writer",
+                "environment": "production",
+                "started_at": "2026-06-21T11:00:00Z",
+                "completed_at": "2026-06-21T11:01:00Z",
+                "provider_config": str(runtime_root / "traffic-providers.json"),
+                "provider_config_validation": {"status": "ok", "providers": [{"name": "file", "type": "file"}]},
+                "provider_mutations": [
+                    {
+                        "provider": "dns.file",
+                        "status": "succeeded",
+                        "path": str(runtime_root / "traffic" / "dns-records.json"),
+                        "file_written": True,
+                    }
+                ],
+                "provider_mutation_performed": True,
+                "inputs_redacted": True,
+            }
+        )
+        + "\n"
+    )
+    (receipts_root / "github-apply.json").write_text(
+        json.dumps(
+            {
+                "operation": "app.github.provision.apply",
+                "operation_id": "app.github.provision.apply.dragon-writer.production.fixture",
+                "status": "succeeded",
+                "app": "dragon-writer",
+                "environment": "production",
+                "started_at": "2026-06-21T12:00:00Z",
+                "completed_at": "2026-06-21T12:01:00Z",
+                "repository": "example/dragon-writer",
+                "inputs_redacted": True,
+            }
+        )
+        + "\n"
+    )
+
+    observability_root = runtime_root / "observability"
+    runs_root = observability_root / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+    observability_run = {
+        "operation": "observability.schedule.run",
+        "operation_id": "observability.schedule.run.fixture",
+        "status": "succeeded",
+        "completed_at": "2026-06-21T13:00:00Z",
+        "apps": [
+            {
+                "app": "dragon-writer",
+                "environment": "production",
+                "status": "ok",
+                "snapshot": {"health_configured": True},
+            }
+        ],
+        "secrets_redacted": True,
+    }
+    (runs_root / "observability.schedule.run.fixture.json").write_text(json.dumps(observability_run) + "\n")
+    (observability_root / "latest.json").write_text(json.dumps(observability_run) + "\n")
 
     backup_root = runtime_root / "backups" / "apps" / "dragon-writer" / "20260620T120000Z-fixture"
     backup_root.mkdir(parents=True)
@@ -129,12 +194,19 @@ class StateDbTests(unittest.TestCase):
 
         self.assertEqual("ok", report["status"])
         self.assertEqual(STATE_SCHEMA_VERSION, report["schema_version_db"])
+        self.assertIsNotNone(report["refreshed_at"])
+        self.assertEqual("current", report["freshness"]["status"])
         counts = report["counts"]
         self.assertGreater(counts["apps"], 0)
         self.assertGreater(counts["manifests"], 0)
         self.assertGreater(counts["receipts"], 0)
         self.assertGreater(counts["backups"], 0)
         self.assertGreater(counts["routes"], 0)
+        self.assertGreater(counts["observability_runs"], 0)
+        self.assertGreater(counts["observability_app_snapshots"], 0)
+        self.assertGreater(counts["traffic_state"], 0)
+        self.assertGreater(counts["provider_snapshots"], 0)
+        self.assertGreater(counts["github_provisioning"], 0)
 
     def test_rebuild_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -202,7 +274,7 @@ class StateDbTests(unittest.TestCase):
 
         self.assertTrue(report["needs_rebuild"])
         self.assertEqual("missing", report["status"])
-        self.assertIn("state rebuild", report["summary"])
+        self.assertIn("state refresh", report["summary"])
         self.assertEqual([], report["receipts"])
 
     def test_no_secret_value_is_stored_in_the_database(self) -> None:
@@ -248,9 +320,53 @@ class StateDbTests(unittest.TestCase):
         self.assertTrue(status["available"])
         self.assertTrue(status["exists"])
         self.assertFalse(status["needs_rebuild"])
+        self.assertFalse(status["needs_refresh"])
+        self.assertEqual("current", status["freshness"]["status"])
         self.assertEqual(STATE_SCHEMA_VERSION, status["schema_version_code"])
         self.assertEqual(STATE_SCHEMA_VERSION, status["schema_version_db"])
         self.assertIn("receipts", status["counts"])
+        self.assertIn("refreshed_at", status)
+
+    def test_state_status_reports_stale_index_without_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = _build_runtime_root(Path(temp_dir))
+            rebuild_state(runtime_root, Path(temp_dir) / "manifests")
+            stale = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            connection = sqlite3.connect(str(state_db_path(runtime_root)))
+            try:
+                connection.execute(
+                    "UPDATE state_metadata SET value = ? WHERE key = 'refreshed_at'",
+                    (stale,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            status = state_status(runtime_root)
+
+        self.assertFalse(status["needs_rebuild"])
+        self.assertTrue(status["needs_refresh"])
+        self.assertEqual("stale", status["freshness"]["status"])
+        self.assertIn("state refresh", status["summary"])
+
+    def test_state_summary_reads_app_aggregates_from_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = _build_runtime_root(Path(temp_dir))
+            rebuild_state(runtime_root, Path(temp_dir) / "manifests")
+
+            summary = state_summary(runtime_root)
+
+        self.assertEqual("ophelia.state_summary", summary["kind"])
+        self.assertEqual("current", summary["freshness"]["status"])
+        apps = {item["app"]: item for item in summary["apps"]}
+        self.assertIn("dragon-writer", apps)
+        self.assertGreater(apps["dragon-writer"]["route_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["receipt_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["backup_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["observability_snapshot_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["traffic_state_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["provider_snapshot_count"], 0)
+        self.assertGreater(apps["dragon-writer"]["github_provisioning_count"], 0)
 
     def test_state_status_without_index_is_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -259,6 +375,7 @@ class StateDbTests(unittest.TestCase):
 
         self.assertFalse(status["exists"])
         self.assertTrue(status["needs_rebuild"])
+        self.assertTrue(status["needs_refresh"])
         self.assertIsNone(status["schema_version_db"])
         # Reading status must not create the index.
         self.assertFalse(state_db_path(runtime_root).exists())

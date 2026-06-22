@@ -3,7 +3,8 @@
 This module builds and queries a *local* SQLite database that indexes what
 Ophelia already wrote to the runtime root: apps, environments, manifest locks,
 routes, releases, receipts, artifacts, backups, restore drills, provider
-configs, and so on. The database is a **cache**, never a source of truth: it is
+configs, observability runs, traffic/provider snapshots, GitHub provisioning
+receipts, and so on. The database is a **cache**, never a source of truth: it is
 rebuilt deterministically from the on-disk files by :func:`rebuild_state`, and
 nothing in this module ever reads from the VPS, performs SSH, or mutates the
 runtime files. The only thing written is the index file itself
@@ -57,11 +58,14 @@ from .portability import (
 from .receipt_index import receipt_timeline
 from .redaction import deep_redact, redact_mapping
 
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
+STATE_FRESHNESS_STALE_AFTER_SECONDS = 3600
 
 REBUILD_KIND = "ophelia.state_rebuild"
+REFRESH_KIND = "ophelia.state_refresh"
 STATUS_KIND = "ophelia.state_status"
 QUERY_KIND = "ophelia.state_query"
+SUMMARY_KIND = "ophelia.state_summary"
 
 _DEFAULT_MANIFESTS_DIR = REPO_ROOT / "manifests"
 
@@ -91,10 +95,21 @@ _SCHEMA_STATEMENTS: List[str] = [
     "PRIMARY KEY (drill_id, path))",
     "CREATE TABLE provider_configs (app TEXT, environment TEXT, provider TEXT, "
     "kind TEXT, payload_json TEXT)",
+    "CREATE TABLE observability_runs (run_id TEXT PRIMARY KEY, completed_at TEXT, "
+    "status TEXT, path TEXT, payload_json TEXT)",
+    "CREATE TABLE observability_app_snapshots (run_id TEXT, app TEXT, environment TEXT, "
+    "status TEXT, payload_json TEXT, PRIMARY KEY (run_id, app, environment))",
+    "CREATE TABLE traffic_state (app TEXT, environment TEXT, latest_apply_id TEXT, "
+    "latest_rollback_id TEXT, status TEXT, payload_json TEXT, PRIMARY KEY (app, environment))",
+    "CREATE TABLE provider_snapshots (snapshot_id TEXT PRIMARY KEY, app TEXT, "
+    "environment TEXT, provider TEXT, status TEXT, path TEXT, payload_json TEXT)",
+    "CREATE TABLE github_provisioning (receipt_id TEXT PRIMARY KEY, operation TEXT, "
+    "status TEXT, app TEXT, environment TEXT, path TEXT, payload_json TEXT)",
     "CREATE TABLE operation_plans (operation_id TEXT PRIMARY KEY, operation TEXT, "
     "app TEXT, environment TEXT, status TEXT, path TEXT, payload_json TEXT)",
     "CREATE TABLE policy_results (operation_id TEXT, decision TEXT, app TEXT, "
     "environment TEXT, payload_json TEXT)",
+    "CREATE TABLE state_metadata (key TEXT PRIMARY KEY, value TEXT)",
     "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT)",
 ]
 
@@ -112,8 +127,14 @@ _TABLE_NAMES: List[str] = [
     "backups",
     "restore_drills",
     "provider_configs",
+    "observability_runs",
+    "observability_app_snapshots",
+    "traffic_state",
+    "provider_snapshots",
+    "github_provisioning",
     "operation_plans",
     "policy_results",
+    "state_metadata",
     "schema_migrations",
 ]
 
@@ -125,6 +146,15 @@ def state_db_path(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Path:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_utc(value: object) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _relative_path(path: object, runtime_root: Path) -> Optional[str]:
@@ -217,6 +247,8 @@ def rebuild_state(
 
     warnings: List[Dict[str, str]] = []
     blockers: List[Dict[str, str]] = []
+    refresh_started_at = _utc_now()
+    refreshed_at: Optional[str] = None
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(str(db_path))
@@ -228,10 +260,21 @@ def rebuild_state(
             connection.execute(statement)
 
         counts = _populate(connection, runtime_root, manifests_dir, warnings)
+        refreshed_at = _utc_now()
+        _write_metadata(
+            connection,
+            {
+                "refresh_started_at": refresh_started_at,
+                "refreshed_at": refreshed_at,
+                "runtime_root": str(runtime_root),
+                "manifests_dir": str(manifests_dir),
+                "state_schema_version": str(STATE_SCHEMA_VERSION),
+            },
+        )
 
         connection.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-            (STATE_SCHEMA_VERSION, _utc_now()),
+            (STATE_SCHEMA_VERSION, refreshed_at),
         )
         connection.commit()
     except sqlite3.Error as exc:  # pragma: no cover - defensive
@@ -246,11 +289,42 @@ def rebuild_state(
         "kind": REBUILD_KIND,
         "db_path": str(db_path),
         "schema_version_db": None if blockers else STATE_SCHEMA_VERSION,
+        "refresh_started_at": refresh_started_at,
+        "refreshed_at": refreshed_at,
+        "freshness": _freshness(refreshed_at),
         "counts": counts if not blockers else {},
         "warnings": warnings,
         "blockers": blockers,
         "status": status,
     }
+
+
+def refresh_state(
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = _DEFAULT_MANIFESTS_DIR,
+) -> Dict[str, Any]:
+    """Refresh the local state service index.
+
+    Alias over :func:`rebuild_state` with a distinct kind so operators can use a
+    product word that matches the read-service mental model.
+    """
+    report = rebuild_state(runtime_root, manifests_dir)
+    report["kind"] = REFRESH_KIND
+    report["operation"] = "state.refresh"
+    report["summary"] = (
+        "State service refresh complete."
+        if report.get("status") == "ok"
+        else "State service refresh was blocked."
+    )
+    return report
+
+
+def _write_metadata(connection: "sqlite3.Connection", metadata: Dict[str, str]) -> None:
+    for key, value in metadata.items():
+        connection.execute(
+            "INSERT OR REPLACE INTO state_metadata (key, value) VALUES (?, ?)",
+            (key, value),
+        )
 
 
 def _populate(
@@ -267,6 +341,9 @@ def _populate(
     _index_receipts(connection, runtime_root, warnings)
     _index_backups(connection, runtime_root, warnings)
     _index_restore_drills(connection, runtime_root, apps_by_environments)
+    _index_observability_runs(connection, runtime_root, apps_by_environments, warnings)
+    _index_traffic_provider_state(connection, runtime_root, apps_by_environments, warnings)
+    _index_github_provisioning(connection, runtime_root, apps_by_environments, warnings)
     _index_manifest_registry(connection, manifests_dir, runtime_root, apps_by_environments, warnings)
     _index_apps(connection, apps_by_environments)
 
@@ -285,6 +362,11 @@ def _populate(
             "checks",
             "backups",
             "restore_drills",
+            "observability_runs",
+            "observability_app_snapshots",
+            "traffic_state",
+            "provider_snapshots",
+            "github_provisioning",
         )
     }
 
@@ -618,6 +700,234 @@ def _index_restore_drills(
     return count
 
 
+def _index_observability_runs(
+    connection: "sqlite3.Connection",
+    runtime_root: Path,
+    apps_by_environments: Dict[str, set],
+    warnings: List[Dict[str, str]],
+) -> int:
+    paths: List[Path] = []
+    runs_root = runtime_root / "observability" / "runs"
+    if runs_root.exists():
+        paths.extend(sorted(runs_root.glob("*.json")))
+    latest_path = runtime_root / "observability" / "latest.json"
+    if latest_path.exists():
+        paths.append(latest_path)
+
+    count = 0
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            payload = _read_json_file(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            warnings.append(issue("observability_run_unreadable", f"Could not read observability run: {exc}", str(path)))
+            continue
+        if not isinstance(payload, dict):
+            warnings.append(issue("observability_run_unreadable", "Observability run is not a JSON object.", str(path)))
+            continue
+        run_id = payload.get("operation_id") if isinstance(payload.get("operation_id"), str) else path.stem
+        if run_id in seen:
+            continue
+        seen.add(run_id)
+        rel_path = _relative_path(path, runtime_root)
+        connection.execute(
+            "INSERT OR REPLACE INTO observability_runs (run_id, completed_at, status, path, payload_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                run_id,
+                payload.get("completed_at") if isinstance(payload.get("completed_at"), str) else None,
+                payload.get("status") if isinstance(payload.get("status"), str) else None,
+                rel_path,
+                _canonical_json(_redact_payload_env(payload)),
+            ),
+        )
+        count += 1
+        apps = payload.get("apps") if isinstance(payload.get("apps"), list) else []
+        for item in apps:
+            if not isinstance(item, dict):
+                continue
+            app = item.get("app")
+            if not isinstance(app, str) or not app:
+                continue
+            environment = item.get("environment") if isinstance(item.get("environment"), str) else None
+            apps_by_environments.setdefault(app, set())
+            if environment:
+                apps_by_environments[app].add(environment)
+            connection.execute(
+                "INSERT OR REPLACE INTO observability_app_snapshots "
+                "(run_id, app, environment, status, payload_json) VALUES (?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    app,
+                    environment or "",
+                    item.get("status") if isinstance(item.get("status"), str) else None,
+                    _canonical_json(_redact_payload_env(item)),
+                ),
+            )
+    return count
+
+
+def _index_traffic_provider_state(
+    connection: "sqlite3.Connection",
+    runtime_root: Path,
+    apps_by_environments: Dict[str, set],
+    warnings: List[Dict[str, str]],
+) -> int:
+    timeline = receipt_timeline(runtime_root)
+    warnings.extend(timeline.get("warnings", []))
+    states: Dict[tuple[str, str], Dict[str, Any]] = {}
+    provider_count = 0
+    for entry in timeline.get("receipts", []) if isinstance(timeline.get("receipts"), list) else []:
+        if not isinstance(entry, dict):
+            continue
+        operation = entry.get("operation")
+        if operation not in {"app.traffic.apply", "app.traffic.rollback.apply"}:
+            continue
+        app = entry.get("app")
+        if not isinstance(app, str) or not app:
+            continue
+        environment = entry.get("environment") if isinstance(entry.get("environment"), str) else ""
+        key = (app, environment)
+        state = states.setdefault(
+            key,
+            {
+                "app": app,
+                "environment": environment or None,
+                "latest_apply": None,
+                "latest_rollback": None,
+                "status": "unknown",
+            },
+        )
+        path = entry.get("path")
+        payload = _safe_receipt_payload(path, warnings) or {}
+        receipt_summary = {
+            "receipt_id": entry.get("receipt_id"),
+            "operation": operation,
+            "status": payload.get("status") or entry.get("status"),
+            "completed_at": payload.get("completed_at") or entry.get("completed_at"),
+            "path": _relative_path(path, runtime_root),
+            "provider_mutation_performed": bool(payload.get("provider_mutation_performed")),
+        }
+        if operation == "app.traffic.apply" and state["latest_apply"] is None:
+            state["latest_apply"] = receipt_summary
+            state["status"] = receipt_summary.get("status") or "unknown"
+            provider_count += _index_provider_snapshots(connection, app, environment, entry, payload, runtime_root)
+        elif operation == "app.traffic.rollback.apply" and state["latest_rollback"] is None:
+            state["latest_rollback"] = receipt_summary
+        apps_by_environments.setdefault(app, set())
+        if environment:
+            apps_by_environments[app].add(environment)
+
+    for (app, environment), state in states.items():
+        latest_apply = state.get("latest_apply") if isinstance(state.get("latest_apply"), dict) else {}
+        latest_rollback = state.get("latest_rollback") if isinstance(state.get("latest_rollback"), dict) else {}
+        connection.execute(
+            "INSERT OR REPLACE INTO traffic_state "
+            "(app, environment, latest_apply_id, latest_rollback_id, status, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                app,
+                environment,
+                latest_apply.get("receipt_id"),
+                latest_rollback.get("receipt_id"),
+                state.get("status") if isinstance(state.get("status"), str) else None,
+                _canonical_json(_redact_payload_env(state)),
+            ),
+        )
+    return len(states) + provider_count
+
+
+def _index_provider_snapshots(
+    connection: "sqlite3.Connection",
+    app: str,
+    environment: str,
+    entry: Dict[str, Any],
+    payload: Dict[str, Any],
+    runtime_root: Path,
+) -> int:
+    count = 0
+    receipt_id = str(entry.get("receipt_id") or payload.get("operation_id") or "")
+    provider_mutations = payload.get("provider_mutations") if isinstance(payload.get("provider_mutations"), list) else []
+    for index, mutation in enumerate(provider_mutations):
+        if not isinstance(mutation, dict):
+            continue
+        snapshot_id = f"{receipt_id}:provider:{index}"
+        connection.execute(
+            "INSERT OR REPLACE INTO provider_snapshots "
+            "(snapshot_id, app, environment, provider, status, path, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                snapshot_id,
+                app,
+                environment or None,
+                mutation.get("provider") if isinstance(mutation.get("provider"), str) else None,
+                mutation.get("status") if isinstance(mutation.get("status"), str) else None,
+                _relative_path(mutation.get("path"), runtime_root),
+                _canonical_json(_redact_payload_env(mutation)),
+            ),
+        )
+        count += 1
+
+    validation = payload.get("provider_config_validation")
+    if isinstance(validation, dict):
+        connection.execute(
+            "INSERT OR REPLACE INTO provider_snapshots "
+            "(snapshot_id, app, environment, provider, status, path, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"{receipt_id}:provider_config_validation",
+                app,
+                environment or None,
+                "provider_config",
+                validation.get("status") if isinstance(validation.get("status"), str) else None,
+                _relative_path(payload.get("provider_config"), runtime_root),
+                _canonical_json(_redact_payload_env(validation)),
+            ),
+        )
+        count += 1
+    return count
+
+
+def _index_github_provisioning(
+    connection: "sqlite3.Connection",
+    runtime_root: Path,
+    apps_by_environments: Dict[str, set],
+    warnings: List[Dict[str, str]],
+) -> int:
+    timeline = receipt_timeline(runtime_root)
+    warnings.extend(timeline.get("warnings", []))
+    count = 0
+    for entry in timeline.get("receipts", []) if isinstance(timeline.get("receipts"), list) else []:
+        if not isinstance(entry, dict):
+            continue
+        operation = entry.get("operation")
+        if operation not in {"app.github.provision.plan", "app.github.provision.apply"}:
+            continue
+        receipt_id = entry.get("receipt_id")
+        if not isinstance(receipt_id, str) or not receipt_id:
+            continue
+        app = entry.get("app") if isinstance(entry.get("app"), str) else None
+        environment = entry.get("environment") if isinstance(entry.get("environment"), str) else None
+        payload = _safe_receipt_payload(entry.get("path"), warnings) or entry
+        connection.execute(
+            "INSERT OR REPLACE INTO github_provisioning "
+            "(receipt_id, operation, status, app, environment, path, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                receipt_id,
+                operation,
+                payload.get("status") if isinstance(payload.get("status"), str) else entry.get("status"),
+                app,
+                environment,
+                _relative_path(entry.get("path"), runtime_root),
+                _canonical_json(_redact_payload_env(payload)),
+            ),
+        )
+        if app:
+            apps_by_environments.setdefault(app, set())
+            if environment:
+                apps_by_environments[app].add(environment)
+        count += 1
+    return count
+
+
 def _index_manifest_registry(
     connection: "sqlite3.Connection",
     manifests_dir: Path,
@@ -691,19 +1001,22 @@ def state_status(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
         "schema_version_code": STATE_SCHEMA_VERSION,
         "schema_version_db": None,
         "needs_rebuild": True,
+        "needs_refresh": True,
+        "freshness": _freshness(None),
     }
     if not SQLITE_AVAILABLE:
         base["needs_rebuild"] = True
         base["summary"] = "sqlite3 is unavailable; the local state index cannot be used."
         return base
     if not db_path.exists():
-        base["summary"] = "No local state index. Run `ship state rebuild` to create it."
+        base["summary"] = "No local state index. Run `ship state refresh` to create it."
         return base
 
     connection = sqlite3.connect(str(db_path))
     try:
         schema_version_db = _read_schema_version(connection)
         counts = _counts_from_db(connection)
+        metadata = _read_metadata(connection)
     except sqlite3.Error as exc:
         base["summary"] = f"Local state index is unreadable: {exc}"
         return base
@@ -712,9 +1025,15 @@ def state_status(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
 
     base["schema_version_db"] = schema_version_db
     base["counts"] = counts
-    base["needs_rebuild"] = schema_version_db != STATE_SCHEMA_VERSION
+    base["metadata"] = metadata
+    base["refreshed_at"] = metadata.get("refreshed_at")
+    base["freshness"] = _freshness(metadata.get("refreshed_at"))
+    base["needs_rebuild"] = schema_version_db != STATE_SCHEMA_VERSION or not metadata.get("refreshed_at")
+    base["needs_refresh"] = base["freshness"]["status"] in {"missing", "stale", "unknown"}
     if base["needs_rebuild"]:
-        base["summary"] = "Local state index schema is out of date. Run `ship state rebuild`."
+        base["summary"] = "Local state index schema or metadata is out of date. Run `ship state refresh`."
+    elif base["needs_refresh"]:
+        base["summary"] = "Local state index is present but stale. Run `ship state refresh`."
     else:
         base["summary"] = "Local state index is present and current."
     return base
@@ -731,14 +1050,164 @@ def _read_schema_version(connection: "sqlite3.Connection") -> Optional[int]:
     return int(row[0])
 
 
+def _read_metadata(connection: "sqlite3.Connection") -> Dict[str, str]:
+    try:
+        cursor = connection.execute("SELECT key, value FROM state_metadata")
+    except sqlite3.Error:
+        return {}
+    return {str(key): str(value) for key, value in cursor.fetchall() if key is not None and value is not None}
+
+
+def _freshness(refreshed_at: object, stale_after_seconds: int = STATE_FRESHNESS_STALE_AFTER_SECONDS) -> Dict[str, Any]:
+    refreshed = _parse_utc(refreshed_at)
+    if refreshed is None:
+        return {
+            "status": "missing",
+            "refreshed_at": refreshed_at if isinstance(refreshed_at, str) else None,
+            "age_seconds": None,
+            "stale_after_seconds": stale_after_seconds,
+        }
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    age_seconds = max(0, int((now - refreshed).total_seconds()))
+    return {
+        "status": "stale" if age_seconds > stale_after_seconds else "current",
+        "refreshed_at": refreshed_at,
+        "age_seconds": age_seconds,
+        "stale_after_seconds": stale_after_seconds,
+    }
+
+
 def _counts_from_db(connection: "sqlite3.Connection") -> Dict[str, int]:
     counts: Dict[str, int] = {}
-    for table in ("apps", "environments", "manifests", "routes", "releases", "receipts", "artifacts", "backups", "restore_drills"):
+    for table in (
+        "apps",
+        "environments",
+        "manifests",
+        "routes",
+        "releases",
+        "receipts",
+        "artifacts",
+        "backups",
+        "restore_drills",
+        "provider_configs",
+        "observability_runs",
+        "observability_app_snapshots",
+        "traffic_state",
+        "provider_snapshots",
+        "github_provisioning",
+        "operation_plans",
+        "policy_results",
+    ):
         try:
             counts[table] = _count_rows(connection, table)
         except sqlite3.Error:
             counts[table] = 0
     return counts
+
+
+# --------------------------------------------------------------------------- #
+# Summary service
+# --------------------------------------------------------------------------- #
+
+
+def state_summary(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
+    """Read app-level state aggregates from the SQLite index only."""
+    status = state_status(runtime_root)
+    base: Dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": SUMMARY_KIND,
+        "available": status.get("available"),
+        "db_path": status.get("db_path"),
+        "status": "missing" if status.get("needs_rebuild") else status.get("freshness", {}).get("status", "ok"),
+        "needs_rebuild": status.get("needs_rebuild"),
+        "needs_refresh": status.get("needs_refresh"),
+        "freshness": status.get("freshness"),
+        "counts": status.get("counts", {}),
+        "apps": [],
+        "warnings": [],
+        "blockers": [],
+    }
+    if status.get("needs_rebuild") or not SQLITE_AVAILABLE:
+        base["summary"] = status.get("summary") or "State index is unavailable."
+        if not SQLITE_AVAILABLE:
+            base["blockers"] = [issue("sqlite_unavailable", "sqlite3 is unavailable; cannot read the local state service.")]
+        return base
+
+    connection = sqlite3.connect(str(state_db_path(runtime_root)))
+    connection.row_factory = sqlite3.Row
+    try:
+        base["apps"] = _state_summary_apps(connection)
+    except sqlite3.Error as exc:
+        base["status"] = "error"
+        base["needs_rebuild"] = True
+        base["blockers"] = [issue("state_summary_unreadable", f"State summary could not be read: {exc}.")]
+        base["summary"] = "State summary is unreadable. Run `ship state refresh`."
+        return base
+    finally:
+        connection.close()
+
+    app_count = len(base["apps"])
+    base["summary"] = f"{app_count} app(s) from the local state service."
+    return base
+
+
+def _state_summary_apps(connection: "sqlite3.Connection") -> List[Dict[str, Any]]:
+    rows = connection.execute(
+        "SELECT app, environments FROM apps ORDER BY app"
+    ).fetchall()
+    apps: List[Dict[str, Any]] = []
+    for row in rows:
+        app = str(row["app"])
+        apps.append(
+            {
+                "app": app,
+                "environments": _json_list(row["environments"]),
+                "route_count": _count_where(connection, "routes", "app", app),
+                "release_count": _count_where(connection, "releases", "app", app),
+                "receipt_count": _count_where(connection, "receipts", "app", app),
+                "backup_count": _count_where(connection, "backups", "app", app),
+                "restore_drill_count": _count_where(connection, "restore_drills", "app", app),
+                "observability_snapshot_count": _count_where(connection, "observability_app_snapshots", "app", app),
+                "traffic_state_count": _count_where(connection, "traffic_state", "app", app),
+                "provider_snapshot_count": _count_where(connection, "provider_snapshots", "app", app),
+                "github_provisioning_count": _count_where(connection, "github_provisioning", "app", app),
+                "latest_receipt": _latest_receipt_for_app(connection, app),
+            }
+        )
+    return apps
+
+
+def _json_list(value: object) -> List[str]:
+    try:
+        payload = json.loads(str(value or "[]"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [str(item) for item in payload if isinstance(item, str)]
+
+
+def _count_where(connection: "sqlite3.Connection", table: str, column: str, value: str) -> int:
+    cursor = connection.execute(f"SELECT COUNT(*) FROM {table} WHERE {column} = ?", (value,))
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _latest_receipt_for_app(connection: "sqlite3.Connection", app: str) -> Optional[Dict[str, Any]]:
+    row = connection.execute(
+        "SELECT receipt_id, operation, status, started_at, completed_at "
+        "FROM receipts WHERE app = ? ORDER BY COALESCE(started_at, completed_at, '') DESC, receipt_id DESC LIMIT 1",
+        (app,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "receipt_id": row["receipt_id"],
+        "operation": row["operation"],
+        "status": row["status"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -760,7 +1229,7 @@ def query_receipts(
 
     Results match :func:`ophelia.receipt_index.receipt_timeline` ordering and
     content for the same filters. If the index is missing, returns a clear
-    status telling the caller to run ``ship state rebuild`` (never auto-builds).
+    status telling the caller to run ``ship state refresh`` (never auto-builds).
     """
     runtime_root = Path(runtime_root)
     db_path = state_db_path(runtime_root)
@@ -788,7 +1257,7 @@ def query_receipts(
     if not db_path.exists():
         base["needs_rebuild"] = True
         base["status"] = "missing"
-        base["summary"] = "No local state index. Run `ship state rebuild` to create it."
+        base["summary"] = "No local state index. Run `ship state refresh` to create it."
         return base
 
     try:
@@ -802,7 +1271,7 @@ def query_receipts(
     except Exception as exc:  # noqa: BLE001 - query reports degraded state
         base["needs_rebuild"] = True
         base["status"] = "error"
-        base["summary"] = f"Could not read receipt timeline: {exc}. Run `ship state rebuild`."
+        base["summary"] = f"Could not read receipt timeline: {exc}. Run `ship state refresh`."
         return base
     receipts = timeline.get("receipts") if isinstance(timeline.get("receipts"), list) else []
     if ref:
@@ -841,9 +1310,12 @@ def query_receipts(
 
 __all__ = [
     "STATE_SCHEMA_VERSION",
+    "STATE_FRESHNESS_STALE_AFTER_SECONDS",
     "SQLITE_AVAILABLE",
     "state_db_path",
     "rebuild_state",
+    "refresh_state",
     "state_status",
+    "state_summary",
     "query_receipts",
 ]
