@@ -11,12 +11,13 @@ from .live_drills import DEFAULT_LOCAL_LIVE_DRILL_PROFILES, resolve_live_drill_p
 from .manifest import load_manifest
 from .operation_schema import SCHEMA_VERSION, issue, operation_id
 from .portability import app_readiness_report, env_shape_diff_report, resolve_app_manifest
-from .redaction import deep_redact
+from .redaction import deep_redact, is_sensitive_key, looks_like_secret_value
 from .runtime import active_release, latest_release_id, list_releases
 from .secret_providers import secret_provider_report
 
 LIVE_HYDRATION_KIND = "ophelia.live_hydration_report"
 LIVE_HYDRATION_SCAFFOLD_KIND = "ophelia.live_hydration_scaffold"
+LIVE_HYDRATION_EVIDENCE_KIND = "ophelia.live_hydration_evidence_validation"
 
 
 def live_hydration_report(
@@ -208,6 +209,98 @@ def live_hydration_scaffold(
         "blockers": _dedupe_issues(blockers),
         "warnings": _dedupe_issues(warnings),
         "summary": f"Live hydration scaffold for {resolved_app or 'unknown'}/{resolved_environment or 'unknown'}: {status}; {len(files)} template file(s).",
+    }
+    return _redact(payload)
+
+
+def live_hydration_evidence_validate(
+    *,
+    app: Optional[str] = None,
+    environment: Optional[str] = None,
+    profile: Optional[str] = None,
+    profiles_path: Path = DEFAULT_LOCAL_LIVE_DRILL_PROFILES,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    ophelia_root: Path = REPO_ROOT,
+    manifest_path: Optional[Path] = None,
+    host_config: Optional[Path] = None,
+    provider_config: Optional[Path] = None,
+    target_host: Optional[str] = None,
+    input_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Validate a hydration scaffold/evidence directory without promoting it."""
+    scaffold = live_hydration_scaffold(
+        app=app,
+        environment=environment,
+        profile=profile,
+        profiles_path=profiles_path,
+        runtime_root=runtime_root,
+        manifests_dir=manifests_dir,
+        ophelia_root=ophelia_root,
+        manifest_path=manifest_path,
+        host_config=host_config,
+        provider_config=provider_config,
+        target_host=target_host,
+        output_dir=input_dir,
+    )
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    resolved_app = _optional_str(scaffold.get("app"))
+    resolved_environment = _optional_str(scaffold.get("environment"))
+    evidence_dir = Path(str(input_dir or scaffold.get("output_dir") or ""))
+    if resolved_app is None:
+        blockers.append(issue("live_hydration_evidence_app_missing", "Evidence validation requires a resolved app.", "app"))
+    if resolved_environment is None:
+        blockers.append(issue("live_hydration_evidence_environment_missing", "Evidence validation requires a resolved environment.", "environment"))
+    if not evidence_dir.exists():
+        blockers.append(issue("live_hydration_evidence_dir_missing", f"Evidence directory not found: {evidence_dir}", "input_dir"))
+    elif not evidence_dir.is_dir():
+        blockers.append(issue("live_hydration_evidence_dir_invalid", f"Evidence path is not a directory: {evidence_dir}", "input_dir"))
+
+    expected_files = _expected_file_map(scaffold)
+    file_checks: List[Dict[str, Any]] = []
+    if evidence_dir.exists() and evidence_dir.is_dir():
+        for kind, expected_path in expected_files.items():
+            path = evidence_dir / expected_path.name
+            check = _validate_evidence_file(kind, path, scaffold)
+            file_checks.append(check)
+            blockers.extend(_issues(check.get("blockers")))
+            warnings.extend(_issues(check.get("warnings")))
+    else:
+        for kind, expected_path in expected_files.items():
+            file_checks.append(
+                {
+                    "kind": kind,
+                    "path": str(evidence_dir / expected_path.name),
+                    "status": "missing",
+                    "blockers": [issue("live_hydration_evidence_file_missing", f"Evidence file missing: {expected_path.name}", str(evidence_dir / expected_path.name))],
+                    "warnings": [],
+                }
+            )
+
+    status = "blocked" if blockers else "warning" if warnings else "ok"
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": LIVE_HYDRATION_EVIDENCE_KIND,
+        "operation": "live_hydration.evidence.validate",
+        "operation_id": operation_id("live_hydration.evidence.validate", resolved_app, resolved_environment),
+        "status": status,
+        "app": resolved_app,
+        "environment": resolved_environment,
+        "profile": scaffold.get("profile"),
+        "profiles_path": scaffold.get("profiles_path"),
+        "runtime_root": scaffold.get("runtime_root"),
+        "input_dir": str(evidence_dir),
+        "read_only": True,
+        "dry_run": True,
+        "mutates_state": False,
+        "confirmation_required": False,
+        "values_redacted": True,
+        "file_checks": file_checks,
+        "target_paths": scaffold.get("target_paths") if isinstance(scaffold.get("target_paths"), dict) else {},
+        "blockers": _dedupe_issues(blockers),
+        "warnings": _dedupe_issues(warnings),
+        "summary": f"Live hydration evidence validation for {resolved_app or 'unknown'}/{resolved_environment or 'unknown'}: {status}.",
     }
     return _redact(payload)
 
@@ -465,6 +558,177 @@ def _write_scaffold_files(files: List[Dict[str, Any]], *, force: bool) -> List[D
         item["exists"] = True
         item["written"] = True
     return blockers
+
+
+def _expected_file_map(scaffold: Dict[str, Any]) -> Dict[str, Path]:
+    files = scaffold.get("files") if isinstance(scaffold.get("files"), list) else []
+    result: Dict[str, Path] = {}
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        kind = _optional_str(item.get("kind"))
+        path_value = _optional_str(item.get("path"))
+        if kind and path_value:
+            result[kind] = Path(path_value)
+    return result
+
+
+def _validate_evidence_file(kind: str, path: Path, scaffold: Dict[str, Any]) -> Dict[str, Any]:
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    if not path.exists():
+        blockers.append(issue("live_hydration_evidence_file_missing", f"Evidence file missing: {path.name}", str(path)))
+        return {"kind": kind, "path": str(path), "status": "missing", "blockers": blockers, "warnings": warnings}
+    if not path.is_file():
+        blockers.append(issue("live_hydration_evidence_file_invalid", f"Evidence path is not a file: {path}", str(path)))
+        return {"kind": kind, "path": str(path), "status": "blocked", "blockers": blockers, "warnings": warnings}
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        blockers.append(issue("live_hydration_evidence_file_unreadable", f"Evidence file could not be read: {exc}", str(path)))
+        return {"kind": kind, "path": str(path), "status": "blocked", "blockers": blockers, "warnings": warnings}
+
+    details: Dict[str, Any] = {}
+    if kind == "runtime_env_template":
+        details, blockers, warnings = _validate_env_evidence(text, path, scaffold)
+    elif kind == "github_secret_observation_template":
+        details, blockers, warnings = _validate_secret_observation_evidence(text, path, scaffold)
+    elif kind == "release_metadata_template":
+        details, blockers, warnings = _validate_release_metadata_evidence(text, path, scaffold)
+    elif kind == "host_capabilities_template":
+        details, blockers, warnings = _validate_host_capabilities_evidence(text, path, scaffold)
+    elif kind == "readme":
+        if not text.strip():
+            warnings.append(issue("live_hydration_evidence_readme_empty", "Evidence README is empty.", str(path)))
+        details = {"bytes": len(text.encode("utf-8"))}
+    else:
+        warnings.append(issue("live_hydration_evidence_file_unknown", f"Unknown scaffold file kind: {kind}", str(path)))
+
+    status = "blocked" if blockers else "warning" if warnings else "ok"
+    return {
+        "kind": kind,
+        "path": str(path),
+        "status": status,
+        "details": details,
+        "blockers": _dedupe_issues(blockers),
+        "warnings": _dedupe_issues(warnings),
+    }
+
+
+def _validate_env_evidence(text: str, path: Path, scaffold: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, str]], List[Dict[str, str]]]:
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    values = _parse_env_text(text)
+    expected = _expected_env_keys(scaffold)
+    missing = sorted(key for key in expected if key not in values)
+    placeholder = sorted(key for key, value in values.items() if key in expected and _is_blank_or_placeholder(value))
+    value_keys = sorted(key for key, value in values.items() if key in expected and value and not _is_blank_or_placeholder(value))
+    risky_value_keys = sorted(
+        key
+        for key, value in values.items()
+        if key in expected and value and not _is_blank_or_placeholder(value) and (is_sensitive_key(key) or looks_like_secret_value(value))
+    )
+    for key in missing:
+        blockers.append(issue("live_hydration_evidence_env_key_missing", f"Env evidence is missing key `{key}`.", str(path)))
+    for key in risky_value_keys:
+        blockers.append(issue("live_hydration_evidence_env_secret_value", f"Env evidence contains a value for sensitive key `{key}`; keep real values only in runtime env.", str(path)))
+    if placeholder:
+        warnings.append(issue("live_hydration_evidence_env_placeholder", f"{len(placeholder)} env key placeholder(s) remain.", str(path)))
+    if value_keys:
+        warnings.append(issue("live_hydration_evidence_env_values_present", f"{len(value_keys)} env key(s) contain values in the scaffold; values are redacted.", str(path)))
+    return (
+        {
+            "expected_keys": expected,
+            "present_key_count": len([key for key in expected if key in values]),
+            "missing_keys": missing,
+            "placeholder_keys": placeholder,
+            "value_key_count": len(value_keys),
+            "risky_value_key_count": len(risky_value_keys),
+            "values_redacted": True,
+        },
+        blockers,
+        warnings,
+    )
+
+
+def _validate_secret_observation_evidence(text: str, path: Path, scaffold: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, str]], List[Dict[str, str]]]:
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    payload, parse_issue = _parse_json_text(text, path)
+    if parse_issue is not None:
+        return {"secret_names": [], "template": None, "values_redacted": True}, [parse_issue], warnings
+    expected = _expected_secret_keys(scaffold)
+    environment = _optional_str(scaffold.get("environment")) or "unknown"
+    secret_names = _secret_names_from_observation_payload(payload, environment)
+    missing = sorted(key for key in expected if key not in secret_names)
+    for key in missing:
+        blockers.append(issue("live_hydration_evidence_secret_name_missing", f"Secret observation is missing name `{key}`.", str(path)))
+    if isinstance(payload, dict) and payload.get("template") is True:
+        warnings.append(issue("live_hydration_evidence_secret_template", "Secret observation file is still marked as a template.", str(path)))
+    if _contains_sensitive_payload_value(payload):
+        blockers.append(issue("live_hydration_evidence_secret_value_present", "Secret observation contains secret-shaped values; keep names only.", str(path)))
+    return (
+        {
+            "expected_names": expected,
+            "observed_names": secret_names,
+            "missing_names": missing,
+            "template": payload.get("template") if isinstance(payload, dict) else None,
+            "values_redacted": True,
+        },
+        blockers,
+        warnings,
+    )
+
+
+def _validate_release_metadata_evidence(text: str, path: Path, scaffold: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, str]], List[Dict[str, str]]]:
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    payload, parse_issue = _parse_json_text(text, path)
+    if parse_issue is not None:
+        return {"template": None}, [parse_issue], warnings
+    if not isinstance(payload, dict):
+        blockers.append(issue("live_hydration_evidence_release_invalid", "Release metadata must be a JSON object.", str(path)))
+        return {"template": None}, blockers, warnings
+    for key in ("app", "environment", "release_id"):
+        if not isinstance(payload.get(key), str) or not str(payload.get(key)).strip():
+            blockers.append(issue("live_hydration_evidence_release_field_missing", f"Release metadata is missing `{key}`.", str(path)))
+    if payload.get("template") is True or any(isinstance(payload.get(key), str) and str(payload.get(key)).startswith("replace-with") for key in ("release_id", "git_sha", "deployed_at")):
+        warnings.append(issue("live_hydration_evidence_release_template", "Release metadata still contains template placeholders.", str(path)))
+    if _contains_sensitive_payload_value(payload):
+        blockers.append(issue("live_hydration_evidence_release_secret_value", "Release metadata contains secret-shaped values.", str(path)))
+    return (
+        {
+            "app": payload.get("app"),
+            "environment": payload.get("environment"),
+            "release_id_present": bool(payload.get("release_id")),
+            "template": payload.get("template"),
+            "values_redacted": True,
+        },
+        blockers,
+        warnings,
+    )
+
+
+def _validate_host_capabilities_evidence(text: str, path: Path, scaffold: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, str]], List[Dict[str, str]]]:
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    required = _expected_host_capabilities(scaffold)
+    if "replace-with-host-id" in text:
+        warnings.append(issue("live_hydration_evidence_host_template", "Host capability file still contains the template host id.", str(path)))
+    missing = sorted(key for key in required if f"{key}: true" not in text)
+    for key in missing:
+        blockers.append(issue("live_hydration_evidence_host_capability_missing", f"Host evidence is missing required capability `{key}`.", str(path)))
+    if _contains_sensitive_payload_value(text):
+        blockers.append(issue("live_hydration_evidence_host_secret_value", "Host capability evidence contains secret-shaped values.", str(path)))
+    return (
+        {
+            "required_capabilities": required,
+            "missing_capabilities": missing,
+            "values_redacted": True,
+        },
+        blockers,
+        warnings,
+    )
 
 
 def _scaffold_inputs(report: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[str, Any]]:
@@ -733,6 +997,102 @@ def _entry_keys(entries: List[Dict[str, Any]]) -> List[str]:
 
 def _str_list(value: Any) -> List[str]:
     return [str(item) for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _expected_env_keys(scaffold: Dict[str, Any]) -> List[str]:
+    files = scaffold.get("files") if isinstance(scaffold.get("files"), list) else []
+    for item in files:
+        if isinstance(item, dict) and item.get("kind") == "runtime_env_template":
+            content = item.get("content")
+            if isinstance(content, str):
+                return sorted(_parse_env_text(content))
+    return []
+
+
+def _expected_secret_keys(scaffold: Dict[str, Any]) -> List[str]:
+    files = scaffold.get("files") if isinstance(scaffold.get("files"), list) else []
+    for item in files:
+        if not isinstance(item, dict) or item.get("kind") != "github_secret_observation_template":
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        payload, _parse_issue = _parse_json_text(content, Path(str(item.get("path") or "secret-template.json")))
+        environment = _optional_str(scaffold.get("environment")) or "unknown"
+        return _secret_names_from_observation_payload(payload, environment)
+    return []
+
+
+def _expected_host_capabilities(scaffold: Dict[str, Any]) -> List[str]:
+    files = scaffold.get("files") if isinstance(scaffold.get("files"), list) else []
+    for item in files:
+        if not isinstance(item, dict) or item.get("kind") != "host_capabilities_template":
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        capabilities: List[str] = []
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if line.endswith(": true"):
+                capabilities.append(line.split(":", 1)[0].strip())
+        return sorted(set(capabilities))
+    return []
+
+
+def _parse_env_text(text: str) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = value.strip()
+    return values
+
+
+def _parse_json_text(text: str, path: Path) -> Tuple[Any, Optional[Dict[str, str]]]:
+    try:
+        return json.loads(text), None
+    except json.JSONDecodeError as exc:
+        return None, issue("live_hydration_evidence_json_invalid", f"Evidence JSON is invalid: {exc.msg}", str(path))
+
+
+def _secret_names_from_observation_payload(payload: Any, environment: str) -> List[str]:
+    if not isinstance(payload, dict):
+        return []
+    envs = payload.get("environments") if isinstance(payload.get("environments"), dict) else {}
+    env_payload = envs.get(environment) if isinstance(envs.get(environment), dict) else payload
+    secrets = env_payload.get("secrets") if isinstance(env_payload, dict) else None
+    names: List[str] = []
+    if isinstance(secrets, list):
+        for item in secrets:
+            if isinstance(item, str):
+                names.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("name"), str):
+                names.append(str(item["name"]))
+    return sorted(set(names))
+
+
+def _is_blank_or_placeholder(value: str) -> bool:
+    lowered = value.strip().lower()
+    return lowered in {"", "replace-me", "changeme", "todo"} or lowered.startswith("replace-with")
+
+
+def _contains_sensitive_payload_value(value: Any, key: Optional[str] = None) -> bool:
+    if isinstance(value, dict):
+        return any(_contains_sensitive_payload_value(child, str(child_key)) for child_key, child in value.items())
+    if isinstance(value, list):
+        return any(_contains_sensitive_payload_value(child, key) for child in value)
+    if isinstance(value, str):
+        if not value:
+            return False
+        if key and is_sensitive_key(key) and not _is_blank_or_placeholder(value) and key not in {"name", "secret_names"}:
+            return True
+        return looks_like_secret_value(value)
+    return False
 
 
 def _issues(value: Any) -> List[Dict[str, str]]:

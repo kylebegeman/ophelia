@@ -383,3 +383,8 @@ one app. They are dry-run by default and write only to a separate hydration
 workspace, which helps operators collect real env shape, provider observations,
 release metadata, and host capability facts without accidentally changing
 readiness inputs.
+
+Hydration evidence validation adds the next guardrail: scaffold/evidence
+directories can be checked for missing files, malformed JSON, leftover
+placeholders, missing required names, and secret-shaped values before anything
+is copied into runtime or provider observation paths.

@@ -14,7 +14,14 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from ophelia.api_routes import HTTP_ROUTE_PATTERNS  # noqa: E402
 from ophelia.command_catalog import command_registry  # noqa: E402
-from ophelia.live_hydration import LIVE_HYDRATION_KIND, LIVE_HYDRATION_SCAFFOLD_KIND, live_hydration_report, live_hydration_scaffold  # noqa: E402
+from ophelia.live_hydration import (  # noqa: E402
+    LIVE_HYDRATION_EVIDENCE_KIND,
+    LIVE_HYDRATION_KIND,
+    LIVE_HYDRATION_SCAFFOLD_KIND,
+    live_hydration_evidence_validate,
+    live_hydration_report,
+    live_hydration_scaffold,
+)
 from ophelia.main import main  # noqa: E402
 
 
@@ -197,6 +204,96 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(LIVE_HYDRATION_SCAFFOLD_KIND, payload["kind"])
         self.assertIn("live_hydration.scaffold", operations)
+
+    def test_validate_evidence_blocks_missing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report = live_hydration_evidence_validate(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                input_dir=Path(temp_dir) / "missing-kit",
+            )
+
+        self.assertEqual(LIVE_HYDRATION_EVIDENCE_KIND, report["kind"])
+        self.assertEqual("blocked", report["status"])
+        self.assertTrue(report["read_only"])
+        self.assertFalse(report["mutates_state"])
+        self.assertIn("live_hydration_evidence_dir_missing", {item["code"] for item in report["blockers"]})
+
+    def test_validate_evidence_accepts_template_kit_with_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            report = live_hydration_evidence_validate(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                input_dir=output_dir,
+            )
+
+        self.assertEqual("warning", report["status"])
+        self.assertEqual(5, len(report["file_checks"]))
+        codes = {item["code"] for item in report["warnings"]}
+        self.assertIn("live_hydration_evidence_env_placeholder", codes)
+        self.assertIn("live_hydration_evidence_secret_template", codes)
+        self.assertNotIn("replace-with-real-release-id", json.dumps(report))
+
+    def test_validate_evidence_blocks_secret_values_without_emitting_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            (output_dir / "env.required.template").write_text("DATABASE_URL=postgres://user:supersecret@db/app\n")
+            report = live_hydration_evidence_validate(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                input_dir=output_dir,
+            )
+
+        encoded = json.dumps(report)
+        self.assertEqual("blocked", report["status"])
+        self.assertIn("live_hydration_evidence_env_secret_value", {item["code"] for item in report["blockers"]})
+        self.assertNotIn("supersecret", encoded)
+        self.assertNotIn("postgres://user", encoded)
+
+    def test_cli_validate_evidence_and_catalog_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(
+                    [
+                        "live-hydration",
+                        "validate-evidence",
+                        "--profile",
+                        "quark-ops-staging-file-baseline",
+                        "--profiles",
+                        str(LOCAL_PROFILES),
+                        "--input-dir",
+                        str(output_dir),
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(buffer.getvalue())
+        operations = {descriptor.operation for descriptor in command_registry()}
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(LIVE_HYDRATION_EVIDENCE_KIND, payload["kind"])
+        self.assertIn("live_hydration.evidence.validate", operations)
 
     def test_profile_without_app_blocks(self) -> None:
         report = live_hydration_report(profile="local-file-baseline", profiles_path=LOCAL_PROFILES)

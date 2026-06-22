@@ -7,7 +7,14 @@ from pathlib import Path
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..live_drills import DEFAULT_LOCAL_LIVE_DRILL_PROFILES
-from ..live_hydration import LIVE_HYDRATION_KIND, LIVE_HYDRATION_SCAFFOLD_KIND, live_hydration_report, live_hydration_scaffold
+from ..live_hydration import (
+    LIVE_HYDRATION_EVIDENCE_KIND,
+    LIVE_HYDRATION_KIND,
+    LIVE_HYDRATION_SCAFFOLD_KIND,
+    live_hydration_evidence_validate,
+    live_hydration_report,
+    live_hydration_scaffold,
+)
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -47,6 +54,15 @@ def register(subparsers: _SubParsersAction) -> None:
     scaffold_parser.add_argument("--force", action="store_true", help="Overwrite existing scaffold files when used with --write.")
     scaffold_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     scaffold_parser.set_defaults(handler=run_scaffold)
+
+    validate_parser = hydration_subparsers.add_parser(
+        "validate-evidence",
+        help="Validate a hydration evidence directory without promoting it",
+    )
+    _add_common_args(validate_parser)
+    validate_parser.add_argument("--input-dir", type=Path, help="Evidence directory. Defaults to the scaffold output path.")
+    validate_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    validate_parser.set_defaults(handler=run_validate_evidence)
 
 
 def _add_common_args(parser) -> None:
@@ -122,6 +138,35 @@ def run_scaffold(args: Namespace) -> int:
     return 0 if report.get("status") != "blocked" else 1
 
 
+def run_validate_evidence(args: Namespace) -> int:
+    report = live_hydration_evidence_validate(
+        app=args.app,
+        environment=args.environment,
+        profile=args.profile,
+        profiles_path=args.profiles,
+        runtime_root=args.runtime_root,
+        manifests_dir=args.manifests_dir,
+        ophelia_root=args.ophelia_root,
+        manifest_path=args.manifest,
+        host_config=args.host_config,
+        provider_config=args.provider_config,
+        target_host=args.target_host,
+        input_dir=args.input_dir,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(report.get("summary", "Live hydration evidence validation."))
+        print(f"Status: {report.get('status')}")
+        print(f"Input: {report.get('input_dir')}")
+        for item in report.get("file_checks", []) if isinstance(report.get("file_checks"), list) else []:
+            if isinstance(item, dict):
+                print(f"  - {item.get('kind')}: {item.get('status')}")
+        _print_items("Blockers", report.get("blockers", []))
+        _print_items("Warnings", report.get("warnings", []))
+    return 0 if report.get("status") != "blocked" else 1
+
+
 def _print_items(label: str, value: object) -> None:
     items = value if isinstance(value, list) else []
     if not items:
@@ -175,6 +220,50 @@ register_cli_descriptor(
         safety_notes=[
             "Read-only report. Does not create runtime files, run probes, refresh state, or mutate providers.",
             "Secret values are never emitted; secret provider sections report names, booleans, paths, and counts only.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship live-hydration validate-evidence",
+        operation="live_hydration.evidence.validate",
+        summary="Validate a live hydration evidence directory without promoting runtime files.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind=LIVE_HYDRATION_EVIDENCE_KIND,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "profile": {"type": "string"},
+                "profiles": {"type": "string"},
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "runtime_root": {"type": "string"},
+                "manifests_dir": {"type": "string"},
+                "ophelia_root": {"type": "string"},
+                "manifest": {"type": "string"},
+                "host_config": {"type": "string"},
+                "provider_config": {"type": "string"},
+                "target_host": {"type": "string"},
+                "input_dir": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.live_hydration_evidence_validation.v1",
+        artifacts=[],
+        examples=[
+            "ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
+            "ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --json",
+        ],
+        safety_notes=[
+            "Read-only validation. Does not copy, promote, or mutate runtime/provider files.",
+            "Reports key names and issue counts only; evidence values are not emitted.",
         ],
     )
 )

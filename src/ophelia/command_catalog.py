@@ -193,6 +193,10 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
         "ship live-hydration report --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json",
         "ship live-hydration report --app quark-ops --environment production --host-config config/ophelia-hosts.yml --provider-config config/ophelia-integrations.yml --json",
     ],
+    "live_hydration.evidence.validate": [
+        "ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
+        "ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --json",
+    ],
     "live_hydration.scaffold": [
         "ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
         "ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --output-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --write --json",

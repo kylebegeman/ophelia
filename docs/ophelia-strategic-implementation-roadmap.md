@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-13 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-14 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -71,6 +71,8 @@ rebuilt:
   ordered runtime/env/secret-name/release/host evidence steps before probes.
 - Live hydration scaffold templates for collecting one app's non-secret
   runtime, provider observation, release, and host capability evidence.
+- Read-only hydration evidence validation for scaffold directories before any
+  runtime promotion or probe enablement.
 
 ## Implementation Rules
 
@@ -705,6 +707,40 @@ release metadata, provider observation files, host inventory, state DB files,
 or workflow artifacts. It does not run HTTP, Docker, authenticated provider, or
 production probes.
 
+## Phase 14: Hydration Evidence Validation
+
+**Status:** Landed in changelog record
+[`0034`](changelog/0034-hydration-evidence-validation.md).
+
+**Goal:** Let operators and agents check a scaffold/evidence directory before
+copying any evidence into consumed runtime paths.
+
+**Work items:**
+
+- Add `ship live-hydration validate-evidence`.
+- Validate expected scaffold files, env key names, secret-name observation JSON,
+  release metadata shape, and required host capability flags.
+- Detect missing files, invalid JSON, missing required names, template
+  placeholders, and secret-looking values without printing values.
+- Add `make live-hydration-validate-evidence-quark-staging` using a temporary
+  scaffold directory.
+- Update command catalog examples, tests, docs, roadmap, and changelog.
+
+**Dependencies:** Phase 13 scaffold templates.
+
+**Milestone commit:** `feat: validate live hydration evidence`
+
+**Definition of done:**
+
+- Validation is read-only and emits `ophelia.live_hydration_evidence_validation`.
+- Missing evidence directories block with structured issue codes.
+- Template-only kits return warnings, not promotion.
+- Secret-shaped scaffold values block and are not emitted.
+
+**Boundary:** Phase 14 does not promote, copy, or mutate runtime env files,
+release metadata, provider observations, host inventory, state DB files, or
+workflow artifacts. It does not run probes.
+
 ## Phase Dependency Graph
 
 ```text
@@ -722,6 +758,7 @@ Phase 0 docs
                     -> Phase 11 live test baseline
                       -> Phase 12 live hydration reports
                         -> Phase 13 live evidence scaffold templates
+                          -> Phase 14 hydration evidence validation
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

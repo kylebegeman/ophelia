@@ -49,6 +49,22 @@ Write the scaffold templates to a review directory:
   --json
 ```
 
+Validate a scaffold or evidence directory:
+
+```bash
+./cli/ship live-hydration validate-evidence \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging \
+  --json
+```
+
+Temporary scaffold validation smoke:
+
+```bash
+make live-hydration-validate-evidence-quark-staging
+```
+
 Run from explicit app inputs instead of a profile:
 
 ```bash
@@ -104,6 +120,20 @@ Scaffold templates are not consumed by readiness. They live under
 does not claim fake env values, secret observations, release metadata, or host
 capabilities.
 
+`kind: "ophelia.live_hydration_evidence_validation"` includes:
+
+- file checks for the scaffold/evidence directory
+- expected env keys, secret names, release metadata shape, and host capability
+  flags
+- blocker codes for missing files, invalid JSON, missing required names, and
+  secret-looking values
+- warning codes when templates are still placeholders
+- `values_redacted: true`; values are never emitted
+
+Validation is intentionally not promotion. A warning result can be useful while
+templates are still blank. A blocked result means the evidence directory is
+missing, malformed, or contains data that should not live in a scaffold.
+
 ## Current Quark Staging Result
 
 The current file-based Quark staging baseline is expected to be blocked. The
@@ -136,6 +166,10 @@ writes template files under the scaffold output directory. It does not modify
 `apps/<app>/env`, `active_release.json`, `release.json`, GitHub secret
 observation paths, host inventory, provider config, state DB files, workflows,
 or production runtime paths.
+
+`ship live-hydration validate-evidence` is always read-only. It never copies,
+promotes, or mutates runtime files. It reports secret-shaped values by key name
+and issue code only.
 
 Use hydration reports before enabling probes. A focused app should have a
 reviewed file-based baseline before running `--probe-http`, `--check-docker`,
