@@ -49,3 +49,4 @@
 | [0045](0045-manifest-bootstrap-for-app-repos.md) | 2026-06-22 | landed | Manifest bootstrap for app repos | pack, adoption, cli, actions, docs, tests |
 | [0046](0046-open-source-readiness-audit.md) | 2026-06-22 | landed | Open-source readiness audit | open-source, cli, docs, command-catalog, tests |
 | [0047](0047-public-surface-sanitization.md) | 2026-06-22 | landed | Public surface sanitization | open-source, docs, examples, tests, caddy, app-factory |
+| [0048](0048-public-readme-fixture-first.md) | 2026-06-22 | landed | Public README fixture-first cleanup | open-source, docs, tests |

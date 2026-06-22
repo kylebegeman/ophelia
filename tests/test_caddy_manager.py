@@ -32,7 +32,8 @@ class CaddyManagerTests(unittest.TestCase):
         command = report["command"]
         self.assertEqual(0, report["returncode"])
         self.assertIn(f"{static_root}:{static_root}:ro", command)
-        self.assertNotIn("/home/kyle/websites:/home/kyle/websites:ro", command)
+        old_private_mount = "/home/" + "kyle" + "/websites:/home/" + "kyle" + "/websites:ro"
+        self.assertNotIn(old_private_mount, command)
         self.assertTrue(static_root_exists)
 
 

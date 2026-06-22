@@ -64,70 +64,33 @@ ophelia/
   templates/              # Render templates for compose and Caddy
 ```
 
-## Canonical Locations
+## Runtime Locations
 
-The canonical workstation checkout is:
+Commands are repo-relative and compute template paths from the installed Python
+package, so they work from any complete checkout. Runtime state remains outside
+the source checkout, by default in `~/ophelia-runtime`. Env files, backups,
+pulled images, generated bundles, and provider evidence should not be committed.
 
-```text
-/Users/kyle/Developer/platforms/ophelia
-```
-
-The current checkout may still live at
-`/Users/kyle/Developer/projects/web/ophelia` during migration. Commands are
-repo-relative and compute template paths from the installed Python package, so
-they work from either location as long as they are run from a complete checkout.
-
-The VPS copy remains `~/ophelia`, and runtime state remains
-`~/ophelia-runtime`. Runtime state, env files, backups, pulled images, and
-generated bundles are not moved into the source checkout.
-
-The local `_worktrees/` directory is a Git worktree holding branch
-`codex/quark-image-namespace`. It is intentionally ignored by the main repo and
-should not be deleted as part of the canonical path migration unless that
-worktree is removed with `git worktree remove`.
+Public examples use fixture apps and `example.*` domains. Product-specific
+manifests, private hostnames, and one-off deployment notes should live in a
+private operational layer until that product is intentionally adopted.
 
 ## Quick Start
 
 ```bash
-cd /Users/kyle/Developer/platforms/ophelia
+cd ophelia
 python3 -m venv .venv
 .venv/bin/python -m ensurepip --upgrade
 .venv/bin/python -m pip install PyYAML
 
 ./cli/ship self-test                 # first smoke command: confirm the install is healthy
 ./cli/ship schema manifest --json    # export the manifest JSON schema (draft 2020-12)
-./cli/ship validate examples/dragonwriter.ophelia.yml
-./cli/ship render examples/dragonwriter.ophelia.yml --output-dir ./build/dragonwriter
-./cli/ship deploy examples/dragonwriter.ophelia.yml
-./cli/ship deploy examples/dragonwriter.ophelia.yml --plan
-./cli/ship diff examples/dragonwriter.ophelia.yml
-./cli/ship explain examples/dragonwriter.ophelia.yml
-./cli/ship pack validate examples/dragonwriter.ophelia.yml
-./cli/ship pack explain examples/dragonwriter.ophelia.yml --json
-./cli/ship env diff dragon-writer --environment production --json
-./cli/ship backup status dragon-writer --environment production --json
-./cli/ship app readiness dragon-writer --environment production --json
-./cli/ship app runbook dragon-writer --environment production
-./cli/ship app export plan dragon-writer --environment production --json
-./cli/ship app export create dragon-writer --environment production --confirm <token> --json
-./cli/ship app import plan ./exports/dragon-writer.production.export/manifest.json --json
-./cli/ship app import apply ./exports/dragon-writer.production.export/manifest.json --confirm <token> --json
-./cli/ship app restore-drill plan dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --json
-./cli/ship app restore-drill apply dragon-writer --environment production --source ./exports/dragon-writer.production.export.tar --confirm <token> --json
-./cli/ship app cutover plan dragon-writer --from spaceship --to ovh --environment production --json
-./cli/ship app cutover apply dragon-writer --from spaceship --to ovh --environment production --confirm <token> --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
-./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --confirm <token> --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --dns-provider file --caddy-provider file --provider-config ./traffic-providers.json --execute-provider-mutation --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --dns-provider cloudflare --provider-config ./traffic-providers.json --execute-provider-mutation --json
-./cli/ship app traffic plan dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --json
-./cli/ship app traffic apply dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --target-health-url https://dragonwriter-target.example.net/health --run-target-health --confirm <token> --json
-./cli/ship app traffic rollback plan dragon-writer --receipt <traffic-receipt-id> --environment production --json
-./cli/ship app traffic rollback apply dragon-writer --receipt <traffic-receipt-id> --environment production --confirm <token> --json
+./cli/ship validate fixtures/app-suite/manifests/fixture-postgres-api.ophelia.yml
+./cli/ship render fixtures/app-suite/manifests/fixture-postgres-api.ophelia.yml --output-dir ./build/fixture-postgres-api
+./cli/ship pack validate fixtures/app-suite/manifests/fixture-postgres-api.ophelia.yml
+./cli/ship pack explain fixtures/app-suite/manifests/fixture-postgres-api.ophelia.yml --json
 ./cli/ship host inventory --json
 ./cli/ship host readiness local --json
-./cli/ship app placement dragon-writer --environment production --from spaceship --to ovh --json
-./cli/ship live-readiness run --environment staging --json
 make validate-fixtures
 make validate-adoption-fixtures
 make validate-fixture-plugins
@@ -143,25 +106,17 @@ make production-hardening-fixtures
 ./cli/ship live-hydration promotion-plan --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
 ./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
-./cli/ship secrets providers dragon-writer --environment production --json
 ./cli/ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --github-provider auto --json
-./cli/ship workflow plan move-app --app dragon-writer --from spaceship --to ovh --target-origin dragonwriter-target.example.net --environment production --json
-./cli/ship workflow run latest:dragon-writer --preview --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --json
-./cli/ship workflow run latest:dragon-writer --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --json
-./cli/ship workflow resume latest:dragon-writer --confirm-node export-create=<token> --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --set EXPORT_BUNDLE=exports/dragon-writer --json
-./cli/ship workflow pause latest:dragon-writer --json
-./cli/ship workflow cancel latest:dragon-writer --json
-./cli/ship receipts list --app dragon-writer --json
-./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
+./cli/ship workflow plan move-app --app demo-app --from source-host --to target-host --target-origin demo-target.example.net --environment staging --json
+./cli/ship pack init --app demo-app --environment staging --critical --postgres --uploads --json
 ./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ./cli/ship app adoption plan demo-app --repo-path ../demo-app --environment staging --json
 ./cli/ship open-source audit --allow-blocked --json
 ./cli/ship inspect conflicts
 ./cli/ship status
 ./cli/ship doctor
-./cli/ship verify examples/dragonwriter.ophelia.yml
-./cli/ship verify dragon-writer
-./cli/ship bootstrap-host kyle@209.74.71.165 --ssh-port 22022
+./cli/ship verify fixtures/app-suite/manifests/fixture-postgres-api.ophelia.yml
+./cli/ship bootstrap-host operator@example-host --ssh-port 22
 ./cli/ship list
 ```
 
@@ -237,7 +192,8 @@ starting SSH and never prints their values.
 27. Phase 25 has landed: `pack init --include-manifest` now previews or writes valid service/static `.ophelia.yml` bootstraps for app repos.
 28. Phase 26 has landed: `ship open-source audit` now provides a read-only public-release hygiene gate and documents the license/readiness path.
 29. Phase 27 has landed: public examples, tests, generated domains, and shared Caddy static mount defaults no longer assume private hostnames or one operator path.
-30. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+30. Phase 28 has landed: the public README is fixture-first and no longer exposes private host/path examples or private legacy deployment recipes.
+31. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
@@ -247,7 +203,7 @@ Use this for initial setup, testing, or one-off deploys from your machine:
 
 ```bash
 ./cli/ship deploy path/to/.ophelia.yml --plan
-./cli/ship deploy path/to/.ophelia.yml --host kyle@209.74.71.165 --ssh-port 22022 --apply
+./cli/ship deploy path/to/.ophelia.yml --host operator@example-host --ssh-port 22 --apply
 ```
 
 Production manifests require a confirmation token from `ship deploy --plan`
@@ -343,46 +299,10 @@ use tunnel manifests plus route rewrites. The shared Caddy service now exposes
 `host.docker.internal` through Docker's host-gateway mapping so Ophelia-managed
 ingress can proxy to existing host services without hand-maintained Caddy rules.
 
-## Legacy Prism/Quark Deployments
+## Legacy Compatibility
 
-This section is retained for legacy compatibility only. Quark and old
-Prism-backed deployments are not examples for future Ophelia products, and they
-should not drive core architecture or tests.
-
-Ophelia can host Prism as a normal service, and it has a Prism-first manifest profile for old Prism-backed products that still need compatibility support.
-
-Use `profile: prism` when a manifest is primarily hosting:
-
-- a Prism runtime
-- a Prism-backed product surface such as Quark
-- a Prism service that needs a dedicated admin host and a baked Console bundle
-
-The Prism profile adds:
-
-- a `prism:` block for dedicated admin-host and surface metadata
-- manifest-relative `env_files` copied into the runtime bundle
-- service `mounts` when a product genuinely needs extra runtime files or directories
-- optional inferred verification checks for `/health` and `/console`
-- automatic routing for `prism.admin_domain` when that host should proxy to the primary Prism service
-
-Use [examples/quark-ops.ophelia.yml](examples/quark-ops.ophelia.yml) and [manifests/quark-ops-staging.ophelia.yml](manifests/quark-ops-staging.ophelia.yml) only when auditing or explicitly deploying that legacy surface. For new work, start from [Ophelia Source Of Truth](docs/ophelia-source-of-truth.md) and the synthetic fixture suite.
-
-For the dedicated Quark hosts:
-
-1. build and push the Prism image from the `prism` repo
-2. sync the Ophelia control plane onto the VPS without deleting remote-only state
-3. deploy the staging or production manifest with `platform/scripts/deploy-quark-ops.sh`
-
-`platform/scripts/apply-manifests.sh` intentionally skips `quark-ops*.ophelia.yml` unless `OPHELIA_APPLY_QUARK=1` is set. Broad platform deploys should not depend on the private Prism Quark image, GHCR package access, or `ops.begam.in` verification. Explicit Quark deploys can pull the private Prism image by exporting `GHCR_USERNAME` and `GHCR_TOKEN` before running `deploy-quark-ops.sh`.
-
-Example:
-
-```bash
-cd /Users/kyle/Developer/projects/web/prism/platform
-./scripts/release/build-image.sh ghcr.io/bagelworks/prism:quark-next
-
-cd /Users/kyle/Developer/platforms/ophelia
-./platform/scripts/deploy-quark-ops.sh --environment staging --verify
-```
-
-`ops.begam.in` is intended to be a root-hosted Prism admin domain for the Quark surface. `/console` remains available as a compatibility fallback on that same host.
+Legacy product-specific deployments are not examples for future Ophelia apps and
+should not drive core behavior. Keep those manifests, runbooks, and deployment
+notes in a private operational layer until a product has an explicit adoption or
+migration phase. For public development, start from [Ophelia Source Of Truth](docs/ophelia-source-of-truth.md)
+and the synthetic fixture suite.

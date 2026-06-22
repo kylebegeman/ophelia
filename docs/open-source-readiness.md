@@ -132,6 +132,8 @@ forward around fixtures, generic providers, and Ophelia's contract.
 The public example/spec/test surface has already been sanitized. Remaining
 blockers are concentrated in private operational inventory and decisions that
 should be approved before changing active deployment workflows.
+The public README is also fixture-first now; remaining blockers are no longer
+from first-run setup instructions.
 
 ## Prep Phases
 
