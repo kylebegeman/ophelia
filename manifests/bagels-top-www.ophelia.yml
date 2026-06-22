@@ -1,0 +1,12 @@
+version: 1
+app: bagels-top-www
+kind: redirect
+redirect_to: https://bagels.top{uri}
+redirect_status: 308
+
+routes:
+  - domain: www.bagels.top
+
+verify:
+  - name: redirect-target
+    url: https://www.bagels.top/
