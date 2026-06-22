@@ -366,3 +366,8 @@ go/no-go aggregate over live readiness, Lumen console data, plugin validation,
 workflow availability, state status, command catalog safety, and fixture drills.
 It is the current bridge between fixture-backed contract work and future
 authenticated live provider probes or production migration rehearsals.
+
+[Live Drill Profiles](live-drill-profiles.md) add named, reusable expected-state
+scenarios on top of the fixture suite and hardening report. They are the
+preferred way to keep dummy micro-app states, focused app drills, and later
+staging/prod profile baselines reproducible.

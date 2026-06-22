@@ -50,6 +50,17 @@ ship live-readiness run \
 `--allow-blocked` only changes the process exit code. The JSON report still
 returns `status: "blocked"` when blockers exist.
 
+For repeatable expected-state runs, prefer the committed live drill profiles:
+
+```bash
+ship live-drills run fixture-suite-review --json
+ship live-drills run-all --profiles fixtures/app-suite/live-drills.yml --json
+```
+
+Live drill profiles wrap the same live-readiness report, optionally include the
+production hardening report, and validate expected mixed states without hiding
+the child report statuses.
+
 ## What It Runs
 
 Top-level checks:
@@ -122,8 +133,9 @@ Use this lane now for staging and production inspection:
 5. Opt into `--probe-http` and `--check-docker` only after the file-only report
    is understood.
 
-Use Phase 9 production hardening for actual migration rehearsals, failure drills,
-provider mutation tests, and live production applies.
+Use production hardening and live drill profiles for read-only migration
+rehearsal gates. Provider mutation tests and live production applies remain
+behind explicit plan, confirmation-token, and receipt contracts.
 
 ## Fixture Suite
 

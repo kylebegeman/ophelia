@@ -10,6 +10,7 @@ from .actions import ActionError, action_catalog, cancel_job, run_job
 from .command_catalog import catalog as command_catalog
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .hardening import production_hardening_report
+from .live_drills import list_live_drill_profiles, run_live_drill
 from .lumen_adapter import (
     action_descriptors as lumen_action_descriptors,
     app_readiness as lumen_app_readiness,
@@ -90,6 +91,13 @@ class OpheliaHandler(BaseHTTPRequestHandler):
                     plugins_dir=REPO_ROOT / "plugins",
                 )
             )
+            return
+        if parsed.path == "/live-drills":
+            self._json(list_live_drill_profiles())
+            return
+        if parsed.path.startswith("/live-drills/"):
+            profile_id = unquote(parsed.path.split("/", 2)[2])
+            self._json(run_live_drill(profile_id))
             return
         if parsed.path == "/workflows":
             self._json(list_workflow_templates())

@@ -31,3 +31,4 @@
 | [0027](0027-phase-7-plugin-contracts.md) | 2026-06-22 | landed | Phase 7 plugin contracts | plugins, cli, api, lumen, fixtures, docs, tests |
 | [0028](0028-phase-8-lumen-console-mvp.md) | 2026-06-22 | landed | Phase 8 Lumen console MVP | lumen, console, api, cli, fixtures, docs, tests |
 | [0029](0029-phase-9-production-hardening-report.md) | 2026-06-22 | landed | Phase 9 production hardening report | hardening, cli, api, fixtures, command-catalog, docs, tests |
+| [0030](0030-live-drill-profiles.md) | 2026-06-22 | landed | Live drill profiles | live-readiness, hardening, fixtures, cli, api, command-catalog, docs, tests |

@@ -186,6 +186,9 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
         "ship hardening production-readiness --json",
         "ship hardening production-readiness --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --host-config fixtures/app-suite/host-inventory.yml --provider-config fixtures/app-suite/integrations.yml --plugins-dir fixtures/app-suite/plugins --include-fixture-suite --allow-blocked-live-readiness --json",
     ],
+    "live_drills.list": ["ship live-drills list --json", "ship live-drills list --profiles fixtures/app-suite/live-drills.yml --json"],
+    "live_drills.run": ["ship live-drills run fixture-suite-review --json", "ship live-drills run fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --json"],
+    "live_drills.run_all": ["ship live-drills run-all --json", "ship live-drills run-all --profiles fixtures/app-suite/live-drills.yml --json"],
     "lumen.console": ["ship lumen console-data --json", "ship lumen console-data --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --plugins-dir fixtures/app-suite/plugins --json"],
     "live.readiness.run": [
         "ship live-readiness run --environment staging --json",

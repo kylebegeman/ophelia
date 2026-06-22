@@ -58,6 +58,12 @@ Run the live-readiness aggregate against the fixture suite:
 make live-readiness-fixtures
 ```
 
+Run every committed live drill profile:
+
+```bash
+make live-drills-fixtures
+```
+
 Run the Lumen console payload against the fixture suite:
 
 ```bash
@@ -103,6 +109,18 @@ The fixture Lumen console run should also show eight app rows, one fixture
 plugin, a non-empty approval queue, and the same one-blocked/seven-warning
 readiness mix.
 
+The fixture live drill profiles live at:
+
+```text
+fixtures/app-suite/live-drills.yml
+```
+
+`make live-drills-fixtures` should emit
+`kind: "ophelia.live_drill_run_results"` and `status: "ok"` with four passing
+profiles: full suite review, Postgres-focused, static-focused, and
+incomplete-focused. Child reports can remain blocked or warning; the drill
+status means the observed state matched the profile expectations.
+
 The fixture production hardening run should emit
 `kind: "ophelia.production_hardening_report"`, `status: "warning"`, and
 `go_no_go: "review"`. That review state is expected because the child
@@ -115,6 +133,8 @@ target passes `--allow-blocked-live-readiness`.
   database URLs, private keys, or production data.
 - Prefer `.invalid` domains for route and health URLs.
 - Update the fixture test expectations when adding or removing fixture apps.
+- Update `fixtures/app-suite/live-drills.yml` when changing expected fixture
+  statuses, app counts, or hardening behavior.
 - Keep the suite fast and read-only. It should be safe to run in local unit
   tests and CI.
 - Add focused fixture cases when new readiness, placement, provider, backup,

@@ -18,6 +18,7 @@ from .host import register as register_host
 from .inspect import register as register_inspect
 from .jobs import register as register_jobs
 from .list_apps import register as register_list
+from .live_drills import register as register_live_drills
 from .live_readiness import register as register_live_readiness
 from .lumen import register as register_lumen
 from .notes import register as register_notes
@@ -87,6 +88,7 @@ def register_commands(subparsers):
     register_doctor(subparsers)
     register_inspect(subparsers)
     register_list(subparsers)
+    register_live_drills(subparsers)
     register_live_readiness(subparsers)
     register_lumen(subparsers)
     register_release(subparsers)

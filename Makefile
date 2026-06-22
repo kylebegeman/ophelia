@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures lumen-console-fixtures production-hardening-fixtures test compile docs-check
+.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures lumen-console-fixtures production-hardening-fixtures test compile docs-check
 
 venv:
 	python3 -m venv .venv
@@ -35,6 +35,9 @@ validate-fixture-plugins:
 
 live-readiness-fixtures:
 	@./cli/ship live-readiness run --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --host-config fixtures/app-suite/host-inventory.yml --provider-config fixtures/app-suite/integrations.yml --allow-blocked --json
+
+live-drills-fixtures:
+	@./cli/ship live-drills run-all --profiles fixtures/app-suite/live-drills.yml --json
 
 lumen-console-fixtures:
 	@./cli/ship lumen console-data --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --plugins-dir fixtures/app-suite/plugins --json

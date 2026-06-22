@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-9 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-10 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -63,6 +63,8 @@ rebuilt:
 - Read-only production hardening report that composes live readiness, console
   data, plugin validation, workflow availability, state status, command catalog
   safety, and fixture drills into one go/no-go payload.
+- Fixture-backed live drill profiles for repeatable read-only live-readiness and
+  hardening rehearsal scenarios.
 
 ## Implementation Rules
 
@@ -401,8 +403,8 @@ depending on production data, real provider credentials, or mutable VPS state.
 - Store synthetic runtime metadata, backup manifests, restore-drill receipts,
   GitHub observations, secret observations, SOPS-shaped key files, host
   inventory, and provider config.
-- Add `make validate-fixtures`, `make live-readiness-fixtures`, and
-  `make production-hardening-fixtures`.
+- Add `make validate-fixtures`, `make live-readiness-fixtures`,
+  `make live-drills-fixtures`, and `make production-hardening-fixtures`.
 - Add `--allow-blocked` to the live-readiness CLI so expected-failure suites can
   return blocked reports while exiting zero.
 - Add tests for manifest loading, read-only execution, redaction, expected
@@ -547,6 +549,42 @@ Authenticated live provider probes, production migration rehearsals, performance
 work, and compatibility migration notes remain future work behind explicit
 operator approval.
 
+## Phase 10: Fixture-Backed Live Drill Profiles
+
+**Status:** Landed in changelog record
+[`0030`](changelog/0030-live-drill-profiles.md).
+
+**Goal:** Turn ad hoc fixture and live-readiness commands into reusable named
+drill profiles that can later point at real staging/prod roots.
+
+**Work items:**
+
+- Add `fixtures/app-suite/live-drills.yml` with full-suite, Postgres-focused,
+  static-focused, and intentionally incomplete app profiles.
+- Add a live drill runner that composes live-readiness and optional production
+  hardening reports.
+- Validate expected aggregate status, app counts, drift counts, app statuses,
+  blocked/warning app sets, and hardening go/no-go state.
+- Expose `ship live-drills list|run|run-all`, command catalog descriptors,
+  `GET /live-drills`, and `GET /live-drills/<profile>`.
+- Add `make live-drills-fixtures` and focused regression tests.
+
+**Dependencies:** Live readiness lane, fixture app suite, production hardening
+report, command catalog, and local API route manifest.
+
+**Milestone commit:** `feat: add live drill profiles`
+
+**Definition of done:**
+
+- Fixture profiles run read-only and return `status: "ok"` when expected mixed
+  states match.
+- Missing or mismatched profile expectations block with structured issues.
+- CLI/API/catalog/docs surfaces are updated and tested.
+
+**Boundary:** Phase 10 does not add authenticated provider collection or mutate
+production. Real staging/prod profiles can reuse the profile file shape, but
+operator-reviewed baselines and opt-in probes still come later.
+
 ## Phase Dependency Graph
 
 ```text
@@ -560,6 +598,7 @@ Phase 0 docs
             -> Phase 7 plugin contracts
               -> Phase 8 Lumen console
                 -> Phase 9 hardening
+                  -> Phase 10 live drill profiles
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

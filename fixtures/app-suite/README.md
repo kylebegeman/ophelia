@@ -27,8 +27,11 @@ docs, but they must not be copied into a real runtime root.
 ```bash
 make validate-fixtures
 make live-readiness-fixtures
+make live-drills-fixtures
+make production-hardening-fixtures
 ```
 
 The live-readiness target uses `--allow-blocked` because
 `fixture-incomplete-app` is expected to make the aggregate report blocked.
-
+The live-drills target validates the committed expected mixed states in
+`live-drills.yml`.

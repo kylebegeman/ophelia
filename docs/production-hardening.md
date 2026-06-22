@@ -17,6 +17,12 @@ Fixture smoke drill:
 make production-hardening-fixtures
 ```
 
+For repeatable multi-scenario fixture checks, use live drill profiles:
+
+```bash
+make live-drills-fixtures
+```
+
 Equivalent direct fixture command:
 
 ```bash

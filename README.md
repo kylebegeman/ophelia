@@ -31,6 +31,7 @@ logs, and pulled images.
 - [Job/Action API Notes](docs/job-action-api.md)
 - [Host Contract](docs/host-contract.md)
 - [Live Readiness Lane](docs/live-readiness-lane.md)
+- [Live Drill Profiles](docs/live-drill-profiles.md)
 - [Lumen Operator Console](docs/lumen-operator-console.md)
 - [Production Hardening Report](docs/production-hardening.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
@@ -126,8 +127,10 @@ python3 -m venv .venv
 make validate-fixtures
 make validate-fixture-plugins
 make live-readiness-fixtures
+make live-drills-fixtures
 make lumen-console-fixtures
 make production-hardening-fixtures
+./cli/ship live-drills run fixture-suite-review --json
 ./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
@@ -203,7 +206,8 @@ starting SSH and never prints their values.
 9. Phase 7 has landed: metadata-only plugin contracts, trusted-directory discovery, plugin catalog/validation commands, API/Lumen discovery, and fixture plugin coverage.
 10. Phase 8 has landed: a read-only Lumen console payload over apps, approvals, workflows, plugins, quick actions, and fixture live-state smoke coverage.
 11. Phase 9 has landed: a read-only production hardening report and fixture go/no-go drill.
-12. Next work: authenticated live provider probes and production migration rehearsals behind explicit plan, confirmation-token, and receipt contracts.
+12. Phase 10 has landed: fixture-backed live drill profiles for repeatable read-only staging/prod rehearsal scenarios.
+13. Next work: authenticated live provider probes and production migration rehearsals behind explicit plan, confirmation-token, and receipt contracts.
 
 ## Deploy Flows
 
@@ -237,6 +241,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship host inventory`, `ship host readiness`, and `ship app placement` for read-only host and placement intelligence.
 - `ship live-readiness run` for a read-only aggregate over real runtime/manifests, provider observations, host readiness, placement, observability, secrets, and drift. HTTP and Docker probes are opt-in.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
+- `ship live-drills list|run|run-all` for named read-only drill profiles over live-readiness and optional hardening. `make live-drills-fixtures` runs the committed fixture profiles and validates their expected mixed states.
 - `ship plugins list|catalog|validate` for metadata-only plugin discovery from trusted directories. Plugin descriptors are not executed or injected into the command catalog in this phase.
 - `ship lumen console-data` for the read-only Lumen operator console payload. `make lumen-console-fixtures` runs it against the committed fixture suite.
 - `ship hardening production-readiness` for a read-only production go/no-go aggregate over live readiness, console data, plugins, workflow templates, state status, command catalog safety, and optional fixture drills. `make production-hardening-fixtures` runs the expected-state fixture drill.
