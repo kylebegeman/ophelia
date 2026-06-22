@@ -47,3 +47,4 @@
 | [0043](0043-pack-command-metadata-redaction.md) | 2026-06-22 | landed | Pack command metadata redaction | security, redaction, portability, adoption, tests, docs |
 | [0044](0044-pack-scaffold-executable-scripts.md) | 2026-06-22 | landed | Pack scaffold executable scripts | pack, adoption, fixtures, tests, docs |
 | [0045](0045-manifest-bootstrap-for-app-repos.md) | 2026-06-22 | landed | Manifest bootstrap for app repos | pack, adoption, cli, actions, docs, tests |
+| [0046](0046-open-source-readiness-audit.md) | 2026-06-22 | landed | Open-source readiness audit | open-source, cli, docs, command-catalog, tests |

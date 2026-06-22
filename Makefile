@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-adoption-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-reviewed-fixture lumen-console-fixtures production-hardening-fixtures test compile docs-check
+.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-adoption-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-reviewed-fixture lumen-console-fixtures production-hardening-fixtures open-source-audit open-source-audit-strict test compile docs-check
 
 venv:
 	python3 -m venv .venv
@@ -56,6 +56,12 @@ lumen-console-fixtures:
 
 production-hardening-fixtures:
 	@./cli/ship hardening production-readiness --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --host-config fixtures/app-suite/host-inventory.yml --provider-config fixtures/app-suite/integrations.yml --plugins-dir fixtures/app-suite/plugins --include-fixture-suite --allow-blocked-live-readiness --json
+
+open-source-audit:
+	@./cli/ship open-source audit --allow-blocked --json
+
+open-source-audit-strict:
+	@./cli/ship open-source audit --json
 
 test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -v

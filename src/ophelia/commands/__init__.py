@@ -24,6 +24,7 @@ from .live_readiness import register as register_live_readiness
 from .lumen import register as register_lumen
 from .notes import register as register_notes
 from .observability import register as register_observability
+from .open_source import register as register_open_source
 from .operations import register as register_operations
 from .pack import register as register_pack
 from .plugins import register as register_plugins
@@ -70,6 +71,7 @@ def register_commands(subparsers):
     register_runtime(subparsers)
     register_operations(subparsers)
     register_observability(subparsers)
+    register_open_source(subparsers)
     register_notes(subparsers)
     register_gc(subparsers)
     register_pack(subparsers)

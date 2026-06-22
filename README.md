@@ -35,6 +35,7 @@ logs, and pulled images.
 - [Live Hydration Reports](docs/live-hydration.md)
 - [Ophelia Source Of Truth](docs/ophelia-source-of-truth.md)
 - [App Adoption Planning](docs/app-adoption.md)
+- [Open Source Readiness](docs/open-source-readiness.md)
 - [Lumen Operator Console](docs/lumen-operator-console.md)
 - [Production Hardening Report](docs/production-hardening.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
@@ -154,6 +155,7 @@ make production-hardening-fixtures
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
 ./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ./cli/ship app adoption plan demo-app --repo-path ../demo-app --environment staging --json
+./cli/ship open-source audit --allow-blocked --json
 ./cli/ship inspect conflicts
 ./cli/ship status
 ./cli/ship doctor
@@ -233,7 +235,8 @@ starting SSH and never prints their values.
 25. Phase 23 has landed: pack validation, pack explanation, export command summaries, and adoption-embedded pack validation now scrub secret-shaped command literals.
 26. Phase 24 has landed: `pack init` now writes executable hook/check scripts and adoption planning reports non-executable required scripts as warnings.
 27. Phase 25 has landed: `pack init --include-manifest` now previews or writes valid service/static `.ophelia.yml` bootstraps for app repos.
-28. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
+28. Phase 26 has landed: `ship open-source audit` now provides a read-only public-release hygiene gate and documents the license/readiness path.
+29. Next work: use adoption plans for future app repos and retained products only when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
@@ -279,6 +282,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship plugins list|catalog|validate` for metadata-only plugin discovery from trusted directories. Plugin descriptors are not executed or injected into the command catalog in this phase.
 - `ship lumen console-data` for the read-only Lumen operator console payload. `make lumen-console-fixtures` runs it against the committed fixture suite.
 - `ship hardening production-readiness` for a read-only production go/no-go aggregate over live readiness, console data, plugins, workflow templates, state status, command catalog safety, and optional fixture drills. `make production-hardening-fixtures` runs the expected-state fixture drill.
+- `ship open-source audit` for a read-only public-release hygiene scan over tracked files, governance files, private host references, scratchpad notes, and private deploy workflow risks. Use `--allow-blocked` while preparing the repo; omit it for the final gate.
 - `ship receipts list|show` for local operation receipt browsing.
 - `ship state refresh|summary` for the local SQLite state service and app aggregates.
 - `ship workflow list|plan|show|run|pause|resume|cancel` for resumable, receipt-backed workflow orchestration. `run --preview` resolves nodes without executing them; mutating nodes pause until `--confirm-node NODE_ID=TOKEN` is supplied from that node's own plan.
