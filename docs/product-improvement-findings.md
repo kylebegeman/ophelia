@@ -415,3 +415,9 @@ without crossing that boundary: non-secret structural env keys and verified
 GitHub secret-name mappings were written to the local runtime, while
 database/Redis values, release metadata, and host facts remain blocked until
 truthful sources are available.
+
+That Quark work is historical legacy evidence, not the forward product model.
+The active improvement direction is fixture-first and contract-first: Ophelia
+defines the right runtime, safety, receipt, readiness, and migration behavior,
+then retained products such as `stillup` and `clearedtorun` adapt to that
+contract during explicit adoption or deployment phases.

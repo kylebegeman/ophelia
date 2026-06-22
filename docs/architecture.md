@@ -12,11 +12,15 @@
 
 ### stack ownership
 
-Quark is the source of truth for operator workflows, documentation, and future
-console UX. Prism is the backend engine for APIs, artifacts, metadata, audit,
-and state. OpenClaw owns agent and runtime orchestration. Ophelia owns VPS
-deployment control-plane behavior: manifests, rendered Caddy/Compose/runtime
-files, host operations, backups, rollback, and runtime inspection.
+Ophelia is the source of truth for VPS app/runtime contracts. It owns manifests,
+rendered Caddy/Compose/runtime files, host operations, backup and restore
+contracts, rollback, runtime inspection, receipts, safety gates, and the JSON
+surfaces that downstream tools consume.
+
+Lumen can become the operator cockpit over those contracts, but it should not
+replace the host-side source of truth. Existing products and old host services
+are legacy inventory until a separately approved adoption, migration, or
+decommission phase moves them onto the current Ophelia contract.
 
 ### `ophelia` owns
 

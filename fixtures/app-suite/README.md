@@ -6,6 +6,10 @@ workflow surfaces without touching production state. It also includes reviewed
 hydration evidence for one focused app so validation, promotion planning, and
 probe-review flows can be rehearsed without live values.
 
+This suite is the source-of-truth test substrate for Ophelia contract work.
+Existing products should be treated as migration or deployment targets, not as
+the default shape that drives new platform behavior.
+
 The suite is intentionally mixed:
 
 - `fixture-static-site`: static app with no Docker requirement.

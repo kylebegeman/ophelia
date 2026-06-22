@@ -31,6 +31,12 @@ safety primitives.
 This boundary keeps Ophelia useful now while allowing Lumen Ops to absorb the
 operator experience later.
 
+Ophelia defines the source-of-truth contract before product-specific adoption
+work starts. New apps should conform to Ophelia's manifest, runtime, readiness,
+backup, receipt, and migration primitives. Existing deployments are inputs to a
+future migration or decommission plan, not architecture anchors for new core
+behavior.
+
 Quark, Prism, and OpenClaw are legacy platform/runtime components for the current
 OVH deployment. Lumen replaces them as the long-term product and control plane.
 New Ophelia architecture should not preserve Quark, Prism, or OpenClaw as target
@@ -79,6 +85,8 @@ an automated scheduler.
 - Do not make Lakebed a runtime dependency.
 - Do not clean up old services, duplicate apps, or unused containers as part of
   this planning work.
+- Do not use abandoned products as the default test substrate for new Ophelia
+  behavior. Use synthetic fixtures first.
 - Do not silently move production data or DNS.
 
 ## Borrowed Ideas

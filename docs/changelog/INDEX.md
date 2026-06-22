@@ -41,3 +41,4 @@
 | [0037](0037-reviewed-hydration-fixture-evidence.md) | 2026-06-22 | landed | Reviewed hydration fixture evidence | fixtures, live-hydration, docs, tests |
 | [0038](0038-quark-staging-live-snapshot-attempt.md) | 2026-06-22 | landed | Quark staging live snapshot attempt | live-hydration, runtime, docs |
 | [0039](0039-quark-staging-partial-live-evidence.md) | 2026-06-22 | landed | Quark staging partial live evidence | live-hydration, runtime, docs |
+| [0040](0040-source-of-truth-and-fixture-first-validation.md) | 2026-06-22 | landed | Source-of-truth and fixture-first validation | docs, fixtures, command-catalog, tests |

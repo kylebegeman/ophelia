@@ -35,6 +35,11 @@ The operator experience can later live in Lumen Ops, but Ophelia must expose the
 stable commands, JSON contracts, receipts, and safety gates that Lumen and LLM
 agents can rely on.
 
+Ophelia defines the product/runtime contract first. Future software should be
+built to use that contract properly. Existing products only shape new work when
+we explicitly enter a retained-product adoption, migration, or deployment phase.
+Until then, synthetic fixtures are the correct way to prove behavior.
+
 Quark, Prism, and OpenClaw are not long-term foundations for this roadmap. They
 may exist on current hosts as legacy deployments, but Lumen replaces them. Agents
 should avoid designing new features around Quark, Prism, or OpenClaw except when

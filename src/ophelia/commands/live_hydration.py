@@ -299,8 +299,8 @@ register_cli_descriptor(
         output_schema_ref="ophelia.live_hydration_report.v1",
         artifacts=[],
         examples=[
-            "ship live-hydration report --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json",
-            "ship live-hydration report --app quark-ops --environment production --host-config config/ophelia-hosts.yml --provider-config config/ophelia-integrations.yml --json",
+            "ship live-hydration report --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --allow-blocked --json",
+            "ship live-hydration report --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --json",
         ],
         safety_notes=[
             "Read-only report. Does not create runtime files, run probes, refresh state, or mutate providers.",
@@ -344,8 +344,8 @@ register_cli_descriptor(
         output_schema_ref="ophelia.live_hydration_probe_gate.v1",
         artifacts=[],
         examples=[
-            "ship live-hydration probe-gate --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json",
-            "ship live-hydration probe-gate --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --json",
+            "ship live-hydration probe-gate --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --allow-blocked --json",
+            "ship live-hydration probe-gate --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json",
         ],
         safety_notes=[
             "Read-only. Does not run HTTP/Docker probes or provider calls.",
@@ -388,8 +388,8 @@ register_cli_descriptor(
         output_schema_ref="ophelia.live_hydration_promotion_plan.v1",
         artifacts=[],
         examples=[
-            "ship live-hydration promotion-plan --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --json",
-            "ship live-hydration promotion-plan --app quark-ops --environment production --host-config config/ophelia-hosts.yml --provider-config config/ophelia-integrations.yml --json",
+            "ship live-hydration promotion-plan --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json",
+            "ship live-hydration promotion-plan --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --input-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging --json",
         ],
         safety_notes=[
             "Read-only. Does not copy, promote, mutate runtime files, call providers, or run probes.",
@@ -433,8 +433,8 @@ register_cli_descriptor(
         output_schema_ref="ophelia.live_hydration_evidence_validation.v1",
         artifacts=[],
         examples=[
-            "ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
-            "ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --json",
+            "ship live-hydration validate-evidence --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json",
+            "ship live-hydration validate-evidence --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --input-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging --json",
         ],
         safety_notes=[
             "Read-only validation. Does not copy, promote, or mutate runtime/provider files.",
@@ -451,8 +451,8 @@ register_cli_descriptor(
         risk="low",
         mutates_state=True,
         requires_confirmation=False,
-        plan_command="ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
-        apply_command="ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --write --json",
+        plan_command="ship live-hydration scaffold --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --json",
+        apply_command="ship live-hydration scaffold --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --output-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging --write --json",
         json_kind=LIVE_HYDRATION_SCAFFOLD_KIND,
         args_schema={
             "type": "object",
@@ -479,8 +479,8 @@ register_cli_descriptor(
         output_schema_ref="ophelia.live_hydration_scaffold.v1",
         artifacts=[],
         examples=[
-            "ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json",
-            "ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --output-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --write --json",
+            "ship live-hydration scaffold --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --json",
+            "ship live-hydration scaffold --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --output-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging --write --json",
         ],
         safety_notes=[
             "Default mode is dry-run and read-only.",

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -89,20 +90,27 @@ class LiveDrillTests(unittest.TestCase):
         profile_ids = {profile["id"] for profile in catalog["profiles"]}
 
         self.assertEqual("ok", catalog["status"])
-        self.assertEqual(
-            {
-                "local-file-baseline",
-                "quark-ops-production-file-baseline",
-                "quark-ops-staging-file-baseline",
-            },
-            profile_ids,
-        )
+        self.assertIn("local-file-baseline", profile_ids)
         local_profile = next(profile for profile in catalog["profiles"] if profile["id"] == "local-file-baseline")
         self.assertEqual({}, local_profile["expected"])
 
     def test_profile_paths_expand_user_home(self) -> None:
-        with _skip_docker_status():
-            report = run_live_drill("quark-ops-production-file-baseline", LOCAL_PROFILES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profiles_path = Path(temp_dir) / "profiles.yml"
+            profiles_path.write_text(
+                "version: 1\n"
+                "profiles:\n"
+                "  - id: home-path-fixture\n"
+                "    title: Home Path Fixture\n"
+                "    runtime_root: ~/ophelia-runtime\n"
+                f"    manifests_dir: {REPO_ROOT / 'fixtures' / 'app-suite' / 'manifests'}\n"
+                f"    host_config: {REPO_ROOT / 'fixtures' / 'app-suite' / 'host-inventory.yml'}\n"
+                f"    provider_config: {REPO_ROOT / 'fixtures' / 'app-suite' / 'integrations.yml'}\n"
+                "    app: fixture-incomplete-app\n"
+                "    environment: staging\n"
+            )
+            with _skip_docker_status():
+                report = run_live_drill("home-path-fixture", profiles_path)
 
         self.assertEqual(str(Path.home() / "ophelia-runtime"), report["paths"]["runtime_root"])
         self.assertEqual("blocked", report["status"])

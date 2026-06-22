@@ -7,12 +7,12 @@ HTTP, Docker, authenticated provider, workflow, or mutation testing should run.
 
 ## Command
 
-Run the focused local Quark staging baseline:
+Run a blocked synthetic fixture baseline:
 
 ```bash
 ./cli/ship live-hydration report \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
   --allow-blocked \
   --json
 ```
@@ -20,81 +20,57 @@ Run the focused local Quark staging baseline:
 Equivalent Make target:
 
 ```bash
-make live-hydration-quark-staging
+make live-hydration-reviewed-fixture
 ```
 
-Plan a non-secret evidence scaffold for the same app:
+Plan a non-secret evidence scaffold for the blocked fixture:
 
 ```bash
 ./cli/ship live-hydration scaffold \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
   --json
-```
-
-Equivalent Make target:
-
-```bash
-make live-hydration-scaffold-quark-staging
 ```
 
 Write the scaffold templates to a review directory:
 
 ```bash
 ./cli/ship live-hydration scaffold \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
-  --output-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --output-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging \
   --write \
   --json
 ```
 
-Validate a scaffold or evidence directory:
+Validate the committed reviewed fixture evidence directory:
 
 ```bash
 ./cli/ship live-hydration validate-evidence \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
-  --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging \
+  --profile fixture-postgres-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging \
   --json
-```
-
-Temporary scaffold validation smoke:
-
-```bash
-make live-hydration-validate-evidence-quark-staging
 ```
 
 Check whether opt-in probes are allowed later:
 
 ```bash
 ./cli/ship live-hydration probe-gate \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
-  --allow-blocked \
+  --profile fixture-postgres-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging \
   --json
-```
-
-Equivalent current-state audit:
-
-```bash
-make live-hydration-probe-gate-quark-staging
 ```
 
 Plan reviewed evidence promotion without copying files:
 
 ```bash
 ./cli/ship live-hydration promotion-plan \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
-  --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging \
+  --profile fixture-postgres-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging \
   --json
-```
-
-Temporary scaffold promotion-plan smoke:
-
-```bash
-make live-hydration-promotion-plan-quark-staging
 ```
 
 Rehearse the reviewed-evidence flow against the committed fixture kit:
@@ -107,10 +83,12 @@ Run from explicit app inputs instead of a profile:
 
 ```bash
 ./cli/ship live-hydration report \
-  --app quark-ops \
-  --environment production \
-  --host-config config/ophelia-hosts.yml \
-  --provider-config config/ophelia-integrations.yml \
+  --app fixture-postgres-api \
+  --environment staging \
+  --runtime-root fixtures/app-suite/runtime \
+  --manifest fixtures/app-suite/manifests/fixture-postgres-api.ophelia.yml \
+  --host-config fixtures/app-suite/host-inventory.yml \
+  --provider-config fixtures/app-suite/integrations.yml \
   --json
 ```
 
@@ -181,8 +159,9 @@ missing, malformed, or contains data that should not live in a scaffold.
 - `probe_commands` only when there are no blockers
 - `next_commands` for the blocked path
 
-The gate is a decision report, not a runner. Current Quark staging returns
-`no_go` because hydration and evidence validation are still blocked.
+The gate is a decision report, not a runner. The committed reviewed fixture kit
+returns `review` and emits commands for operator inspection without running
+probes.
 
 `kind: "ophelia.live_hydration_promotion_plan"` includes:
 
@@ -217,27 +196,17 @@ The kit stores env shape, observed secret names, synthetic release metadata, and
 host capability facts. It does not contain runtime values and must not be copied
 into a real runtime root.
 
-## Current Quark Staging Result
+## Legacy Snapshot Records
 
-The current file-based Quark staging baseline is expected to be blocked. The
-local runtime root now contains an empty app runtime tree for
-`quark-ops-staging` and a separate template-only hydration review scaffold under
-`~/ophelia-runtime/hydration/quark-ops-staging/staging`. It also contains
-non-secret structural runtime env keys and name-only GitHub observations for the
-three verified Prism staging secrets. The report still asks for:
+The earlier Quark staging snapshot records are retained as historical evidence:
 
-- database and Redis runtime env values, plus the three Prism secret values,
-  stored only in `~/ophelia-runtime/apps/quark-ops-staging/env`
-- observed database and Redis secret names, never secret values
-- active or latest release metadata
-- explicit host capability inventory
-- drift review after runtime evidence exists
-- a final rerun of the live drill profile before probes
+- [`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md)
+- [`quark-ops-staging-live-evidence-pass-2026-06-22.md`](scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md)
 
-The bounded live snapshot attempt is recorded in
-[`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md).
-The follow-up partial evidence pass is recorded in
-[`quark-ops-staging-live-evidence-pass-2026-06-22.md`](scratchpad/quark-ops-staging-live-evidence-pass-2026-06-22.md).
+Those records are not the forward test model. New hydration behavior should be
+proved with synthetic fixtures first. Real retained products should receive
+their own profiles and evidence only during an approved adoption, migration, or
+production deployment phase.
 
 ## Safety Contract
 

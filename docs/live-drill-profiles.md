@@ -71,8 +71,8 @@ Each profile can define:
   hardening go/no-go state
 
 Relative paths resolve from the profile file directory. This keeps fixture
-profiles portable inside the repo and lets later staging/prod profiles live
-next to their own observation files.
+profiles portable inside the repo and lets approved staging/prod adoption
+profiles live next to their own observation files later.
 
 ## Fixture Profiles
 
@@ -91,7 +91,12 @@ expectations.
 
 ## Local Live Profiles
 
-Current local profiles:
+Local profiles are legacy inventory or adoption snapshots, not the core test
+substrate. Use fixture profiles for developing Ophelia behavior. Add real
+product profiles only when a retained product is entering an approved migration
+or deployment phase.
+
+Current local legacy profiles:
 
 - `local-file-baseline`: all repo manifests against `~/ophelia-runtime`, local
   host inventory, provider observations, and production hardening.
@@ -104,21 +109,21 @@ These profiles intentionally have no expected state yet. Without expectations,
 the drill result propagates child `blocked` or `warning` statuses. Add expected
 baselines only after an operator-reviewed known-good run.
 
-Example:
+Fixture example:
 
 ```bash
-./cli/ship live-drills run quark-ops-production-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+./cli/ship live-drills run fixture-suite-review \
+  --profiles fixtures/app-suite/live-drills.yml \
   --json
 ```
 
-For a one-app baseline that is currently blocked, prefer a hydration report
-before enabling probes:
+For a one-app blocked fixture baseline, prefer a hydration report before
+enabling probes:
 
 ```bash
 ./cli/ship live-hydration report \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
   --allow-blocked \
   --json
 ```
@@ -130,8 +135,9 @@ To prepare operator-reviewed evidence without touching live runtime paths, run:
 
 ```bash
 ./cli/ship live-hydration scaffold \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --output-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging \
   --json
 ```
 

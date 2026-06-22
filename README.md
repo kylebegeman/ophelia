@@ -33,6 +33,7 @@ logs, and pulled images.
 - [Live Readiness Lane](docs/live-readiness-lane.md)
 - [Live Drill Profiles](docs/live-drill-profiles.md)
 - [Live Hydration Reports](docs/live-hydration.md)
+- [Ophelia Source Of Truth](docs/ophelia-source-of-truth.md)
 - [Lumen Operator Console](docs/lumen-operator-console.md)
 - [Production Hardening Report](docs/production-hardening.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
@@ -130,20 +131,13 @@ make validate-fixture-plugins
 make live-readiness-fixtures
 make live-drills-fixtures
 make live-hydration-reviewed-fixture
-make live-hydration-quark-staging
-make live-hydration-scaffold-quark-staging
-make live-hydration-validate-evidence-quark-staging
-make live-hydration-probe-gate-quark-staging
-make live-hydration-promotion-plan-quark-staging
 make lumen-console-fixtures
 make production-hardening-fixtures
 ./cli/ship live-drills run fixture-suite-review --json
-./cli/ship live-drills run quark-ops-production-file-baseline --profiles config/ophelia-live-drills.yml --json
-./cli/ship live-hydration report --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json
-./cli/ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json
-./cli/ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json
-./cli/ship live-hydration probe-gate --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json
-./cli/ship live-hydration promotion-plan --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json
+./cli/ship live-hydration report --profile fixture-incomplete-focused --profiles fixtures/app-suite/live-drills.yml --allow-blocked --json
+./cli/ship live-hydration validate-evidence --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
+./cli/ship live-hydration probe-gate --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
+./cli/ship live-hydration promotion-plan --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
 ./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
@@ -154,7 +148,6 @@ make production-hardening-fixtures
 ./cli/ship workflow resume latest:dragon-writer --confirm-node export-create=<token> --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --set EXPORT_BUNDLE=exports/dragon-writer --json
 ./cli/ship workflow pause latest:dragon-writer --json
 ./cli/ship workflow cancel latest:dragon-writer --json
-./cli/ship live-hydration promotion-plan --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
 ./cli/ship receipts list --app dragon-writer --json
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
 ./cli/ship inspect conflicts
@@ -230,7 +223,8 @@ starting SSH and never prints their values.
 19. Phase 17 has landed: a committed reviewed fixture evidence kit now rehearses validation, promotion planning, and probe review without live values.
 20. Phase 18 has landed: the first bounded Quark staging live snapshot attempt created the empty runtime app root, wrote the review scaffold, and recorded the remaining real-evidence blockers.
 21. Phase 19 has landed: the Quark staging runtime env now has non-secret structural keys and name-only GitHub observations for the three verified Prism staging secrets.
-22. Next work: provide database/Redis runtime values and provider observations, release metadata, and truthful host capability evidence before opt-in HTTP/Docker/provider probes.
+22. Phase 20 has landed: active guidance now treats Ophelia as the source-of-truth contract, uses synthetic fixtures as the development test substrate, and leaves old deployments as legacy inventory until an explicit migration or deployment phase.
+23. Next work: define retained-product adoption artifacts for `stillup` and `clearedtorun` when we are ready to migrate or deploy them through Ophelia.
 
 ## Deploy Flows
 
@@ -266,7 +260,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
 - `ship live-drills list|run|run-all` for named read-only drill profiles over live-readiness and optional hardening. `make live-drills-fixtures` runs the committed fixture profiles and validates their expected mixed states.
 - `make live-hydration-reviewed-fixture` for a committed reviewed Postgres evidence kit that validates cleanly and produces a read-only promotion checklist before probe review.
-- `ship live-hydration report` for one-app, read-only baseline evidence gaps before enabling probes. `make live-hydration-quark-staging` runs the current focused Quark staging audit and preserves `status: "blocked"` in JSON while exiting zero for repeatable review.
+- `ship live-hydration report` for one-app, read-only baseline evidence gaps before enabling probes. Use fixture profiles first, then add a product-specific profile only for an approved migration or deployment phase.
 - `ship live-hydration scaffold` for non-secret env, secret-name, release, and host inventory templates in a separate hydration workspace. It is dry-run by default; `--write` writes templates only, not live runtime evidence.
 - `ship live-hydration validate-evidence` for read-only scaffold/evidence validation. It blocks malformed kits and secret-looking scaffold values without copying or promoting runtime files.
 - `ship live-hydration probe-gate` for a no-probe go/no-go report before opt-in HTTP/Docker checks. It emits suggested commands only when file-based blockers are clear enough for operator review.
@@ -287,9 +281,9 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship drift <manifest>` and `ship drift all` for runtime/state drift snapshots with severity, owners, remediation commands, and plan candidates.
 - `ship inspect conflicts` for cross-manifest platform conflict scanning.
 - `ship status`, `ship doctor`, and `ship list` for read-only runtime inspection.
-- `ship actions`, `ship jobs`, and `ship api serve` for Quark-facing local job integration.
+- `ship actions`, `ship jobs`, and `ship api serve` for local job and agent integration.
 
-Most read-only commands accept `--json` for Quark/Prism integration.
+Most read-only commands accept `--json` for Lumen, automation, and agent integration.
 
 For static apps, sync built assets first or pass a static build directory once that
 workflow is added to the app repo.
@@ -333,9 +327,13 @@ use tunnel manifests plus route rewrites. The shared Caddy service now exposes
 `host.docker.internal` through Docker's host-gateway mapping so Ophelia-managed
 ingress can proxy to existing host services without hand-maintained Caddy rules.
 
-## Prism-first Deployments
+## Legacy Prism/Quark Deployments
 
-Ophelia can already host Prism as a normal service, but it now also has a Prism-first manifest profile so Prism-backed products do not need to keep re-expressing the same runtime contract.
+This section is retained for legacy compatibility only. Quark and old
+Prism-backed deployments are not examples for future Ophelia products, and they
+should not drive core architecture or tests.
+
+Ophelia can host Prism as a normal service, and it has a Prism-first manifest profile for old Prism-backed products that still need compatibility support.
 
 Use `profile: prism` when a manifest is primarily hosting:
 
@@ -351,7 +349,7 @@ The Prism profile adds:
 - optional inferred verification checks for `/health` and `/console`
 - automatic routing for `prism.admin_domain` when that host should proxy to the primary Prism service
 
-Use [examples/quark-ops.ophelia.yml](examples/quark-ops.ophelia.yml) as the current reference shape for a baked-image Quark surface on `ops.begam.in`, and [manifests/quark-ops-staging.ophelia.yml](manifests/quark-ops-staging.ophelia.yml) for the staging host on `ops-staging.begam.in`.
+Use [examples/quark-ops.ophelia.yml](examples/quark-ops.ophelia.yml) and [manifests/quark-ops-staging.ophelia.yml](manifests/quark-ops-staging.ophelia.yml) only when auditing or explicitly deploying that legacy surface. For new work, start from [Ophelia Source Of Truth](docs/ophelia-source-of-truth.md) and the synthetic fixture suite.
 
 For the dedicated Quark hosts:
 

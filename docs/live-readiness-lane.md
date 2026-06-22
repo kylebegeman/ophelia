@@ -61,12 +61,13 @@ Live drill profiles wrap the same live-readiness report, optionally include the
 production hardening report, and validate expected mixed states without hiding
 the child report statuses.
 
-For one blocked live app, use a hydration report before enabling probes:
+For one blocked app during development, use a fixture hydration report before
+enabling probes:
 
 ```bash
 ship live-hydration report \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
   --allow-blocked \
   --json
 ```
@@ -80,8 +81,9 @@ items in a separate review directory:
 
 ```bash
 ship live-hydration scaffold \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-incomplete-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --output-dir /tmp/ophelia-hydration/fixture-incomplete-app/staging \
   --json
 ```
 
@@ -89,11 +91,15 @@ Before enabling probes, run the no-probe gate:
 
 ```bash
 ship live-hydration probe-gate \
-  --profile quark-ops-staging-file-baseline \
-  --profiles config/ophelia-live-drills.yml \
+  --profile fixture-postgres-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging \
   --allow-blocked \
   --json
 ```
+
+For real retained products, add product-specific live profiles only during an
+approved adoption, migration, or production deployment phase.
 
 ## What It Runs
 

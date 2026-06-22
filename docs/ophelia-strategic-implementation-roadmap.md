@@ -83,6 +83,9 @@ rebuilt:
   root, review scaffold, and documented remaining evidence blockers.
 - A follow-up Quark staging evidence pass that writes non-secret structural env
   keys and name-only GitHub observations for verified Prism staging secrets.
+- A source-of-truth correction that makes fixtures the active validation
+  substrate and treats old deployments as legacy inventory until an explicit
+  adoption, migration, or deployment phase starts.
 
 ## Implementation Rules
 
@@ -653,11 +656,10 @@ read-only evidence steps before enabling any probes.
   audits.
 - Compose existing env-shape, secret-provider, placement, readiness, drift, and
   release metadata reports into a compact hydration payload.
-- Expose `GET /live-hydration/<profile>`, command catalog examples, and
-  `make live-hydration-quark-staging`.
+- Expose `GET /live-hydration/<profile>` and command catalog examples.
 - Preserve blocked JSON status while allowing expected blocked baseline audits
   to exit zero with `--allow-blocked`.
-- Document the current Quark staging hydration blockers and safe next steps.
+- Document focused hydration blockers and safe next steps.
 
 **Dependencies:** Phase 10 live drill profiles, Phase 11 local baselines,
 live-readiness, secret-provider metadata, host placement, release metadata, and
@@ -696,8 +698,7 @@ before touching consumed runtime files or enabling probes.
   `apps/<app>/env`, `active_release.json`, provider observation paths, or host
   inventory files.
 - Add `--write` and `--force` guards for explicit scaffold template writes.
-- Expose command catalog examples, `make live-hydration-scaffold-quark-staging`,
-  tests, and docs.
+- Expose command catalog examples, tests, and docs.
 
 **Dependencies:** Phase 12 hydration reports and Phase 11 local profile
 baselines.
@@ -732,8 +733,7 @@ copying any evidence into consumed runtime paths.
   release metadata shape, and required host capability flags.
 - Detect missing files, invalid JSON, missing required names, template
   placeholders, and secret-looking values without printing values.
-- Add `make live-hydration-validate-evidence-quark-staging` using a temporary
-  scaffold directory.
+- Add focused evidence validation tests using temporary scaffold directories.
 - Update command catalog examples, tests, docs, roadmap, and changelog.
 
 **Dependencies:** Phase 13 scaffold templates.
@@ -766,8 +766,7 @@ Docker probes are run.
   `go_no_go: "go" | "review" | "no_go"`.
 - Keep `probe_policy` disabled and `probes_executed: false`.
 - Emit exact probe commands only when the gate has no blockers.
-- Add command catalog examples, `make live-hydration-probe-gate-quark-staging`,
-  tests, docs, roadmap, scratchpad, and changelog.
+- Add command catalog examples, tests, docs, roadmap, scratchpad, and changelog.
 
 **Dependencies:** Phase 14 evidence validation.
 
@@ -775,7 +774,7 @@ Docker probes are run.
 
 **Definition of done:**
 
-- Current Quark staging returns `no_go` without running probes.
+- Blocked fixture baselines return `no_go` without running probes.
 - Fixture review cases can return `review` and emit explicit probe commands for
   operator review.
 - The gate is read-only, redacted, and never calls HTTP, Docker, providers,
@@ -803,9 +802,7 @@ path yet.
   release metadata, legacy release metadata, and host inventory.
 - Include source paths, source existence, byte counts, SHA-256 hashes, target
   paths, and target existence checks without file contents or runtime values.
-- Add command catalog examples, `make
-  live-hydration-promotion-plan-quark-staging`, tests, docs, roadmap,
-  scratchpad, and changelog.
+- Add command catalog examples, tests, docs, roadmap, scratchpad, and changelog.
 
 **Dependencies:** Phase 14 evidence validation and Phase 15 no-probe gate.
 
@@ -948,6 +945,48 @@ remain blocked until real values and provider observations exist. Release
 metadata and host capability evidence remain blocked until they can be collected
 from truthful live sources.
 
+## Phase 20: Source Of Truth And Fixture-First Validation
+
+**Status:** Landed in changelog record
+[`0040`](changelog/0040-source-of-truth-and-fixture-first-validation.md).
+
+**Goal:** Keep Ophelia contract-first. Active implementation, docs, tests, and
+examples should use synthetic fixtures until a retained-product migration or
+production deployment phase is explicitly approved.
+
+**Work items:**
+
+- Add [Ophelia Source Of Truth](ophelia-source-of-truth.md).
+- Remove uncommitted Quark-specific deploy/env setup work from this phase.
+- Remove Quark-specific hydration Make shortcuts from the active test surface.
+- Update command catalog and hydration descriptor examples to use fixture
+  profiles.
+- Update the operator runbook to show generic `ship` flows rather than a
+  product-specific deploy wrapper.
+- Document local live profiles as legacy inventory/adoption snapshots only.
+- Keep retained-product direction focused on `stillup` and `clearedtorun`, with
+  future product-specific artifacts added only during adoption/deployment work.
+
+**Dependencies:** Phase 17 reviewed fixture evidence and the Phase 18/19 lesson
+that old live deployments can drift into architecture if used as test anchors.
+
+**Milestone commit:** `docs: clarify ophelia source of truth`
+
+**Definition of done:**
+
+- Active docs say Ophelia defines the runtime contract and future products
+  adapt to it.
+- Quick-start, command catalog, hydration docs, and Make targets use fixtures as
+  the default examples.
+- Quark and other old deployments are framed as legacy inventory, not future
+  product architecture.
+- No real product deployment, provider mutation, env value collection, or live
+  probe is run.
+
+**Boundary:** Phase 20 does not delete historical Quark records or decommission
+old runtime state. It corrects the active development path. Real retained-app
+deployment work belongs in a later approved phase.
+
 ## Phase Dependency Graph
 
 ```text
@@ -971,6 +1010,7 @@ Phase 0 docs
                                 -> Phase 17 reviewed hydration fixture evidence
                                   -> Phase 18 quark staging live snapshot attempt
                                     -> Phase 19 quark staging partial live evidence
+                                      -> Phase 20 source-of-truth fixture-first validation
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

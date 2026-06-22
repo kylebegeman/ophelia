@@ -3,6 +3,8 @@
 The fixture app suite is a committed set of synthetic micro apps, manifests,
 runtime snapshots, host inventory, and provider observations. It exists to make
 readiness and live-value work testable without touching production state.
+It is the default substrate for evolving Ophelia behavior; abandoned or old
+products should not be used as architecture-defining tests.
 
 Fixture root:
 
@@ -131,6 +133,8 @@ target passes `--allow-blocked-live-readiness`.
 
 - Keep fixtures synthetic. Do not use real domains, repositories, tokens,
   database URLs, private keys, or production data.
+- Add or change fixture apps before using a real product to prove new core
+  Ophelia behavior.
 - Prefer `.invalid` domains for route and health URLs.
 - Update the fixture test expectations when adding or removing fixture apps.
 - Update `fixtures/app-suite/live-drills.yml` when changing expected fixture

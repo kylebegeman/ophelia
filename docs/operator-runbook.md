@@ -3,10 +3,13 @@
 Preflight a manifest:
 
 ```bash
-./cli/ship validate manifests/quark-ops-staging.ophelia.yml
-./cli/ship explain manifests/quark-ops-staging.ophelia.yml
-./cli/ship deploy manifests/quark-ops-staging.ophelia.yml --plan
-./cli/ship diff manifests/quark-ops-staging.ophelia.yml
+MANIFEST=path/to/app.ophelia.yml
+APP=<app-name>
+
+./cli/ship validate "$MANIFEST"
+./cli/ship explain "$MANIFEST"
+./cli/ship deploy "$MANIFEST" --plan
+./cli/ship diff "$MANIFEST"
 ./cli/ship inspect conflicts
 ```
 
@@ -16,22 +19,25 @@ Inspect runtime:
 ./cli/ship status
 ./cli/ship doctor
 ./cli/ship drift all
-./cli/ship releases quark-ops-staging
+./cli/ship releases "$APP"
 ```
 
 Deploy staging:
 
 ```bash
-./cli/ship deploy manifests/quark-ops-staging.ophelia.yml --plan
-./cli/ship deploy manifests/quark-ops-staging.ophelia.yml --apply
+./cli/ship deploy "$MANIFEST" --plan
+./cli/ship deploy "$MANIFEST" --apply
 ```
 
 Deploy production:
 
 ```bash
-./cli/ship deploy manifests/quark-ops.ophelia.yml --plan --json
-./cli/ship deploy manifests/quark-ops.ophelia.yml --apply --confirm <token>
+./cli/ship deploy "$MANIFEST" --plan --json
+./cli/ship deploy "$MANIFEST" --apply --confirm <token>
 ```
+
+Product-specific deploy wrappers belong in separately approved adoption or
+migration docs. The generic `ship` flow is the Ophelia contract.
 
 Backup and restore preview:
 

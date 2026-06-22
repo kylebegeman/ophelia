@@ -31,7 +31,6 @@ from ophelia.main import main  # noqa: E402
 
 FIXTURE_PROFILES = REPO_ROOT / "fixtures" / "app-suite" / "live-drills.yml"
 FIXTURE_REVIEWED_EVIDENCE = REPO_ROOT / "fixtures" / "app-suite" / "hydration" / "fixture-postgres-api" / "staging"
-LOCAL_PROFILES = REPO_ROOT / "config" / "ophelia-live-drills.yml"
 
 
 class LiveHydrationTests(unittest.TestCase):
@@ -55,21 +54,21 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertNotIn("fixture-postgres-token-value", serialized)
         self.assertNotIn("fixture-db-password", serialized)
 
-    def test_local_quark_staging_hydration_is_blocked_and_actionable(self) -> None:
-        report = live_hydration_report(profile="quark-ops-staging-file-baseline", profiles_path=LOCAL_PROFILES)
+    def test_fixture_incomplete_hydration_is_blocked_and_actionable(self) -> None:
+        report = live_hydration_report(profile="fixture-incomplete-focused", profiles_path=FIXTURE_PROFILES)
         step_codes = {step["code"] for step in report["hydration_steps"]}
 
         self.assertEqual("blocked", report["status"])
-        self.assertEqual("quark-ops-staging", report["app"])
+        self.assertEqual("fixture-incomplete-app", report["app"])
         self.assertEqual("staging", report["environment"])
-        self.assertEqual(8, report["sections"]["env"]["required_count"])
-        self.assertEqual(8, len(report["sections"]["env"]["missing_required"]))
-        self.assertEqual(8, len(report["sections"]["secrets"]["missing_required"]))
+        self.assertEqual(2, report["sections"]["env"]["required_count"])
+        self.assertEqual(2, len(report["sections"]["env"]["missing_required"]))
+        self.assertEqual(2, len(report["sections"]["secrets"]["missing_required"]))
         self.assertFalse(report["sections"]["release"]["active_present"])
         self.assertIn("hydrate_runtime_env_shape", step_codes)
         self.assertIn("record_secret_name_observations", step_codes)
         self.assertIn("record_release_metadata", step_codes)
-        self.assertIn("complete_host_capability_inventory", step_codes)
+        self.assertIn("refresh_or_review_runtime_drift", step_codes)
 
     def test_cli_allow_blocked_preserves_blocked_payload_with_zero_exit(self) -> None:
         buffer = io.StringIO()
@@ -79,9 +78,9 @@ class LiveHydrationTests(unittest.TestCase):
                     "live-hydration",
                     "report",
                     "--profile",
-                    "quark-ops-staging-file-baseline",
+                    "fixture-incomplete-focused",
                     "--profiles",
-                    str(LOCAL_PROFILES),
+                    str(FIXTURE_PROFILES),
                     "--allow-blocked",
                     "--json",
                 ]
@@ -91,7 +90,7 @@ class LiveHydrationTests(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual("blocked", payload["status"])
-        self.assertEqual("quark-ops-staging", payload["app"])
+        self.assertEqual("fixture-incomplete-app", payload["app"])
 
     def test_cli_catalog_and_api_route(self) -> None:
         buffer = io.StringIO()
@@ -115,15 +114,15 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(LIVE_HYDRATION_KIND, payload["kind"])
         self.assertIn("live_hydration.report", operations)
-        self.assertTrue(any("config/ophelia-live-drills.yml" in example for example in descriptor.examples))
+        self.assertTrue(any("fixtures/app-suite/live-drills.yml" in example for example in descriptor.examples))
         self.assertIn("/live-hydration/<profile>", HTTP_ROUTE_PATTERNS)
 
     def test_scaffold_dry_run_plans_template_files_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             report = live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
             )
 
@@ -137,8 +136,8 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertTrue(report["template_only"])
         self.assertEqual("blocked", report["hydration_status"])
         self.assertEqual(5, len(report["files"]))
-        self.assertIn("DATABASE_URL=", next(item["content"] for item in report["files"] if item["kind"] == "runtime_env_template"))
-        self.assertIn("github/secret-observations/quark-ops-staging.staging.json", report["target_paths"]["github_secret_observation"])
+        self.assertIn("MISSING_TOKEN=", next(item["content"] for item in report["files"] if item["kind"] == "runtime_env_template"))
+        self.assertIn("github/secret-observations/fixture-incomplete-app.staging.json", report["target_paths"]["github_secret_observation"])
         serialized = json.dumps(report, sort_keys=True)
         self.assertNotIn("fixture-db-password", serialized)
         self.assertNotIn("runtime-secret-value", serialized)
@@ -147,20 +146,20 @@ class LiveHydrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             first = live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
             second = live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
             forced = live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
                 force=True,
@@ -171,7 +170,7 @@ class LiveHydrationTests(unittest.TestCase):
             self.assertTrue((output_dir / "github-secret-observation.template.json").exists())
             self.assertTrue((output_dir / "release-metadata.template.json").exists())
             self.assertTrue((output_dir / "host-capabilities.template.yml").exists())
-            self.assertIn("DATABASE_URL=", (output_dir / "env.required.template").read_text())
+            self.assertIn("MISSING_TOKEN=", (output_dir / "env.required.template").read_text())
             secret_template = json.loads((output_dir / "github-secret-observation.template.json").read_text())
 
         self.assertEqual("warning", first["status"])
@@ -183,7 +182,7 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual("warning", forced["status"])
         self.assertTrue(secret_template["template"])
         self.assertTrue(secret_template["values_redacted"])
-        self.assertIn({"name": "DATABASE_URL", "observed": False}, secret_template["environments"]["staging"]["secrets"])
+        self.assertIn({"name": "MISSING_TOKEN", "observed": False}, secret_template["environments"]["staging"]["secrets"])
 
     def test_cli_scaffold_and_catalog_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -194,9 +193,9 @@ class LiveHydrationTests(unittest.TestCase):
                         "live-hydration",
                         "scaffold",
                         "--profile",
-                        "quark-ops-staging-file-baseline",
+                        "fixture-incomplete-focused",
                         "--profiles",
-                        str(LOCAL_PROFILES),
+                        str(FIXTURE_PROFILES),
                         "--output-dir",
                         str(Path(temp_dir) / "kit"),
                         "--json",
@@ -213,8 +212,8 @@ class LiveHydrationTests(unittest.TestCase):
     def test_validate_evidence_blocks_missing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             report = live_hydration_evidence_validate(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 input_dir=Path(temp_dir) / "missing-kit",
             )
 
@@ -228,14 +227,14 @@ class LiveHydrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
             report = live_hydration_evidence_validate(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 input_dir=output_dir,
             )
 
@@ -250,15 +249,15 @@ class LiveHydrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
-            (output_dir / "env.required.template").write_text("DATABASE_URL=postgres://user:supersecret@db/app\n")
+            (output_dir / "env.required.template").write_text("MISSING_TOKEN=supersecret\nOPHELIA_APP=fixture-incomplete-app\n")
             report = live_hydration_evidence_validate(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 input_dir=output_dir,
             )
 
@@ -266,14 +265,13 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual("blocked", report["status"])
         self.assertIn("live_hydration_evidence_env_secret_value", {item["code"] for item in report["blockers"]})
         self.assertNotIn("supersecret", encoded)
-        self.assertNotIn("postgres://user", encoded)
 
     def test_cli_validate_evidence_and_catalog_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
@@ -284,9 +282,9 @@ class LiveHydrationTests(unittest.TestCase):
                         "live-hydration",
                         "validate-evidence",
                         "--profile",
-                        "quark-ops-staging-file-baseline",
+                        "fixture-incomplete-focused",
                         "--profiles",
-                        str(LOCAL_PROFILES),
+                        str(FIXTURE_PROFILES),
                         "--input-dir",
                         str(output_dir),
                         "--json",
@@ -303,8 +301,8 @@ class LiveHydrationTests(unittest.TestCase):
     def test_promotion_plan_blocks_missing_evidence_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             report = live_hydration_promotion_plan(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 input_dir=Path(temp_dir) / "missing-kit",
             )
 
@@ -320,14 +318,14 @@ class LiveHydrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
             report = live_hydration_promotion_plan(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 input_dir=output_dir,
             )
 
@@ -344,7 +342,7 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertIn("active_release", actions_by_kind)
         self.assertIn("legacy_release", actions_by_kind)
         self.assertRegex(actions_by_kind["runtime_env"]["source"]["sha256"], r"^[0-9a-f]{64}$")
-        self.assertIn("apps/quark-ops-staging/env", actions_by_kind["runtime_env"]["target"]["path"])
+        self.assertIn("apps/fixture-incomplete-app/env", actions_by_kind["runtime_env"]["target"]["path"])
         self.assertFalse(any(action["copy_performed"] for action in report["file_actions"]))
         self.assertNotIn("DATABASE_URL=", encoded)
         self.assertNotIn("replace-with-real-release-id", encoded)
@@ -385,15 +383,15 @@ class LiveHydrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
-            (output_dir / "env.required.template").write_text("DATABASE_URL=postgres://user:supersecret@db/app\n")
+            (output_dir / "env.required.template").write_text("MISSING_TOKEN=supersecret\nOPHELIA_APP=fixture-incomplete-app\n")
             report = live_hydration_promotion_plan(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 input_dir=output_dir,
             )
 
@@ -402,14 +400,13 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual("blocked", report["status"])
         self.assertIn("promotion_plan_evidence_blocked", {item["code"] for item in report["blockers"]})
         self.assertNotIn("supersecret", encoded)
-        self.assertNotIn("postgres://user", encoded)
 
     def test_cli_promotion_plan_and_catalog_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "hydration-kit"
             live_hydration_scaffold(
-                profile="quark-ops-staging-file-baseline",
-                profiles_path=LOCAL_PROFILES,
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
                 output_dir=output_dir,
                 write=True,
             )
@@ -420,9 +417,9 @@ class LiveHydrationTests(unittest.TestCase):
                         "live-hydration",
                         "promotion-plan",
                         "--profile",
-                        "quark-ops-staging-file-baseline",
+                        "fixture-incomplete-focused",
                         "--profiles",
-                        str(LOCAL_PROFILES),
+                        str(FIXTURE_PROFILES),
                         "--input-dir",
                         str(output_dir),
                         "--json",
@@ -436,8 +433,13 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual(LIVE_HYDRATION_PROMOTION_PLAN_KIND, payload["kind"])
         self.assertIn("live_hydration.promotion_plan", operations)
 
-    def test_probe_gate_blocks_current_quark_staging_without_running_probes(self) -> None:
-        report = live_hydration_probe_gate(profile="quark-ops-staging-file-baseline", profiles_path=LOCAL_PROFILES)
+    def test_probe_gate_blocks_fixture_incomplete_without_running_probes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report = live_hydration_probe_gate(
+                profile="fixture-incomplete-focused",
+                profiles_path=FIXTURE_PROFILES,
+                input_dir=Path(temp_dir) / "missing-evidence",
+            )
 
         self.assertEqual(LIVE_HYDRATION_PROBE_GATE_KIND, report["kind"])
         self.assertEqual("blocked", report["status"])
@@ -479,9 +481,9 @@ class LiveHydrationTests(unittest.TestCase):
                     "live-hydration",
                     "probe-gate",
                     "--profile",
-                    "quark-ops-staging-file-baseline",
+                    "fixture-incomplete-focused",
                     "--profiles",
-                    str(LOCAL_PROFILES),
+                    str(FIXTURE_PROFILES),
                     "--allow-blocked",
                     "--json",
                 ]
@@ -495,7 +497,19 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertIn("live_hydration.probe_gate", operations)
 
     def test_profile_without_app_blocks(self) -> None:
-        report = live_hydration_report(profile="local-file-baseline", profiles_path=LOCAL_PROFILES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profiles_path = Path(temp_dir) / "profiles.yml"
+            profiles_path.write_text(
+                "version: 1\n"
+                "profiles:\n"
+                "  - id: no-app-baseline\n"
+                "    title: No App Baseline\n"
+                f"    runtime_root: {REPO_ROOT / 'fixtures' / 'app-suite' / 'runtime'}\n"
+                f"    manifests_dir: {REPO_ROOT / 'fixtures' / 'app-suite' / 'manifests'}\n"
+                f"    host_config: {REPO_ROOT / 'fixtures' / 'app-suite' / 'host-inventory.yml'}\n"
+                f"    provider_config: {REPO_ROOT / 'fixtures' / 'app-suite' / 'integrations.yml'}\n"
+            )
+            report = live_hydration_report(profile="no-app-baseline", profiles_path=profiles_path)
         self.assertEqual("blocked", report["status"])
         codes = {item["code"] for item in report["blockers"]}
         self.assertIn("live_hydration_profile_app_missing", codes)
