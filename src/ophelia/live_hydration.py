@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +20,7 @@ LIVE_HYDRATION_KIND = "ophelia.live_hydration_report"
 LIVE_HYDRATION_SCAFFOLD_KIND = "ophelia.live_hydration_scaffold"
 LIVE_HYDRATION_EVIDENCE_KIND = "ophelia.live_hydration_evidence_validation"
 LIVE_HYDRATION_PROBE_GATE_KIND = "ophelia.live_hydration_probe_gate"
+LIVE_HYDRATION_PROMOTION_PLAN_KIND = "ophelia.live_hydration_promotion_plan"
 
 
 def live_hydration_report(
@@ -398,6 +400,108 @@ def live_hydration_probe_gate(
         "blockers": _dedupe_issues(blockers),
         "warnings": _dedupe_issues(warnings),
         "summary": f"Live probe gate for {resolved_app or 'unknown'}/{resolved_environment or 'unknown'}: {go_no_go}.",
+    }
+    return _redact(payload)
+
+
+def live_hydration_promotion_plan(
+    *,
+    app: Optional[str] = None,
+    environment: Optional[str] = None,
+    profile: Optional[str] = None,
+    profiles_path: Path = DEFAULT_LOCAL_LIVE_DRILL_PROFILES,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    ophelia_root: Path = REPO_ROOT,
+    manifest_path: Optional[Path] = None,
+    host_config: Optional[Path] = None,
+    provider_config: Optional[Path] = None,
+    target_host: Optional[str] = None,
+    input_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Plan reviewed evidence promotion without copying or mutating files."""
+    evidence = live_hydration_evidence_validate(
+        app=app,
+        environment=environment,
+        profile=profile,
+        profiles_path=profiles_path,
+        runtime_root=runtime_root,
+        manifests_dir=manifests_dir,
+        ophelia_root=ophelia_root,
+        manifest_path=manifest_path,
+        host_config=host_config,
+        provider_config=provider_config,
+        target_host=target_host,
+        input_dir=input_dir,
+    )
+    gate = live_hydration_probe_gate(
+        app=app,
+        environment=environment,
+        profile=profile,
+        profiles_path=profiles_path,
+        runtime_root=runtime_root,
+        manifests_dir=manifests_dir,
+        ophelia_root=ophelia_root,
+        manifest_path=manifest_path,
+        host_config=host_config,
+        provider_config=provider_config,
+        target_host=target_host,
+        input_dir=input_dir,
+    )
+    resolved_app = _optional_str(evidence.get("app") or gate.get("app"))
+    resolved_environment = _optional_str(evidence.get("environment") or gate.get("environment"))
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    if evidence.get("status") == "blocked":
+        blockers.append(issue("promotion_plan_evidence_blocked", "Evidence validation is blocked; do not promote reviewed files.", "evidence"))
+    elif evidence.get("status") == "warning":
+        warnings.append(issue("promotion_plan_evidence_warning", "Evidence validation has warnings; promotion requires operator review.", "evidence"))
+    if gate.get("status") == "blocked":
+        warnings.append(issue("promotion_plan_probe_gate_not_ready", "Probe gate is not ready yet; this plan can still show evidence promotion targets.", "probe_gate"))
+    elif gate.get("status") == "warning":
+        warnings.append(issue("promotion_plan_probe_gate_review", "Probe gate requires review before any live probes.", "probe_gate"))
+
+    file_actions = _promotion_file_actions(evidence)
+    blockers.extend(_issues_from_actions(file_actions, severity="blocked"))
+    warnings.extend(_issues_from_actions(file_actions, severity="warning"))
+    if not file_actions and not blockers:
+        blockers.append(issue("promotion_plan_no_actions", "No promotion actions could be derived from the evidence directory.", "input_dir"))
+
+    status = "blocked" if blockers else "warning" if warnings else "ok"
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": LIVE_HYDRATION_PROMOTION_PLAN_KIND,
+        "operation": "live_hydration.promotion_plan",
+        "operation_id": operation_id("live_hydration.promotion_plan", resolved_app, resolved_environment),
+        "status": status,
+        "app": resolved_app,
+        "environment": resolved_environment,
+        "profile": evidence.get("profile") or gate.get("profile"),
+        "profiles_path": evidence.get("profiles_path") or gate.get("profiles_path"),
+        "runtime_root": evidence.get("runtime_root") or gate.get("runtime_root"),
+        "input_dir": evidence.get("input_dir") or gate.get("input_dir"),
+        "read_only": True,
+        "dry_run": True,
+        "mutates_state": False,
+        "confirmation_required": False,
+        "future_apply_supported": False,
+        "future_apply_requires_confirmation": True,
+        "manual_promotion_required": True,
+        "values_redacted": True,
+        "values_not_included": True,
+        "evidence_status": evidence.get("status"),
+        "probe_gate_status": gate.get("status"),
+        "probe_gate_go_no_go": gate.get("go_no_go"),
+        "reports": {
+            "evidence": _compact_child(evidence),
+            "probe_gate": _compact_child(gate),
+        },
+        "file_actions": file_actions,
+        "target_paths": evidence.get("target_paths") if isinstance(evidence.get("target_paths"), dict) else {},
+        "next_commands": _promotion_next_commands(evidence, status),
+        "blockers": _dedupe_issues(blockers),
+        "warnings": _dedupe_issues(warnings),
+        "summary": f"Live hydration promotion plan for {resolved_app or 'unknown'}/{resolved_environment or 'unknown'}: {status}; {len(file_actions)} file action(s).",
     }
     return _redact(payload)
 
@@ -1043,9 +1147,157 @@ def _json_text(payload: Dict[str, Any]) -> str:
 
 
 def _sha256_text(content: str) -> str:
-    import hashlib
-
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _file_metadata(path: Optional[Path]) -> Dict[str, Any]:
+    if path is None:
+        return {"path": None, "exists": False, "is_file": False, "bytes": None, "sha256": None, "readable": False}
+    metadata: Dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_file": path.is_file(),
+        "bytes": None,
+        "sha256": None,
+        "readable": False,
+    }
+    if not path.exists() or not path.is_file():
+        return metadata
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        metadata["read_error"] = str(exc)
+        return metadata
+    metadata["bytes"] = len(data)
+    metadata["sha256"] = hashlib.sha256(data).hexdigest()
+    metadata["readable"] = True
+    return metadata
+
+
+def _promotion_file_actions(evidence: Dict[str, Any]) -> List[Dict[str, Any]]:
+    target_paths = evidence.get("target_paths") if isinstance(evidence.get("target_paths"), dict) else {}
+    file_checks = evidence.get("file_checks") if isinstance(evidence.get("file_checks"), list) else []
+    checks_by_kind = {str(check.get("kind")): check for check in file_checks if isinstance(check, dict) and check.get("kind")}
+    specs = [
+        (
+            "runtime_env",
+            "runtime_env_template",
+            "review_and_install_runtime_env",
+            target_paths.get("runtime_env"),
+            "Install reviewed env keys and values in the runtime env target outside Git.",
+        ),
+        (
+            "github_secret_observation",
+            "github_secret_observation_template",
+            "record_secret_name_observation",
+            target_paths.get("github_secret_observation"),
+            "Record observed secret names only, never secret values.",
+        ),
+        (
+            "active_release",
+            "release_metadata_template",
+            "record_active_release_metadata",
+            target_paths.get("active_release"),
+            "Record reviewed active release metadata.",
+        ),
+        (
+            "legacy_release",
+            "release_metadata_template",
+            "record_latest_release_metadata",
+            target_paths.get("legacy_release"),
+            "Record reviewed latest release metadata for legacy consumers.",
+        ),
+        (
+            "host_inventory",
+            "host_capabilities_template",
+            "merge_host_capability_inventory",
+            target_paths.get("host_config"),
+            "Merge reviewed host capability facts into the host inventory.",
+        ),
+    ]
+    actions: List[Dict[str, Any]] = []
+    for target_kind, source_kind, action, target_path_value, description in specs:
+        check = checks_by_kind.get(source_kind, {})
+        source_path_value = check.get("path") if isinstance(check, dict) else None
+        source_path = Path(str(source_path_value)) if source_path_value else None
+        target_path = _optional_str(target_path_value)
+        issues: List[Dict[str, str]] = []
+        source_metadata = _file_metadata(source_path)
+        if not source_metadata["exists"]:
+            issues.append(issue("promotion_plan_source_missing", f"Promotion source is missing for {target_kind}.", str(source_path) if source_path else source_kind))
+        elif not source_metadata["is_file"]:
+            issues.append(issue("promotion_plan_source_invalid", f"Promotion source is not a file for {target_kind}.", str(source_path)))
+        elif not source_metadata["readable"]:
+            issues.append(issue("promotion_plan_source_unreadable", f"Promotion source is unreadable for {target_kind}.", str(source_path)))
+        if not target_path:
+            issues.append(issue("promotion_plan_target_missing", f"Promotion target is not configured for {target_kind}.", target_kind))
+        target_exists = Path(target_path).exists() if target_path else False
+        check_status = check.get("status") if isinstance(check, dict) else None
+        action_status = "blocked" if issues or check_status == "blocked" else "warning" if check_status == "warning" else "ok"
+        actions.append(
+            {
+                "target_kind": target_kind,
+                "source_kind": source_kind,
+                "action": action,
+                "description": description,
+                "status": action_status,
+                "source": source_metadata,
+                "target": {
+                    "path": target_path,
+                    "exists": target_exists,
+                    "parent_exists": Path(target_path).parent.exists() if target_path else False,
+                },
+                "source_check_status": check_status,
+                "copy_performed": False,
+                "values_redacted": True,
+                "values_not_included": True,
+                "manual_review_required": True,
+                "issues": _dedupe_issues(issues),
+            }
+        )
+    return actions
+
+
+def _issues_from_actions(actions: List[Dict[str, Any]], *, severity: str) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    for action in actions:
+        if not isinstance(action, dict) or action.get("status") != severity:
+            continue
+        result.extend(_issues(action.get("issues")))
+    return result
+
+
+def _promotion_next_commands(evidence: Dict[str, Any], status: str) -> List[Dict[str, str]]:
+    profile = _optional_str(evidence.get("profile"))
+    profiles_path = _optional_str(evidence.get("profiles_path"))
+    input_dir = _optional_str(evidence.get("input_dir"))
+    if status == "blocked":
+        command = "Fix blocked evidence validation issues, then rerun this promotion plan."
+        if profile and profiles_path:
+            command = f"ship live-hydration validate-evidence --profile {profile} --profiles {profiles_path}"
+            if input_dir:
+                command += f" --input-dir {input_dir}"
+            command += " --json"
+        return [{"code": "fix_evidence_and_replan", "command": command}]
+    commands = [
+        {
+            "code": "manual_review",
+            "command": "Review each file action and manually promote reviewed evidence to the listed target path.",
+        }
+    ]
+    if profile and profiles_path:
+        commands.append(
+            {
+                "code": "rerun_hydration",
+                "command": f"ship live-hydration report --profile {profile} --profiles {profiles_path} --allow-blocked --json",
+            }
+        )
+        gate_command = f"ship live-hydration probe-gate --profile {profile} --profiles {profiles_path}"
+        if input_dir:
+            gate_command += f" --input-dir {input_dir}"
+        gate_command += " --allow-blocked --json"
+        commands.append({"code": "rerun_probe_gate", "command": gate_command})
+    return commands
 
 
 def _host_section(placement: Dict[str, Any]) -> Dict[str, Any]:

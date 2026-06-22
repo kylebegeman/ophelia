@@ -17,9 +17,11 @@ from ophelia.command_catalog import command_registry  # noqa: E402
 from ophelia.live_hydration import (  # noqa: E402
     LIVE_HYDRATION_EVIDENCE_KIND,
     LIVE_HYDRATION_KIND,
+    LIVE_HYDRATION_PROMOTION_PLAN_KIND,
     LIVE_HYDRATION_PROBE_GATE_KIND,
     LIVE_HYDRATION_SCAFFOLD_KIND,
     live_hydration_evidence_validate,
+    live_hydration_promotion_plan,
     live_hydration_probe_gate,
     live_hydration_report,
     live_hydration_scaffold,
@@ -296,6 +298,110 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(LIVE_HYDRATION_EVIDENCE_KIND, payload["kind"])
         self.assertIn("live_hydration.evidence.validate", operations)
+
+    def test_promotion_plan_blocks_missing_evidence_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report = live_hydration_promotion_plan(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                input_dir=Path(temp_dir) / "missing-kit",
+            )
+
+        self.assertEqual(LIVE_HYDRATION_PROMOTION_PLAN_KIND, report["kind"])
+        self.assertEqual("blocked", report["status"])
+        self.assertTrue(report["read_only"])
+        self.assertTrue(report["dry_run"])
+        self.assertFalse(report["mutates_state"])
+        self.assertFalse(any(action["copy_performed"] for action in report["file_actions"]))
+        self.assertIn("promotion_plan_evidence_blocked", {item["code"] for item in report["blockers"]})
+
+    def test_promotion_plan_uses_hashes_and_paths_without_file_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            report = live_hydration_promotion_plan(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                input_dir=output_dir,
+            )
+
+        encoded = json.dumps(report, sort_keys=True)
+        actions_by_kind = {action["target_kind"]: action for action in report["file_actions"]}
+
+        self.assertEqual("warning", report["status"])
+        self.assertEqual(5, len(report["file_actions"]))
+        self.assertTrue(report["future_apply_requires_confirmation"])
+        self.assertTrue(report["manual_promotion_required"])
+        self.assertEqual("blocked", report["probe_gate_status"])
+        self.assertEqual("no_go", report["probe_gate_go_no_go"])
+        self.assertIn("runtime_env", actions_by_kind)
+        self.assertIn("active_release", actions_by_kind)
+        self.assertIn("legacy_release", actions_by_kind)
+        self.assertRegex(actions_by_kind["runtime_env"]["source"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn("apps/quark-ops-staging/env", actions_by_kind["runtime_env"]["target"]["path"])
+        self.assertFalse(any(action["copy_performed"] for action in report["file_actions"]))
+        self.assertNotIn("DATABASE_URL=", encoded)
+        self.assertNotIn("replace-with-real-release-id", encoded)
+
+    def test_promotion_plan_blocks_secret_values_without_emitting_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            (output_dir / "env.required.template").write_text("DATABASE_URL=postgres://user:supersecret@db/app\n")
+            report = live_hydration_promotion_plan(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                input_dir=output_dir,
+            )
+
+        encoded = json.dumps(report, sort_keys=True)
+
+        self.assertEqual("blocked", report["status"])
+        self.assertIn("promotion_plan_evidence_blocked", {item["code"] for item in report["blockers"]})
+        self.assertNotIn("supersecret", encoded)
+        self.assertNotIn("postgres://user", encoded)
+
+    def test_cli_promotion_plan_and_catalog_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "hydration-kit"
+            live_hydration_scaffold(
+                profile="quark-ops-staging-file-baseline",
+                profiles_path=LOCAL_PROFILES,
+                output_dir=output_dir,
+                write=True,
+            )
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(
+                    [
+                        "live-hydration",
+                        "promotion-plan",
+                        "--profile",
+                        "quark-ops-staging-file-baseline",
+                        "--profiles",
+                        str(LOCAL_PROFILES),
+                        "--input-dir",
+                        str(output_dir),
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(buffer.getvalue())
+        operations = {descriptor.operation for descriptor in command_registry()}
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(LIVE_HYDRATION_PROMOTION_PLAN_KIND, payload["kind"])
+        self.assertIn("live_hydration.promotion_plan", operations)
 
     def test_probe_gate_blocks_current_quark_staging_without_running_probes(self) -> None:
         report = live_hydration_probe_gate(profile="quark-ops-staging-file-baseline", profiles_path=LOCAL_PROFILES)

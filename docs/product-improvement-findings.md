@@ -392,3 +392,9 @@ is copied into runtime or provider observation paths.
 The no-probe gate adds a final file-based go/no-go report before live checks. It
 keeps probes disabled, combines hydration and evidence validation, and emits
 exact probe commands only when there are no blockers for an operator to review.
+
+The live hydration promotion plan adds the next review artifact before runtime
+mutation: it maps reviewed evidence-kit files to consumed runtime, provider
+observation, release metadata, and host inventory targets with source hashes and
+target existence checks. It deliberately remains read-only, so it improves
+handoff quality without introducing an automated promotion path yet.

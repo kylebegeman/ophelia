@@ -133,6 +133,7 @@ make live-hydration-quark-staging
 make live-hydration-scaffold-quark-staging
 make live-hydration-validate-evidence-quark-staging
 make live-hydration-probe-gate-quark-staging
+make live-hydration-promotion-plan-quark-staging
 make lumen-console-fixtures
 make production-hardening-fixtures
 ./cli/ship live-drills run fixture-suite-review --json
@@ -141,6 +142,7 @@ make production-hardening-fixtures
 ./cli/ship live-hydration scaffold --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json
 ./cli/ship live-hydration validate-evidence --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json
 ./cli/ship live-hydration probe-gate --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json
+./cli/ship live-hydration promotion-plan --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --json
 ./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
@@ -222,7 +224,8 @@ starting SSH and never prints their values.
 15. Phase 13 has landed: live hydration scaffolds now generate non-secret evidence templates before any live runtime/probe work.
 16. Phase 14 has landed: hydration evidence validation now checks scaffold/evidence directories without promotion or value emission.
 17. Phase 15 has landed: a no-probe gate now combines hydration and evidence validation before suggesting opt-in probe commands.
-18. Next work: collect one real app runtime snapshot from reviewed scaffold templates, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
+18. Phase 16 has landed: a read-only promotion plan now turns reviewed evidence kits into hashed source and target checklists without copying files.
+19. Next work: collect one real app runtime snapshot from reviewed scaffold templates, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
 
 ## Deploy Flows
 
@@ -261,6 +264,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship live-hydration scaffold` for non-secret env, secret-name, release, and host inventory templates in a separate hydration workspace. It is dry-run by default; `--write` writes templates only, not live runtime evidence.
 - `ship live-hydration validate-evidence` for read-only scaffold/evidence validation. It blocks malformed kits and secret-looking scaffold values without copying or promoting runtime files.
 - `ship live-hydration probe-gate` for a no-probe go/no-go report before opt-in HTTP/Docker checks. It emits suggested commands only when file-based blockers are clear enough for operator review.
+- `ship live-hydration promotion-plan` for a read-only checklist of reviewed evidence sources, hashes, and runtime/provider/host target paths. It never copies or promotes files.
 - `ship plugins list|catalog|validate` for metadata-only plugin discovery from trusted directories. Plugin descriptors are not executed or injected into the command catalog in this phase.
 - `ship lumen console-data` for the read-only Lumen operator console payload. `make lumen-console-fixtures` runs it against the committed fixture suite.
 - `ship hardening production-readiness` for a read-only production go/no-go aggregate over live readiness, console data, plugins, workflow templates, state status, command catalog safety, and optional fixture drills. `make production-hardening-fixtures` runs the expected-state fixture drill.

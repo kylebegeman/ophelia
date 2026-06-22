@@ -36,6 +36,10 @@ refresh, and apply/create commands were not run.
   --profiles config/ophelia-live-drills.yml \
   --allow-blocked \
   --json
+./cli/ship live-hydration promotion-plan \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --json
 make live-drills-fixtures
 ```
 
@@ -90,6 +94,10 @@ blockers expected for this first live baseline.
   operator evidence collection.
 - `quark-ops-staging` probe gate is `no_go`, with no probe commands emitted,
   because hydration and evidence validation are still blocked.
+- `quark-ops-staging` promotion planning is read-only. It blocks when the
+  default evidence directory is absent and can produce a warning checklist from
+  a temporary generated scaffold with source hashes, target paths, and no file
+  contents.
 - Secret-provider metadata is useful after the live-readiness redaction fix:
   compact secret reports now show kind, status, key count, missing count,
   blocker count, warning count, and summary without exposing values.
@@ -110,13 +118,17 @@ blockers expected for this first live baseline.
    quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml
    --input-dir <reviewed-kit> --allow-blocked --json` before enabling any
    probes.
-5. Add or collect a real runtime app snapshot under `~/ophelia-runtime/apps` for
+5. Run `ship live-hydration promotion-plan --profile
+   quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml
+   --input-dir <reviewed-kit> --json` to review exact source hashes and target
+   paths before any manual promotion.
+6. Add or collect a real runtime app snapshot under `~/ophelia-runtime/apps` for
    one target app, starting with non-secret env shape and release metadata.
-6. Expand `config/ophelia-hosts.yml` with explicit host capabilities for the
+7. Expand `config/ophelia-hosts.yml` with explicit host capabilities for the
    intended live target host.
-7. Add observed secret-name files for the target app/provider. Do not store
+8. Add observed secret-name files for the target app/provider. Do not store
    secret values.
-8. Rerun `ship live-drills run quark-ops-production-file-baseline --profiles
+9. Rerun `ship live-drills run quark-ops-production-file-baseline --profiles
    config/ophelia-live-drills.yml --json`.
-9. Run HTTP/Docker probes only after the file-based profile moves from blocked
+10. Run HTTP/Docker probes only after the file-based profile moves from blocked
    to a known reviewed baseline.

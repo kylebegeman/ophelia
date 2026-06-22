@@ -81,6 +81,22 @@ Equivalent current-state audit:
 make live-hydration-probe-gate-quark-staging
 ```
 
+Plan reviewed evidence promotion without copying files:
+
+```bash
+./cli/ship live-hydration promotion-plan \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging \
+  --json
+```
+
+Temporary scaffold promotion-plan smoke:
+
+```bash
+make live-hydration-promotion-plan-quark-staging
+```
+
 Run from explicit app inputs instead of a profile:
 
 ```bash
@@ -162,6 +178,23 @@ missing, malformed, or contains data that should not live in a scaffold.
 The gate is a decision report, not a runner. Current Quark staging returns
 `no_go` because hydration and evidence validation are still blocked.
 
+`kind: "ophelia.live_hydration_promotion_plan"` includes:
+
+- compact evidence validation and probe-gate child summaries
+- file actions for runtime env, GitHub secret-name observations, active
+  release metadata, legacy release metadata, and host inventory
+- source path, source existence, source byte count, and source SHA-256
+- target path, target existence, and target parent existence
+- `copy_performed: false`, `manual_promotion_required: true`,
+  `future_apply_supported: false`, and `future_apply_requires_confirmation:
+  true`
+- `values_not_included: true`; file contents and runtime values are never
+  emitted
+
+The promotion plan is an evidence handoff checklist. It intentionally does not
+copy reviewed files into runtime paths, edit provider observation files, merge
+host inventory, or run probes.
+
 ## Current Quark Staging Result
 
 The current file-based Quark staging baseline is expected to be blocked. The
@@ -202,6 +235,11 @@ and issue code only.
 `ship live-hydration probe-gate` is always read-only. It never performs network
 or Docker probes. When the gate is clear enough, it emits exact commands an
 operator can review and run explicitly.
+
+`ship live-hydration promotion-plan` is always read-only. It reports source
+hashes and target paths for reviewed evidence but does not copy, promote, or
+merge files. Any future automated promotion would require a separate confirmed
+apply command.
 
 Use hydration reports before enabling probes. A focused app should have a
 reviewed file-based baseline before running `--probe-http`, `--check-docker`,

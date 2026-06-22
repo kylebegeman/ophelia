@@ -75,6 +75,8 @@ rebuilt:
   runtime promotion or probe enablement.
 - A no-probe gate that combines hydration and evidence validation before
   suggesting opt-in HTTP/Docker probe commands.
+- A read-only promotion plan that turns reviewed evidence kits into source hash
+  and target path checklists without copying files.
 
 ## Implementation Rules
 
@@ -777,6 +779,47 @@ Docker probes are run.
 network/Docker probes, provider calls, state refresh, runtime writes, workflow
 execution, or production mutation.
 
+## Phase 16: Live Evidence Promotion Plan
+
+**Status:** Landed in changelog record
+[`0036`](changelog/0036-live-evidence-promotion-plan.md).
+
+**Goal:** Give operators a concrete handoff artifact between reviewed evidence
+kits and manual runtime/provider/host updates without adding an automated apply
+path yet.
+
+**Work items:**
+
+- Add `ship live-hydration promotion-plan`.
+- Compose evidence validation and the no-probe gate into one read-only planning
+  payload.
+- Emit file actions for runtime env, GitHub secret-name observations, active
+  release metadata, legacy release metadata, and host inventory.
+- Include source paths, source existence, byte counts, SHA-256 hashes, target
+  paths, and target existence checks without file contents or runtime values.
+- Add command catalog examples, `make
+  live-hydration-promotion-plan-quark-staging`, tests, docs, roadmap,
+  scratchpad, and changelog.
+
+**Dependencies:** Phase 14 evidence validation and Phase 15 no-probe gate.
+
+**Milestone commit:** `feat: add live hydration promotion plan`
+
+**Definition of done:**
+
+- Missing evidence directories block with structured issue codes.
+- Template-only evidence kits produce warning promotion checklists with hashes
+  and targets.
+- Secret-looking evidence values still block and are not emitted.
+- The promotion plan is discoverable through the CLI catalog and repeatable via
+  a Make smoke target.
+
+**Boundary:** Phase 16 does not copy, promote, or merge files. It does not
+create runtime env files, release metadata, provider observation files, host
+inventory entries, state DB records, workflow artifacts, provider calls, probes,
+or production mutations. Any future automated promotion requires a separate
+confirmed apply command.
+
 ## Phase Dependency Graph
 
 ```text
@@ -796,6 +839,7 @@ Phase 0 docs
                         -> Phase 13 live evidence scaffold templates
                           -> Phase 14 hydration evidence validation
                             -> Phase 15 no-probe live gate
+                              -> Phase 16 live evidence promotion plan
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

@@ -10,9 +10,11 @@ from ..live_drills import DEFAULT_LOCAL_LIVE_DRILL_PROFILES
 from ..live_hydration import (
     LIVE_HYDRATION_EVIDENCE_KIND,
     LIVE_HYDRATION_KIND,
+    LIVE_HYDRATION_PROMOTION_PLAN_KIND,
     LIVE_HYDRATION_PROBE_GATE_KIND,
     LIVE_HYDRATION_SCAFFOLD_KIND,
     live_hydration_evidence_validate,
+    live_hydration_promotion_plan,
     live_hydration_probe_gate,
     live_hydration_report,
     live_hydration_scaffold,
@@ -79,6 +81,15 @@ def register(subparsers: _SubParsersAction) -> None:
     )
     gate_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     gate_parser.set_defaults(handler=run_probe_gate)
+
+    promotion_parser = hydration_subparsers.add_parser(
+        "promotion-plan",
+        help="Plan reviewed evidence promotion targets without copying files",
+    )
+    _add_common_args(promotion_parser)
+    promotion_parser.add_argument("--input-dir", type=Path, help="Evidence directory. Defaults to the scaffold output path.")
+    promotion_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    promotion_parser.set_defaults(handler=run_promotion_plan)
 
 
 def _add_common_args(parser) -> None:
@@ -211,6 +222,36 @@ def run_probe_gate(args: Namespace) -> int:
     return 0 if report.get("status") != "blocked" or args.allow_blocked else 1
 
 
+def run_promotion_plan(args: Namespace) -> int:
+    report = live_hydration_promotion_plan(
+        app=args.app,
+        environment=args.environment,
+        profile=args.profile,
+        profiles_path=args.profiles,
+        runtime_root=args.runtime_root,
+        manifests_dir=args.manifests_dir,
+        ophelia_root=args.ophelia_root,
+        manifest_path=args.manifest,
+        host_config=args.host_config,
+        provider_config=args.provider_config,
+        target_host=args.target_host,
+        input_dir=args.input_dir,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(report.get("summary", "Live hydration promotion plan."))
+        print(f"Status: {report.get('status')}")
+        print(f"Input: {report.get('input_dir')}")
+        for item in report.get("file_actions", []) if isinstance(report.get("file_actions"), list) else []:
+            if isinstance(item, dict):
+                target = item.get("target") if isinstance(item.get("target"), dict) else {}
+                print(f"  - {item.get('target_kind')}: {item.get('status')} -> {target.get('path')}")
+        _print_items("Blockers", report.get("blockers", []))
+        _print_items("Warnings", report.get("warnings", []))
+    return 0 if report.get("status") != "blocked" else 1
+
+
 def _print_items(label: str, value: object) -> None:
     items = value if isinstance(value, list) else []
     if not items:
@@ -309,6 +350,51 @@ register_cli_descriptor(
         safety_notes=[
             "Read-only. Does not run HTTP/Docker probes or provider calls.",
             "Probe commands are emitted only as explicit follow-up commands for operator review.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship live-hydration promotion-plan",
+        operation="live_hydration.promotion_plan",
+        summary="Plan reviewed hydration evidence promotion targets without copying files.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind=LIVE_HYDRATION_PROMOTION_PLAN_KIND,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "profile": {"type": "string"},
+                "profiles": {"type": "string"},
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "runtime_root": {"type": "string"},
+                "manifests_dir": {"type": "string"},
+                "ophelia_root": {"type": "string"},
+                "manifest": {"type": "string"},
+                "host_config": {"type": "string"},
+                "provider_config": {"type": "string"},
+                "target_host": {"type": "string"},
+                "input_dir": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.live_hydration_promotion_plan.v1",
+        artifacts=[],
+        examples=[
+            "ship live-hydration promotion-plan --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --input-dir ~/ophelia-runtime/hydration/quark-ops-staging/staging --json",
+            "ship live-hydration promotion-plan --app quark-ops --environment production --host-config config/ophelia-hosts.yml --provider-config config/ophelia-integrations.yml --json",
+        ],
+        safety_notes=[
+            "Read-only. Does not copy, promote, mutate runtime files, call providers, or run probes.",
+            "Emits source metadata, hashes, target paths, and review boundaries only; file contents and values are not included.",
+            "A future apply flow would require a separate confirmed command.",
         ],
     )
 )
