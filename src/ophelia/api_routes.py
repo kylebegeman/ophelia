@@ -15,6 +15,7 @@ HTTP_ROUTE_PATTERNS: List[str] = [
     "/registry/releases",
     "/operations",
     "/plugins",
+    "/hardening/production-readiness",
     "/workflows",
     "/workflows/<id>",
     "/state/status",

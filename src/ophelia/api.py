@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .actions import ActionError, action_catalog, cancel_job, run_job
 from .command_catalog import catalog as command_catalog
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from .hardening import production_hardening_report
 from .lumen_adapter import (
     action_descriptors as lumen_action_descriptors,
     app_readiness as lumen_app_readiness,
@@ -79,6 +80,16 @@ class OpheliaHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/plugins":
             self._json(plugin_inventory(REPO_ROOT / "plugins"))
+            return
+        if parsed.path == "/hardening/production-readiness":
+            self._json(
+                production_hardening_report(
+                    runtime_root=self.runtime_root_value,
+                    manifests_dir=REPO_ROOT / "manifests",
+                    ophelia_root=REPO_ROOT,
+                    plugins_dir=REPO_ROOT / "plugins",
+                )
+            )
             return
         if parsed.path == "/workflows":
             self._json(list_workflow_templates())

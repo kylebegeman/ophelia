@@ -356,7 +356,13 @@ Fastest visible wins:
 
 The committed [Fixture App Suite](fixture-app-suite.md) supports the roadmap by
 providing deterministic multi-app inputs for readiness, live-readiness,
-placement, drift, backup, restore, provider, and secret-provider behavior. It
-does not change the selected product scope, but it lowers implementation risk
-for Phase 7 through Phase 9 by making mixed operational states reproducible
-without production data.
+placement, drift, backup, restore, provider, secret-provider, plugin, Lumen
+console, and production-hardening behavior. It does not change the selected
+product scope, but it lowers implementation risk by making mixed operational
+states reproducible without production data.
+
+The [Production Hardening Report](production-hardening.md) adds a read-only
+go/no-go aggregate over live readiness, Lumen console data, plugin validation,
+workflow availability, state status, command catalog safety, and fixture drills.
+It is the current bridge between fixture-backed contract work and future
+authenticated live provider probes or production migration rehearsals.

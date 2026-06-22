@@ -64,6 +64,12 @@ Run the Lumen console payload against the fixture suite:
 make lumen-console-fixtures
 ```
 
+Run the production hardening go/no-go aggregate against the fixture suite:
+
+```bash
+make production-hardening-fixtures
+```
+
 Equivalent direct command:
 
 ```bash
@@ -97,6 +103,12 @@ The fixture Lumen console run should also show eight app rows, one fixture
 plugin, a non-empty approval queue, and the same one-blocked/seven-warning
 readiness mix.
 
+The fixture production hardening run should emit
+`kind: "ophelia.production_hardening_report"`, `status: "warning"`, and
+`go_no_go: "review"`. That review state is expected because the child
+live-readiness report is blocked by `fixture-incomplete-app` and the make
+target passes `--allow-blocked-live-readiness`.
+
 ## Maintenance Rules
 
 - Keep fixtures synthetic. Do not use real domains, repositories, tokens,
@@ -106,7 +118,8 @@ readiness mix.
 - Keep the suite fast and read-only. It should be safe to run in local unit
   tests and CI.
 - Add focused fixture cases when new readiness, placement, provider, backup,
-  restore, drift, or workflow behavior needs realistic multi-app coverage.
+  restore, drift, workflow, plugin, Lumen console, or production hardening
+  behavior needs realistic multi-app coverage.
 
 ## Plugin Metadata
 

@@ -13,6 +13,7 @@ from .drift import register as register_drift
 from .env import register as register_env
 from .explain import register as register_explain
 from .gc import register as register_gc
+from .hardening import register as register_hardening
 from .host import register as register_host
 from .inspect import register as register_inspect
 from .jobs import register as register_jobs
@@ -55,6 +56,7 @@ def register_commands(subparsers):
     register_api(subparsers)
     register_jobs(subparsers)
     register_backup(subparsers)
+    register_hardening(subparsers)
     register_host(subparsers)
     register_registry(subparsers)
     register_preflight(subparsers)

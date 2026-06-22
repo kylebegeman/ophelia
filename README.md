@@ -32,6 +32,7 @@ logs, and pulled images.
 - [Host Contract](docs/host-contract.md)
 - [Live Readiness Lane](docs/live-readiness-lane.md)
 - [Lumen Operator Console](docs/lumen-operator-console.md)
+- [Production Hardening Report](docs/production-hardening.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
 - [Plugin Contracts](docs/plugin-contracts.md)
 - [Migration Plan](docs/migration-plan.md)
@@ -126,6 +127,8 @@ make validate-fixtures
 make validate-fixture-plugins
 make live-readiness-fixtures
 make lumen-console-fixtures
+make production-hardening-fixtures
+./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
 ./cli/ship app github plan --app demo-app --template static-site --owner example --repo example/demo-app --github-provider auto --json
@@ -199,7 +202,8 @@ starting SSH and never prints their values.
 8. The fixture app suite is available for deterministic multi-app readiness, placement, drift, backup, restore, and provider testing.
 9. Phase 7 has landed: metadata-only plugin contracts, trusted-directory discovery, plugin catalog/validation commands, API/Lumen discovery, and fixture plugin coverage.
 10. Phase 8 has landed: a read-only Lumen console payload over apps, approvals, workflows, plugins, quick actions, and fixture live-state smoke coverage.
-11. Execute Phase 9 next: production hardening and migration drills.
+11. Phase 9 has landed: a read-only production hardening report and fixture go/no-go drill.
+12. Next work: authenticated live provider probes and production migration rehearsals behind explicit plan, confirmation-token, and receipt contracts.
 
 ## Deploy Flows
 
@@ -235,6 +239,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
 - `ship plugins list|catalog|validate` for metadata-only plugin discovery from trusted directories. Plugin descriptors are not executed or injected into the command catalog in this phase.
 - `ship lumen console-data` for the read-only Lumen operator console payload. `make lumen-console-fixtures` runs it against the committed fixture suite.
+- `ship hardening production-readiness` for a read-only production go/no-go aggregate over live readiness, console data, plugins, workflow templates, state status, command catalog safety, and optional fixture drills. `make production-hardening-fixtures` runs the expected-state fixture drill.
 - `ship receipts list|show` for local operation receipt browsing.
 - `ship state refresh|summary` for the local SQLite state service and app aggregates.
 - `ship workflow list|plan|show|run|pause|resume|cancel` for resumable, receipt-backed workflow orchestration. `run --preview` resolves nodes without executing them; mutating nodes pause until `--confirm-node NODE_ID=TOKEN` is supplied from that node's own plan.

@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-8 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-9 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -60,6 +60,9 @@ rebuilt:
   plugin catalog surfaces.
 - Read-only Lumen operator console payload over dashboard, app rows, approvals,
   workflows, plugins, and quick actions.
+- Read-only production hardening report that composes live readiness, console
+  data, plugin validation, workflow availability, state status, command catalog
+  safety, and fixture drills into one go/no-go payload.
 
 ## Implementation Rules
 
@@ -383,8 +386,8 @@ mutation hardening.
 `kind: "ophelia.live_readiness_report"`.
 
 **Boundary:** This lane is for real inspection and gap discovery. Actual live
-provider mutations, migration rehearsals, and production applies remain Phase 9
-hardening work.
+provider mutations, migration rehearsals, and production applies remain later
+work behind explicit plan, confirmation-token, and receipt contracts.
 
 ## Parallel Lane: Fixture App Suite
 
@@ -398,7 +401,8 @@ depending on production data, real provider credentials, or mutable VPS state.
 - Store synthetic runtime metadata, backup manifests, restore-drill receipts,
   GitHub observations, secret observations, SOPS-shaped key files, host
   inventory, and provider config.
-- Add `make validate-fixtures` and `make live-readiness-fixtures`.
+- Add `make validate-fixtures`, `make live-readiness-fixtures`, and
+  `make production-hardening-fixtures`.
 - Add `--allow-blocked` to the live-readiness CLI so expected-failure suites can
   return blocked reports while exiting zero.
 - Add tests for manifest loading, read-only execution, redaction, expected
@@ -410,8 +414,8 @@ fixture live-readiness command is expected to emit a blocked report because
 `fixture-incomplete-app` is deliberately broken.
 
 **Boundary:** The suite is test infrastructure. It does not replace real
-staging/prod live-value runs, live probes, authenticated provider adapters, or
-Phase 9 production hardening drills.
+staging/prod live-value runs, live probes, authenticated provider adapters, the
+Phase 9 production hardening report, or production mutation rehearsals.
 
 ## Phase 7: Contracted Plugin System
 
@@ -510,29 +514,38 @@ contracts.
 
 ## Phase 9: Production Hardening And Migration
 
+**Status:** Landed in changelog record
+[`0029`](changelog/0029-phase-9-production-hardening-report.md).
+
 **Goal:** Make the new systems production-ready and migrate existing workflows
 onto them.
 
 **Work items:**
 
-- Performance pass over state refresh and drift scans.
-- Backwards compatibility tests for current command outputs.
-- Docs and runbook updates for every new operator flow.
-- Migration notes for existing runtime roots and receipts.
-- Failure-mode drills for workflow resume, provider outage, GitHub App auth
-  failure, missing secret refs, stale state DB, and partial drift refresh.
-- Full verification suite and release/handoff record.
+- Add a read-only production hardening aggregate over live readiness, Lumen
+  console data, plugin validation, workflow availability, state status, command
+  catalog safety, and fixture drills.
+- Expose `ship hardening production-readiness`, command catalog examples, and
+  `GET /hardening/production-readiness`.
+- Add `make production-hardening-fixtures` as the deterministic fixture go/no-go
+  drill.
+- Update operator docs, fixture docs, roadmap, findings, and changelog records.
 
 **Dependencies:** All previous phases.
 
-**Milestone commit:** `chore: harden strategic roadmap implementation`
+**Milestone commit:** `chore: add production hardening report`
 
 **Definition of done:**
 
-- Full tests pass.
-- Docs and changelog are current.
-- Existing CLI users have migration notes.
-- Remaining risks are explicit and prioritized.
+- Hardening report is read-only and redacted.
+- Fixture hardening target exits zero in the expected review state.
+- CLI/API/catalog contracts are documented and tested.
+- Remaining live mutation and external provider risks are explicit.
+
+**Boundary:** Phase 9 is a hardening gate, not a production mutation executor.
+Authenticated live provider probes, production migration rehearsals, performance
+work, and compatibility migration notes remain future work behind explicit
+operator approval.
 
 ## Phase Dependency Graph
 
