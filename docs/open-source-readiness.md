@@ -113,15 +113,15 @@ Do not commit:
 - product-specific migration evidence
 - one-off deployment automation for a private VPS
 
-## Remaining Review Areas
+## Zero-Warning Policy
 
-The public gate is blocker-focused. Some warning classes may remain until a
-dedicated compatibility cleanup phase:
+The public tree is expected to stay at a zero-warning baseline. Warning findings
+are treated as release failures in `make open-source-audit-strict`, not as
+long-lived review debt.
 
-- historical changelog examples
-- older test fixture names
-- compatibility strings for existing manifest fields
+If a warning appears:
 
-Those warnings should not hide active private host material. If a warning points
-to a current README, public example, active manifest, workflow, or core operator
-doc, fix it before release.
+- fix it when the reference is stale, private, or fixture material
+- move deployment-specific material outside the public tree
+- add a narrowly scoped audit exception only after documenting why the public
+  repository needs that exact term

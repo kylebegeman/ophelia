@@ -54,3 +54,4 @@
 | [0050](0050-public-safe-operator-docs.md) | 2026-06-22 | landed | Public-safe operator docs | open-source, docs |
 | [0051](0051-open-source-launch-prep.md) | 2026-06-22 | landed | Open source launch prep | open-source, docs, ci, manifests, examples, governance |
 | [0052](0052-public-warning-cleanup.md) | 2026-06-22 | landed | Public warning cleanup | open-source, manifests, docs, tests, audit |
+| [0053](0053-release-gate-polish.md) | 2026-06-22 | landed | Release gate polish | open-source, ci, packaging, docs, tests |

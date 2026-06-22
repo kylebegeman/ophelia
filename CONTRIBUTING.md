@@ -14,6 +14,10 @@ python3 -m venv .venv
 make validate-examples
 make validate-manifests
 make validate-fixtures
+make validate-adoption-fixtures
+make validate-fixture-plugins
+make render-examples
+make render-manifests
 make test
 make compile
 make docs-check

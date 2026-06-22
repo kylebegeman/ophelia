@@ -40,7 +40,13 @@ Prefer machine-readable commands:
 Fixture validation:
 
 ```bash
+make validate-examples
+make validate-manifests
 make validate-fixtures
+make validate-adoption-fixtures
+make validate-fixture-plugins
+make render-examples
+make render-manifests
 make live-drills-fixtures
 make live-hydration-reviewed-fixture
 make production-hardening-fixtures

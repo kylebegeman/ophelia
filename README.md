@@ -53,6 +53,10 @@ The recommended public gate is:
 make validate-examples
 make validate-manifests
 make validate-fixtures
+make validate-adoption-fixtures
+make validate-fixture-plugins
+make render-examples
+make render-manifests
 make test
 make compile
 make docs-check
@@ -273,7 +277,15 @@ git commit -s -m "feat: describe the change"
 Before opening a pull request, run:
 
 ```bash
+make validate-examples
+make validate-manifests
+make validate-fixtures
+make validate-adoption-fixtures
+make validate-fixture-plugins
+make render-examples
+make render-manifests
 make test
+make compile
 make docs-check
 make open-source-audit-strict
 ```
