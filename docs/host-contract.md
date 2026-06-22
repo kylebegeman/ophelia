@@ -23,6 +23,19 @@ Each app registered on a host should declare:
 
 The Hostinger registry lives at `config/hostinger-app-registry.json`.
 
+## Host Inventory
+
+`ship host inventory --json` emits the read-only host inventory contract
+(`kind: "ophelia.host_inventory"`). The local host is collected from live status
+checks, and optional JSON/YAML records can add provider, region, capacity,
+capability, network, backup, and foundation service metadata for other hosts.
+
+`ship host readiness [host-id] --json` evaluates capability, capacity, network,
+and backup readiness without mutating the host.
+
+See [Host Inventory And Placement](host-inventory-and-placement.md) for the
+record shape and scoring behavior.
+
 ## Safety Rules
 
 - Boop entries are protected inventory only.
@@ -45,6 +58,9 @@ Use `ophelia` or `ship`; both invoke the same CLI.
 ./cli/ophelia status
 ./cli/ophelia caddy validate
 ./cli/ophelia caddy reload
+./cli/ophelia host inventory --json
+./cli/ophelia host readiness local --json
 ./cli/ophelia app health apollo-staging
 ./cli/ophelia app logs apollo-staging
+./cli/ophelia app placement apollo-staging --environment staging --json
 ```

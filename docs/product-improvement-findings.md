@@ -282,6 +282,13 @@ optimization, and future automated movement.
 
 **Roadmap phase:** Phase 6
 
+**Implementation status:** Landed in
+[`0024`](changelog/0024-phase-6-host-inventory-and-placement-planning.md).
+`ship host inventory`, `ship host readiness`, and `ship app placement` now
+provide read-only host records, readiness checks, placement requirements, and
+recommendations. The `move-app` workflow consumes placement before export
+planning, and Lumen has host inventory and placement surfaces.
+
 ### F-013: Extension Points Need Contracts Before The Platform Grows Too Wide
 
 **Selected item:** Major 10, Contracted Plugin System

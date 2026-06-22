@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List
@@ -11,6 +9,7 @@ from .backup import backup_plan
 from .conflicts import scan_conflicts
 from .config import REPO_ROOT
 from .explain import explain_manifest
+from .host_inventory import legacy_host_inventory
 from .inspection import status_report
 from .manifest import Manifest, ManifestError, load_manifest
 from .planning import bundle_diff
@@ -21,18 +20,7 @@ from .verify import verification_checks
 
 
 def host_inventory(runtime_root: Path, ophelia_root: Path = REPO_ROOT) -> Dict[str, object]:
-    status = status_report(runtime_root, ophelia_root, ophelia_root / "manifests")
-    return {
-        "runtime_root": str(runtime_root),
-        "ophelia_commit": _git_sha(ophelia_root),
-        "docker": status["docker"],
-        "disk_usage": status["disk_usage"],
-        "running_containers": _docker_lines(["docker", "ps", "--format", "{{.Names}}"]),
-        "caddy_status": status["shared_services"],
-        "networks": status["docker_networks"],
-        "shared_service_status": status["shared_services"],
-        "warnings": status["warnings"],
-    }
+    return legacy_host_inventory(runtime_root, ophelia_root, ophelia_root / "manifests")
 
 
 def manifest_registry(manifest_dir: Path, runtime_root: Path) -> Dict[str, object]:
@@ -241,14 +229,3 @@ def _existing(root: Path, names: List[str]) -> List[str]:
 def _git_sha(root: Path) -> str | None:
     result = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], text=True, capture_output=True)
     return result.stdout.strip() if result.returncode == 0 else None
-
-
-def _docker_lines(command: List[str]) -> List[str]:
-    if os.environ.get("OPHELIA_SKIP_DOCKER_STATUS") == "1":
-        return []
-    if shutil.which("docker") is None:  # type: ignore[name-defined]
-        return []
-    result = subprocess.run(command, text=True, capture_output=True, timeout=3)
-    if result.returncode != 0:
-        return []
-    return [line for line in result.stdout.splitlines() if line.strip()]

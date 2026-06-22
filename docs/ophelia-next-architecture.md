@@ -63,12 +63,13 @@ The next selected product-improvement batch is documented in:
 
 The roadmap adds operator readability, richer diagnostics, operation aliases,
 durable state, drift detection, workflow orchestration, GitHub App and secret
-provider integrations, multi-host placement, plugin contracts, and a Lumen
-operator console.
+provider integrations, read-only multi-host placement, plugin contracts, and a
+Lumen operator console.
 
 Implementation should follow the documented phase order. Foundational contracts,
-state, redaction, and diagnostic work come before Lumen UI, host placement, and
-plugin expansion.
+state, redaction, and diagnostic work come before Lumen UI and plugin
+expansion. Host placement is currently a read-only recommendation surface, not
+an automated scheduler.
 
 ## Non-Goals
 
@@ -125,6 +126,10 @@ The foundation is the small set of services shared by a host:
 - host inventory files
 - backup/export staging area
 - optional shared Postgres or Redis pools
+
+The inventory surface is read-only by default. Local host observations come
+from live status checks; optional host records add provider, region, capacity,
+capability, and foundation service metadata for placement planning.
 
 The public edge is shared because ports `80` and `443` are host-level resources.
 Everything behind the edge should be app-scoped unless it is explicitly declared
@@ -277,6 +282,7 @@ Existing commands should keep working:
 New command families should build on the same plan/apply pattern:
 
 - `ship host inventory`
+- `ship host readiness`
 - `ship host bootstrap plan|apply`
 - `ship pack validate`
 - `ship pack explain`
@@ -284,6 +290,7 @@ New command families should build on the same plan/apply pattern:
 - `ship app import plan|apply`
 - `ship app restore-drill plan|apply`
 - `ship app cutover plan|apply`
+- `ship app placement`
 - `ship app move plan`
 
 ## Lumen Ops Integration

@@ -80,6 +80,7 @@ explicit runner; CLI usage without such a runner blocks before mutation.
 
 ## Follow-Ups
 
-- Begin Phase 6: multi-host inventory and placement planning.
+- Phase 6 host inventory and placement planning landed in
+  [`0024`](0024-phase-6-host-inventory-and-placement-planning.md).
 - Later provider-adapter work can add real GitHub App HTTP execution and
   external vault adapters behind the contracts introduced here.

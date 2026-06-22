@@ -23,8 +23,9 @@ exercise, plus major systems 1, 2, 3, 4, 5, and 8:
 - Per-App Isolation Refactor
 - Lumen Ops Adapter Surface
 
-Host bootstrap/reconcile and multi-host placement planning remain useful future
-work, but they are not part of this selected batch.
+Host bootstrap/reconcile remains useful future work. Initial read-only
+multi-host placement planning has since landed in Phase 6 of the strategic
+roadmap.
 
 ## Product Direction
 
@@ -934,7 +935,7 @@ inbox, run ledger, mobile visibility, and safer LLM automation.
 The following ideas remain useful but are not part of this selected scope:
 
 - host bootstrap and reconcile
-- multi-host placement planner
+- provider-backed host inventory adapters beyond the initial read-only planner
 - cost optimization planner
 - full web UI
 - automatic DNS mutation

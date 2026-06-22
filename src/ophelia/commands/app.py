@@ -15,6 +15,7 @@ from ..app_factory import (
 from ..app_registry import app_health, app_logs, find_app
 from ..command_catalog import RECEIPT_SCHEMA_REF, CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from ..host_inventory import app_placement_plan
 from ..operation_refs import public_resolution, resolve_receipt_ref
 from ..operation_schema import error_envelope, plan_envelope, receipt_envelope, utc_now
 from ..portability import (
@@ -63,6 +64,18 @@ def register(subparsers: _SubParsersAction) -> None:
     readiness.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     readiness.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     readiness.set_defaults(handler=run_readiness)
+
+    placement = app_subparsers.add_parser("placement", help="Plan host placement for an app")
+    placement.add_argument("app", help="App id")
+    placement.add_argument("--environment", choices=["dev", "staging", "production"])
+    placement.add_argument("--manifest", type=Path, help="Path to app .ophelia manifest")
+    placement.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    placement.add_argument("--manifests-dir", type=Path, default=REPO_ROOT / "manifests")
+    placement.add_argument("--host-config", type=Path, help="Optional host inventory config JSON/YAML")
+    placement.add_argument("--from", dest="source_host", help="Optional source host id for locality scoring")
+    placement.add_argument("--to", dest="target_host", help="Optional target host id to compare against recommendations")
+    placement.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    placement.set_defaults(handler=run_placement)
 
     runbook = app_subparsers.add_parser("runbook", help="Generate an app runbook")
     runbook.add_argument("app", help="App id")
@@ -371,6 +384,31 @@ def run_readiness(args: Namespace) -> int:
         _print_string_items("Blockers", report.get("blockers", []))
         _print_string_items("Warnings", report.get("warnings", []))
     return 0 if not report["blockers"] else 1
+
+
+def run_placement(args: Namespace) -> int:
+    plan = app_placement_plan(
+        args.app,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+        manifests_dir=args.manifests_dir,
+        manifest_path=args.manifest,
+        ophelia_root=REPO_ROOT,
+        config_path=args.host_config,
+        source_host=args.source_host,
+        target_host=args.target_host,
+    )
+    if args.json:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    else:
+        print(plan["summary"])
+        print(f"Recommended host: {plan.get('recommended_host') or 'none'}")
+        for placement in plan.get("placements", []):
+            if isinstance(placement, dict):
+                print(f"  - {placement.get('host_id')}: {placement.get('score')} ({placement.get('recommendation')})")
+        _print_string_items("Blockers", plan.get("blockers", []))
+        _print_string_items("Warnings", plan.get("warnings", []))
+    return 0 if not plan.get("blockers") else 1
 
 
 def run_runbook(args: Namespace) -> int:
@@ -904,6 +942,42 @@ def _print_string_items(label: str, value: object) -> None:
         else:
             print(f"  - {item}")
 
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app placement",
+        operation="app.placement.plan",
+        summary="Plan app placement against read-only host inventory and score eligible hosts.",
+        risk="low",
+        mutates_state=False,
+        requires_confirmation=False,
+        plan_command=None,
+        apply_command=None,
+        json_kind="ophelia.app_placement_plan",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "manifest": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "manifests_dir": {"type": "string"},
+                "host_config": {"type": "string"},
+                "source_host": {"type": "string"},
+                "target_host": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.app_placement_plan.v1",
+        artifacts=[],
+        safety_notes=[
+            "Read-only placement scoring. Does not mutate hosts, DNS, runtime, or inventory files.",
+            "Secret-bearing manifest/provider data is redacted before output.",
+        ],
+    )
+)
 
 register_cli_descriptor(
     CommandDescriptor(

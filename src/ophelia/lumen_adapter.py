@@ -33,6 +33,7 @@ from . import command_catalog
 from .api_routes import HTTP_ROUTE_PATTERNS
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .conflicts import scan_conflicts
+from .host_inventory import app_placement_plan, collect_host_inventory
 from .observability import compact_observability_summary, observability_status
 from .operation_schema import SCHEMA_VERSION, issue
 from .operator_reports import manifest_registry
@@ -65,6 +66,8 @@ _SURFACES: List[str] = [
     "workflows",
     "github_providers",
     "secret_providers",
+    "host_inventory",
+    "placement",
 ]
 
 
@@ -131,6 +134,36 @@ def app_timeline(
     """Thin wrapper over :func:`ophelia.receipt_index.receipt_timeline`."""
     return deep_redact(
         receipt_timeline(runtime_root, app=app, environment=environment)
+    )
+
+
+def host_inventory(
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+) -> Dict[str, Any]:
+    """Thin wrapper over read-only host inventory."""
+    return deep_redact(collect_host_inventory(runtime_root, REPO_ROOT, manifests_dir))
+
+
+def app_placement(
+    app: str,
+    environment: Optional[str] = None,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifests_dir: Path = REPO_ROOT / "manifests",
+    source_host: Optional[str] = None,
+    target_host: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Thin wrapper over app placement planning for Lumen."""
+    return deep_redact(
+        app_placement_plan(
+            app,
+            environment=environment,
+            runtime_root=runtime_root,
+            manifests_dir=manifests_dir,
+            ophelia_root=REPO_ROOT,
+            source_host=source_host,
+            target_host=target_host,
+        )
     )
 
 

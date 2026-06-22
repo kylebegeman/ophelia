@@ -34,6 +34,7 @@ EXPECTED_MOVE_APP_ORDER = [
     "check-route-conflicts",
     "check-backups",
     "readiness",
+    "placement",
     "export-plan",
     "export-create",
     "import-plan",
@@ -94,6 +95,22 @@ class MoveAppGraphTests(unittest.TestCase):
         self.assertEqual(
             ["ship", "inspect", "conflicts", "--manifest-dir", "MANIFEST_DIR", "--json"],
             commands_by_id["check-route-conflicts"],
+        )
+        self.assertEqual(
+            [
+                "ship",
+                "app",
+                "placement",
+                "dragon-writer",
+                "--from",
+                "spaceship",
+                "--to",
+                "ovh",
+                "--environment",
+                "production",
+                "--json",
+            ],
+            commands_by_id["placement"],
         )
         self.assertEqual(
             [
@@ -256,11 +273,11 @@ class RunWorkflowTests(unittest.TestCase):
 
             self.assertEqual("paused", receipt["status"])
             self.assertEqual("workflow.run", receipt["operation"])
-            self.assertEqual(7, len(calls))
-            self.assertEqual(7, receipt["node_counts"]["succeeded"])
+            self.assertEqual(8, len(calls))
+            self.assertEqual(8, receipt["node_counts"]["succeeded"])
             self.assertEqual(1, receipt["node_counts"]["paused_for_confirmation"])
-            self.assertEqual("paused_for_confirmation", receipt["nodes"][7]["status"])
-            self.assertEqual("export-create", receipt["nodes"][7]["id"])
+            self.assertEqual("paused_for_confirmation", receipt["nodes"][8]["status"])
+            self.assertEqual("export-create", receipt["nodes"][8]["id"])
             self.assertEqual("node-output-1", receipt["nodes"][0]["receipt_id"])
             self.assertEqual("ship", Path(calls[0][0]).name)
             self.assertTrue((runtime_root / "workflows" / "receipts").exists())
@@ -319,13 +336,13 @@ class RunWorkflowTests(unittest.TestCase):
 
             self.assertEqual("paused", first["status"])
             self.assertEqual("paused", second["status"])
-            # Seven read-only nodes from the first run, then export-create and
+            # Eight read-only nodes from the first run, then export-create and
             # import-plan on resume. Already-succeeded nodes were not rerun.
-            self.assertEqual(9, len(calls))
-            self.assertEqual("succeeded", second["nodes"][7]["status"])
-            self.assertEqual("node-output-8", second["nodes"][7]["receipt_id"])
+            self.assertEqual(10, len(calls))
             self.assertEqual("succeeded", second["nodes"][8]["status"])
-            self.assertEqual("paused_for_confirmation", second["nodes"][9]["status"])
+            self.assertEqual("node-output-9", second["nodes"][8]["receipt_id"])
+            self.assertEqual("succeeded", second["nodes"][9]["status"])
+            self.assertEqual("paused_for_confirmation", second["nodes"][10]["status"])
 
     def test_run_blocks_unresolved_placeholders_without_executing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -413,12 +430,12 @@ class PreviewWorkflowTests(unittest.TestCase):
             self.assertEqual(WORKFLOW_PREVIEW_KIND, preview["kind"])
             self.assertEqual("paused", preview["status"])
             self.assertEqual(plan["workflow_id"], preview["workflow_id"])
-            self.assertEqual(7, preview["node_counts"]["ready"])
+            self.assertEqual(8, preview["node_counts"]["ready"])
             self.assertEqual(1, preview["node_counts"]["paused_for_confirmation"])
             self.assertEqual(6, preview["node_counts"]["skipped"])
-            self.assertEqual("paused_for_confirmation", preview["nodes"][7]["status"])
-            self.assertTrue(all("resolved_command" in node for node in preview["nodes"][:8]))
-            self.assertTrue(all("executable_path" in node for node in preview["nodes"][:8]))
+            self.assertEqual("paused_for_confirmation", preview["nodes"][8]["status"])
+            self.assertTrue(all("resolved_command" in node for node in preview["nodes"][:9]))
+            self.assertTrue(all("executable_path" in node for node in preview["nodes"][:9]))
             self.assertFalse((runtime_root / "workflows" / "receipts").exists())
             stored = show_workflow(plan["workflow_id"], runtime_root=runtime_root)
             self.assertNotIn("last_run", stored["workflow"])

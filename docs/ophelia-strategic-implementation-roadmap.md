@@ -343,6 +343,13 @@ observability schedule, readiness reports.
 
 **Milestone commit:** `feat: add host inventory and placement planning`
 
+**Implementation status:** Landed in
+[`0024`](changelog/0024-phase-6-host-inventory-and-placement-planning.md).
+Phase 6 adds read-only host inventory and readiness reports, app placement
+planning and scoring, move-app workflow integration, Lumen surfaces, default
+local host metadata, and durable operator documentation. Placement remains a
+recommendation surface; it does not reserve hosts or execute migrations.
+
 **Definition of done:**
 
 - Host inventory is read-only by default.

@@ -165,6 +165,17 @@ def _node_command(operation: str, *, context: Dict[str, str], env_flags: List[st
             "CONFIRMATION_TOKEN",
         ],
         "app.readiness": ["ship", "app", "readiness", "{app}", *env_flags],
+        "app.placement.plan": [
+            "ship",
+            "app",
+            "placement",
+            "{app}",
+            "--from",
+            "{source}",
+            "--to",
+            "{target}",
+            *env_flags,
+        ],
         "app.runbook": ["ship", "app", "runbook", "{app}", *env_flags],
         "app.traffic.status": ["ship", "traffic", "status", "--app", "{app}", *env_flags],
         "app.templates.explain": ["ship", "app", "templates", "explain", "{template}"],
@@ -353,9 +364,14 @@ def _build_move_app_nodes(
             "depends_on": ["check-backups"],
         },
         {
+            "id": "placement",
+            "operation": "app.placement.plan",
+            "depends_on": ["readiness"],
+        },
+        {
             "id": "export-plan",
             "operation": "app.export.plan",
-            "depends_on": ["readiness"],
+            "depends_on": ["placement"],
         },
         {
             "id": "export-create",
@@ -546,7 +562,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
         name="move-app",
         summary=(
             "Resumable graph to move an app between hosts: validate, "
-            "audit, check conflicts/backups, score readiness, then plan export, "
+            "audit, check conflicts/backups, score readiness and placement, then plan export, "
             "import, restore-drill, and traffic cutover. Apply/create nodes pause "
             "until explicit per-node confirmation is supplied."
         ),
