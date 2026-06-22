@@ -83,6 +83,10 @@ All child reports are compacted before inclusion. The final payload is passed
 through propagated `deep_redact`, so command output remains safe even when child
 reports include runtime-derived data.
 
+When a real live-readiness child report is blocked, use
+`ship live-hydration report` for one focused app before enabling probes or
+production rehearsals.
+
 ## Go/No-Go Semantics
 
 - `go`: no blockers or warnings.

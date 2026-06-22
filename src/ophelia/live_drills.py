@@ -15,6 +15,7 @@ LIVE_DRILL_PROFILES_KIND = "ophelia.live_drill_profiles"
 LIVE_DRILL_RESULT_KIND = "ophelia.live_drill_result"
 LIVE_DRILL_RUNS_KIND = "ophelia.live_drill_run_results"
 DEFAULT_LIVE_DRILL_PROFILES = REPO_ROOT / "fixtures" / "app-suite" / "live-drills.yml"
+DEFAULT_LOCAL_LIVE_DRILL_PROFILES = REPO_ROOT / "config" / "ophelia-live-drills.yml"
 
 
 def list_live_drill_profiles(profiles_path: Path = DEFAULT_LIVE_DRILL_PROFILES) -> Dict[str, Any]:
@@ -148,6 +149,42 @@ def run_all_live_drills(profiles_path: Path = DEFAULT_LIVE_DRILL_PROFILES) -> Di
         "summary": f"Ran {len(results)} live drill profile(s): {len(result_blockers)} blocked.",
     }
     return _redact(payload)
+
+
+def resolve_live_drill_profile(profile_id: str, profiles_path: Path = DEFAULT_LIVE_DRILL_PROFILES) -> Dict[str, Any]:
+    """Return one profile with resolved paths for read-only callers."""
+    profiles, blockers, warnings = _load_profiles(Path(profiles_path))
+    profile = next((item for item in profiles if item["id"] == profile_id), None)
+    if profile is None:
+        blockers.append(issue("live_drill_profile_not_found", f"Live drill profile not found: {profile_id}", "profile"))
+        return _redact(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "kind": "ophelia.live_drill_profile_resolution",
+                "operation": "live_drills.resolve",
+                "operation_id": operation_id("live_drills.resolve", profile_id),
+                "profile": profile_id,
+                "status": "blocked",
+                "paths": {},
+                "blockers": blockers,
+                "warnings": warnings,
+            }
+        )
+    paths = _profile_paths(profile)
+    return _redact(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ophelia.live_drill_profile_resolution",
+            "operation": "live_drills.resolve",
+            "operation_id": operation_id("live_drills.resolve", profile_id),
+            "profile": _profile_summary(profile),
+            "raw_profile": profile,
+            "status": "blocked" if blockers else "warning" if warnings else "ok",
+            "paths": {key: str(value) for key, value in paths.items() if value is not None},
+            "blockers": blockers,
+            "warnings": warnings,
+        }
+    )
 
 
 def _load_profiles(profiles_path: Path) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]], List[Dict[str, str]]]:

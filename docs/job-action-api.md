@@ -103,10 +103,19 @@ API endpoints:
 - `GET /registry/releases`
 - `GET /operations`
 - `POST /operations/run`
+- `GET /plugins`
+- `GET /hardening/production-readiness`
+- `GET /live-drills`
+- `GET /live-drills/<profile>`
+- `GET /live-hydration/<profile>`
 - `GET /workflows`
 - `GET /workflows/<id>`
 - `GET /state/status`
 - `GET /state/summary`
+- `GET /state/apps`
+- `GET /state/receipts`
+- `GET /state/routes`
+- `GET /state/backups`
 
 There is no arbitrary shell endpoint. Jobs use typed schemas, idempotency keys,
 job state, audit records, local-only binding, and optional artifact link fields.

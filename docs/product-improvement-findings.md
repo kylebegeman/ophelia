@@ -371,3 +371,9 @@ authenticated live provider probes or production migration rehearsals.
 scenarios on top of the fixture suite and hardening report. They are the
 preferred way to keep dummy micro-app states, focused app drills, and later
 staging/prod profile baselines reproducible.
+
+[Live Hydration Reports](live-hydration.md) add the next live-testing step:
+one-app evidence gaps for runtime paths, env-key presence, secret-name
+observations, release metadata, host capabilities, and drift review. They keep
+the live path practical by turning a broad no-go baseline into ordered,
+read-only steps before probes or production rehearsals.

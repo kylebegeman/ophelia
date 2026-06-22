@@ -1,6 +1,6 @@
 # Ophelia Strategic Implementation Roadmap
 
-Status: selected next-stage roadmap, Phases 1-11 landed plus read-only live readiness and fixture testing lanes
+Status: selected next-stage roadmap, Phases 1-12 landed plus read-only live readiness and fixture testing lanes
 
 Date: 2026-06-21
 
@@ -67,6 +67,8 @@ rebuilt:
   hardening rehearsal scenarios.
 - Local live-test profile baselines and first read-only file-based live test
   results against `~/ophelia-runtime`.
+- Focused live hydration reports that turn one blocked live app baseline into
+  ordered runtime/env/secret-name/release/host evidence steps before probes.
 
 ## Implementation Rules
 
@@ -623,6 +625,45 @@ provider collection, state refresh, workflow execution, or production
 mutations. Those should wait until a file-based baseline for one target app is
 operator-reviewed.
 
+## Phase 12: Focused Live Baseline Hydration
+
+**Status:** Landed in changelog record
+[`0032`](changelog/0032-live-baseline-hydration-report.md).
+
+**Goal:** Convert the first broad live no-go result into focused, one-app,
+read-only evidence steps before enabling any probes.
+
+**Work items:**
+
+- Add `ship live-hydration report` for app/profile-backed runtime evidence
+  audits.
+- Compose existing env-shape, secret-provider, placement, readiness, drift, and
+  release metadata reports into a compact hydration payload.
+- Expose `GET /live-hydration/<profile>`, command catalog examples, and
+  `make live-hydration-quark-staging`.
+- Preserve blocked JSON status while allowing expected blocked baseline audits
+  to exit zero with `--allow-blocked`.
+- Document the current Quark staging hydration blockers and safe next steps.
+
+**Dependencies:** Phase 10 live drill profiles, Phase 11 local baselines,
+live-readiness, secret-provider metadata, host placement, release metadata, and
+drift reports.
+
+**Milestone commit:** `feat: add live baseline hydration report`
+
+**Definition of done:**
+
+- Hydration reports are read-only, redacted, and never create runtime files or
+  read secret values.
+- Focused fixture and local profile tests cover blocked and warning reports.
+- CLI/API/catalog/docs surfaces are updated and tested.
+- The next safe live-testing gate is explicit before HTTP, Docker,
+  authenticated provider, workflow, or mutation probes.
+
+**Boundary:** Phase 12 does not hydrate runtime files, create env snapshots,
+record secret-name observations, refresh state, run probes, call providers, or
+execute workflows. It identifies the exact evidence to collect first.
+
 ## Phase Dependency Graph
 
 ```text
@@ -638,6 +679,7 @@ Phase 0 docs
                 -> Phase 9 hardening
                   -> Phase 10 live drill profiles
                     -> Phase 11 live test baseline
+                      -> Phase 12 live hydration reports
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

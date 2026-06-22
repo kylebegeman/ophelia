@@ -18,6 +18,7 @@ HTTP_ROUTE_PATTERNS: List[str] = [
     "/hardening/production-readiness",
     "/live-drills",
     "/live-drills/<profile>",
+    "/live-hydration/<profile>",
     "/workflows",
     "/workflows/<id>",
     "/state/status",

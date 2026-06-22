@@ -18,6 +18,11 @@ refresh, and apply/create commands were not run.
 ./cli/ship live-drills run quark-ops-production-file-baseline \
   --profiles config/ophelia-live-drills.yml \
   --json
+./cli/ship live-hydration report \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --allow-blocked \
+  --json
 make live-drills-fixtures
 ```
 
@@ -59,19 +64,26 @@ blockers expected for this first live baseline.
   and 9 warnings.
 - `quark-ops-staging` focused drill is blocked with one app, 18 blockers, and
   7 warnings.
+- `quark-ops-staging` hydration is blocked and actionable: app root is absent,
+  eight required env keys are missing, eight required secret-name observations
+  are missing, no release metadata is present, host capabilities need explicit
+  inventory, and drift should be reviewed after the runtime evidence exists.
 - Secret-provider metadata is useful after the live-readiness redaction fix:
   compact secret reports now show kind, status, key count, missing count,
   blocker count, warning count, and summary without exposing values.
 
 ## Next Safe Steps
 
-1. Add or collect a real runtime app snapshot under `~/ophelia-runtime/apps` for
+1. Use `ship live-hydration report --profile quark-ops-staging-file-baseline
+   --profiles config/ophelia-live-drills.yml --allow-blocked --json` as the
+   focused baseline gate for the first app.
+2. Add or collect a real runtime app snapshot under `~/ophelia-runtime/apps` for
    one target app, starting with non-secret env shape and release metadata.
-2. Expand `config/ophelia-hosts.yml` with explicit host capabilities for the
+3. Expand `config/ophelia-hosts.yml` with explicit host capabilities for the
    intended live target host.
-3. Add observed secret-name files for the target app/provider. Do not store
+4. Add observed secret-name files for the target app/provider. Do not store
    secret values.
-4. Rerun `ship live-drills run quark-ops-production-file-baseline --profiles
+5. Rerun `ship live-drills run quark-ops-production-file-baseline --profiles
    config/ophelia-live-drills.yml --json`.
-5. Run HTTP/Docker probes only after the file-based profile moves from blocked
+6. Run HTTP/Docker probes only after the file-based profile moves from blocked
    to a known reviewed baseline.

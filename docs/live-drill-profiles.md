@@ -40,6 +40,7 @@ The local API exposes the fixture profile catalog and single-profile runs:
 ```text
 GET /live-drills
 GET /live-drills/<profile>
+GET /live-hydration/<profile>
 ```
 
 The API uses the default committed fixture profile file. Custom profile files
@@ -110,6 +111,20 @@ Example:
   --profiles config/ophelia-live-drills.yml \
   --json
 ```
+
+For a one-app baseline that is currently blocked, prefer a hydration report
+before enabling probes:
+
+```bash
+./cli/ship live-hydration report \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --allow-blocked \
+  --json
+```
+
+Hydration reports use the same profile resolution but return ordered evidence
+steps instead of validating an expected drill state.
 
 ## Safety Contract
 

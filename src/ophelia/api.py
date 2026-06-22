@@ -11,6 +11,7 @@ from .command_catalog import catalog as command_catalog
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from .hardening import production_hardening_report
 from .live_drills import list_live_drill_profiles, run_live_drill
+from .live_hydration import live_hydration_report
 from .lumen_adapter import (
     action_descriptors as lumen_action_descriptors,
     app_readiness as lumen_app_readiness,
@@ -98,6 +99,10 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/live-drills/"):
             profile_id = unquote(parsed.path.split("/", 2)[2])
             self._json(run_live_drill(profile_id))
+            return
+        if parsed.path.startswith("/live-hydration/"):
+            profile_id = unquote(parsed.path.split("/", 2)[2])
+            self._json(live_hydration_report(profile=profile_id, runtime_root=self.runtime_root_value))
             return
         if parsed.path == "/workflows":
             self._json(list_workflow_templates())

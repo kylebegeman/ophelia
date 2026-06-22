@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures lumen-console-fixtures production-hardening-fixtures test compile docs-check
+.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-quark-staging lumen-console-fixtures production-hardening-fixtures test compile docs-check
 
 venv:
 	python3 -m venv .venv
@@ -38,6 +38,9 @@ live-readiness-fixtures:
 
 live-drills-fixtures:
 	@./cli/ship live-drills run-all --profiles fixtures/app-suite/live-drills.yml --json
+
+live-hydration-quark-staging:
+	@./cli/ship live-hydration report --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json
 
 lumen-console-fixtures:
 	@./cli/ship lumen console-data --runtime-root fixtures/app-suite/runtime --manifests-dir fixtures/app-suite/manifests --plugins-dir fixtures/app-suite/plugins --json

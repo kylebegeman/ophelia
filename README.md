@@ -32,6 +32,7 @@ logs, and pulled images.
 - [Host Contract](docs/host-contract.md)
 - [Live Readiness Lane](docs/live-readiness-lane.md)
 - [Live Drill Profiles](docs/live-drill-profiles.md)
+- [Live Hydration Reports](docs/live-hydration.md)
 - [Lumen Operator Console](docs/lumen-operator-console.md)
 - [Production Hardening Report](docs/production-hardening.md)
 - [Fixture App Suite](docs/fixture-app-suite.md)
@@ -128,10 +129,12 @@ make validate-fixtures
 make validate-fixture-plugins
 make live-readiness-fixtures
 make live-drills-fixtures
+make live-hydration-quark-staging
 make lumen-console-fixtures
 make production-hardening-fixtures
 ./cli/ship live-drills run fixture-suite-review --json
 ./cli/ship live-drills run quark-ops-production-file-baseline --profiles config/ophelia-live-drills.yml --json
+./cli/ship live-hydration report --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json
 ./cli/ship hardening production-readiness --json
 ./cli/ship providers github status --json
 ./cli/ship secrets providers dragon-writer --environment production --json
@@ -209,7 +212,8 @@ starting SSH and never prints their values.
 11. Phase 9 has landed: a read-only production hardening report and fixture go/no-go drill.
 12. Phase 10 has landed: fixture-backed live drill profiles for repeatable read-only staging/prod rehearsal scenarios.
 13. Phase 11 has landed: local live-test profile baselines and the first read-only file-based live test against `~/ophelia-runtime`.
-14. Next work: collect one real app runtime snapshot, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
+14. Phase 12 has landed: focused live hydration reports now turn one blocked app baseline into ordered runtime/env/secret-name/release/host evidence steps without mutation.
+15. Next work: collect one real app runtime snapshot, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
 
 ## Deploy Flows
 
@@ -244,6 +248,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship live-readiness run` for a read-only aggregate over real runtime/manifests, provider observations, host readiness, placement, observability, secrets, and drift. HTTP and Docker probes are opt-in.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
 - `ship live-drills list|run|run-all` for named read-only drill profiles over live-readiness and optional hardening. `make live-drills-fixtures` runs the committed fixture profiles and validates their expected mixed states.
+- `ship live-hydration report` for one-app, read-only baseline evidence gaps before enabling probes. `make live-hydration-quark-staging` runs the current focused Quark staging audit and preserves `status: "blocked"` in JSON while exiting zero for repeatable review.
 - `ship plugins list|catalog|validate` for metadata-only plugin discovery from trusted directories. Plugin descriptors are not executed or injected into the command catalog in this phase.
 - `ship lumen console-data` for the read-only Lumen operator console payload. `make lumen-console-fixtures` runs it against the committed fixture suite.
 - `ship hardening production-readiness` for a read-only production go/no-go aggregate over live readiness, console data, plugins, workflow templates, state status, command catalog safety, and optional fixture drills. `make production-hardening-fixtures` runs the expected-state fixture drill.

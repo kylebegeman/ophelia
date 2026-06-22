@@ -61,6 +61,20 @@ Live drill profiles wrap the same live-readiness report, optionally include the
 production hardening report, and validate expected mixed states without hiding
 the child report statuses.
 
+For one blocked live app, use a hydration report before enabling probes:
+
+```bash
+ship live-hydration report \
+  --profile quark-ops-staging-file-baseline \
+  --profiles config/ophelia-live-drills.yml \
+  --allow-blocked \
+  --json
+```
+
+Hydration reports do not run HTTP/Docker checks. They list missing runtime
+paths, env-key presence, secret-name observations, release metadata, host
+capability evidence, and drift review steps for one focused app.
+
 ## What It Runs
 
 Top-level checks:
@@ -130,7 +144,8 @@ Use this lane now for staging and production inspection:
 2. Add host/provider observation files where available.
 3. Run without probes first.
 4. Review blockers, warnings, drift, missing observations, and placement output.
-5. Opt into `--probe-http` and `--check-docker` only after the file-only report
+5. Run a focused `ship live-hydration report` for the first target app.
+6. Opt into `--probe-http` and `--check-docker` only after the file-only report
    is understood.
 
 Use production hardening and live drill profiles for read-only migration
