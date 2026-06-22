@@ -79,6 +79,8 @@ rebuilt:
   and target path checklists without copying files.
 - A committed reviewed fixture evidence kit for rehearsing validation,
   promotion planning, and probe review without live runtime values.
+- The first bounded Quark staging live snapshot attempt, with a real runtime app
+  root, review scaffold, and documented remaining evidence blockers.
 
 ## Implementation Rules
 
@@ -862,6 +864,48 @@ app suite.
 promote evidence, run probes, call providers, refresh state, execute workflows,
 or mutate production. It is a synthetic fixture rehearsal only.
 
+## Phase 18: Quark Staging Live Snapshot Attempt
+
+**Status:** Landed in changelog record
+[`0038`](changelog/0038-quark-staging-live-snapshot-attempt.md).
+
+**Goal:** Start the real Quark staging hydration path while preserving the
+secret and no-probe safety boundary.
+
+**Work items:**
+
+- Inspect the current `quark-ops-staging` hydration report and local host
+  readiness.
+- Check GitHub secret-name availability through `gh` without reading values.
+- Create the empty runtime app root at
+  `~/ophelia-runtime/apps/quark-ops-staging`.
+- Write template-only evidence review files under
+  `~/ophelia-runtime/hydration/quark-ops-staging/staging`.
+- Rerun hydration, evidence validation, promotion planning, and probe gate.
+- Document the exact commands, safe mutations, non-mutations, results, and
+  remaining blockers in
+  [`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md).
+
+**Dependencies:** Phase 16 promotion plan, Phase 15 probe gate, and the local
+Quark staging live drill profile.
+
+**Milestone commit:** `docs: record quark staging live snapshot attempt`
+
+**Definition of done:**
+
+- Runtime app-root evidence exists locally.
+- The separate hydration review scaffold exists locally.
+- Evidence validation and promotion planning run against that scaffold.
+- Probe gate remains `no_go` while env, secret-name observation, release
+  metadata, and host capability evidence are incomplete.
+- No secret values, probes, provider mutations, workflows, deploys, or runtime
+  release/env files are created by automation.
+
+**Boundary:** Phase 18 does not create `env`, release metadata, provider
+observation files, or host inventory facts with guessed data. The next step
+requires real operator-provided runtime env values and truthful provider/host
+evidence outside Git.
+
 ## Phase Dependency Graph
 
 ```text
@@ -883,6 +927,7 @@ Phase 0 docs
                             -> Phase 15 no-probe live gate
                               -> Phase 16 live evidence promotion plan
                                 -> Phase 17 reviewed hydration fixture evidence
+                                  -> Phase 18 quark staging live snapshot attempt
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

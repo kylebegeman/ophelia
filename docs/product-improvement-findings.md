@@ -403,3 +403,9 @@ The reviewed fixture evidence kit makes that handoff testable without live
 values. The fixture Postgres app now carries a committed evidence directory that
 validates cleanly, produces a promotion checklist, and moves the probe gate to
 operator review without executing probes.
+
+The first Quark staging snapshot attempt clarified the real-live boundary: it
+is safe to create the empty runtime app root and scaffold review templates, but
+env values, provider-observed secret names, active release metadata, and host
+capability facts still need truthful external sources before any probe or
+promotion step should proceed.

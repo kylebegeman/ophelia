@@ -220,16 +220,20 @@ into a real runtime root.
 ## Current Quark Staging Result
 
 The current file-based Quark staging baseline is expected to be blocked. The
-local runtime root does not yet contain an app runtime tree for
-`quark-ops-staging`, so the report asks for:
+local runtime root now contains an empty app runtime tree for
+`quark-ops-staging` and a separate template-only hydration review scaffold under
+`~/ophelia-runtime/hydration/quark-ops-staging/staging`, so the report still
+asks for:
 
-- runtime app root evidence under `~/ophelia-runtime/apps/quark-ops-staging`
 - required env-key presence without values
 - observed required secret names, never secret values
 - active or latest release metadata
 - explicit host capability inventory
 - drift review after runtime evidence exists
 - a final rerun of the live drill profile before probes
+
+The bounded live snapshot attempt is recorded in
+[`quark-ops-staging-live-snapshot-2026-06-22.md`](scratchpad/quark-ops-staging-live-snapshot-2026-06-22.md).
 
 ## Safety Contract
 

@@ -228,7 +228,8 @@ starting SSH and never prints their values.
 17. Phase 15 has landed: a no-probe gate now combines hydration and evidence validation before suggesting opt-in probe commands.
 18. Phase 16 has landed: a read-only promotion plan now turns reviewed evidence kits into hashed source and target checklists without copying files.
 19. Phase 17 has landed: a committed reviewed fixture evidence kit now rehearses validation, promotion planning, and probe review without live values.
-20. Next work: collect one real app runtime snapshot from reviewed scaffold templates, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
+20. Phase 18 has landed: the first bounded Quark staging live snapshot attempt created the empty runtime app root, wrote the review scaffold, and recorded the remaining real-evidence blockers.
+21. Next work: provide real runtime env values, provider-observed secret names, release metadata, and truthful host capability evidence before opt-in HTTP/Docker/provider probes.
 
 ## Deploy Flows
 

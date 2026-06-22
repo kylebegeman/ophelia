@@ -2,7 +2,9 @@
 
 Scope: read-only file-based live tests against repo manifests and
 `~/ophelia-runtime`. HTTP, Docker, provider mutation, workflow execution, state
-refresh, and apply/create commands were not run.
+refresh, and apply/create commands were not run. Later the same day, the Quark
+staging app root and template-only hydration review scaffold were created; see
+[`quark-ops-staging-live-snapshot-2026-06-22.md`](quark-ops-staging-live-snapshot-2026-06-22.md).
 
 ## Commands Run
 
@@ -73,9 +75,11 @@ Top aggregate blocker codes:
 - `release_missing`: no active/latest release metadata exists under the local
   runtime root.
 
-The local runtime root currently contains plans, audit, and jobs directories,
-but no `apps/` runtime tree. That makes env, release, drift, and secret presence
-blockers expected for this first live baseline.
+The initial local runtime root contained plans, audit, and jobs directories but
+no `apps/` runtime tree. The follow-up Quark staging snapshot attempt created
+`~/ophelia-runtime/apps/quark-ops-staging`, so the runtime app-root blocker has
+cleared for that one app. Env, release, drift, host, and secret presence
+blockers remain expected until real evidence is supplied.
 
 ## Notable Details
 
@@ -87,12 +91,14 @@ blockers expected for this first live baseline.
   and 9 warnings.
 - `quark-ops-staging` focused drill is blocked with one app, 18 blockers, and
   7 warnings.
-- `quark-ops-staging` hydration is blocked and actionable: app root is absent,
-  eight required env keys are missing, eight required secret-name observations
-  are missing, no release metadata is present, host capabilities need explicit
-  inventory, and drift should be reviewed after the runtime evidence exists.
-- `quark-ops-staging` scaffold is warning and dry-run by default. It plans five
-  template files in a separate hydration workspace and does not create consumed
+- `quark-ops-staging` hydration is blocked and actionable: app root now exists,
+  but eight required env keys are missing, eight required secret-name
+  observations are missing, no release metadata is present, host capabilities
+  need explicit inventory, and drift should be reviewed after runtime evidence
+  exists.
+- `quark-ops-staging` scaffold is warning and has now been written to
+  `~/ophelia-runtime/hydration/quark-ops-staging/staging`. It created five
+  template files in a separate hydration workspace and did not create consumed
   runtime env, release, provider observation, or host inventory files.
 - `quark-ops-staging` evidence validation blocks when the default evidence
   directory is absent. A temporary generated scaffold validates as warning
@@ -104,6 +110,9 @@ blockers expected for this first live baseline.
   default evidence directory is absent and can produce a warning checklist from
   a temporary generated scaffold with source hashes, target paths, and no file
   contents.
+- After the bounded live snapshot attempt, `quark-ops-staging` promotion
+  planning against the written scaffold is `warning`, and the probe gate remains
+  `no_go`.
 - `fixture-postgres-focused` now has a committed reviewed evidence kit that
   validates as `ok`. Its promotion plan remains read-only and warning-only
   because fixture drift still requires review before probes.
@@ -131,8 +140,8 @@ blockers expected for this first live baseline.
    quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml
    --input-dir <reviewed-kit> --json` to review exact source hashes and target
    paths before any manual promotion.
-6. Add or collect a real runtime app snapshot under `~/ophelia-runtime/apps` for
-   one target app, starting with non-secret env shape and release metadata.
+6. Add real runtime env values to
+   `~/ophelia-runtime/apps/quark-ops-staging/env`. Keep this file outside Git.
 7. Expand `config/ophelia-hosts.yml` with explicit host capabilities for the
    intended live target host.
 8. Add observed secret-name files for the target app/provider. Do not store
