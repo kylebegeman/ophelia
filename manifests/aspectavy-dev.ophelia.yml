@@ -1,0 +1,11 @@
+version: 1
+app: aspectavy-dev
+kind: static
+static_root: /home/kyle/ophelia-runtime/static/aspectavy-dev
+
+routes:
+  - domain: dev.bagels.top
+
+verify:
+  - name: landing
+    url: https://dev.bagels.top/
