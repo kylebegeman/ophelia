@@ -77,6 +77,8 @@ rebuilt:
   suggesting opt-in HTTP/Docker probe commands.
 - A read-only promotion plan that turns reviewed evidence kits into source hash
   and target path checklists without copying files.
+- A committed reviewed fixture evidence kit for rehearsing validation,
+  promotion planning, and probe review without live runtime values.
 
 ## Implementation Rules
 
@@ -820,6 +822,46 @@ inventory entries, state DB records, workflow artifacts, provider calls, probes,
 or production mutations. Any future automated promotion requires a separate
 confirmed apply command.
 
+## Phase 17: Reviewed Hydration Fixture Evidence
+
+**Status:** Landed in changelog record
+[`0037`](changelog/0037-reviewed-hydration-fixture-evidence.md).
+
+**Goal:** Make the reviewed-evidence path reproducible before collecting live
+runtime values.
+
+**Work items:**
+
+- Add a committed reviewed evidence kit for
+  `fixture-postgres-api/staging`.
+- Keep the kit outside fixture runtime state under
+  `fixtures/app-suite/hydration/fixture-postgres-api/staging/`.
+- Store env shape, observed secret names, synthetic release metadata, and host
+  capability facts without runtime values.
+- Add tests proving validation is `ok`, promotion planning is warning-only,
+  probe gate is `review`, probes are not executed, and fixture secret values are
+  not emitted.
+- Add `make live-hydration-reviewed-fixture` and update docs, roadmap,
+  scratchpad, fixture README, and changelog.
+
+**Dependencies:** Phase 16 promotion plan, Phase 15 probe gate, and the fixture
+app suite.
+
+**Milestone commit:** `test: add reviewed hydration fixture evidence`
+
+**Definition of done:**
+
+- The committed fixture evidence kit validates cleanly.
+- The promotion plan emits source hashes and target paths without copying files.
+- The probe gate reaches review mode and emits explicit commands without
+  running probes.
+- The flow is available through a Make target and documented as the safe
+  rehearsal path before live values.
+
+**Boundary:** Phase 17 does not collect real values, write runtime files,
+promote evidence, run probes, call providers, refresh state, execute workflows,
+or mutate production. It is a synthetic fixture rehearsal only.
+
 ## Phase Dependency Graph
 
 ```text
@@ -840,6 +882,7 @@ Phase 0 docs
                           -> Phase 14 hydration evidence validation
                             -> Phase 15 no-probe live gate
                               -> Phase 16 live evidence promotion plan
+                                -> Phase 17 reviewed hydration fixture evidence
 ```
 
 Phase 4 and Phase 5 can proceed partly in parallel after Phase 3 if their

@@ -2,7 +2,9 @@
 
 This directory contains synthetic micro apps and runtime observations for
 testing Ophelia readiness, placement, drift, provider, secret, backup, and
-workflow surfaces without touching production state.
+workflow surfaces without touching production state. It also includes reviewed
+hydration evidence for one focused app so validation, promotion planning, and
+probe-review flows can be rehearsed without live values.
 
 The suite is intentionally mixed:
 
@@ -28,6 +30,7 @@ docs, but they must not be copied into a real runtime root.
 make validate-fixtures
 make live-readiness-fixtures
 make live-drills-fixtures
+make live-hydration-reviewed-fixture
 make production-hardening-fixtures
 ```
 
@@ -35,3 +38,8 @@ The live-readiness target uses `--allow-blocked` because
 `fixture-incomplete-app` is expected to make the aggregate report blocked.
 The live-drills target validates the committed expected mixed states in
 `live-drills.yml`.
+
+The reviewed hydration target uses
+`hydration/fixture-postgres-api/staging/`. That kit stores env shape, observed
+secret names, synthetic release metadata, and host capability facts only. It
+does not store runtime values and must not be copied into a real runtime root.

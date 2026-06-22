@@ -30,6 +30,7 @@ from ophelia.main import main  # noqa: E402
 
 
 FIXTURE_PROFILES = REPO_ROOT / "fixtures" / "app-suite" / "live-drills.yml"
+FIXTURE_REVIEWED_EVIDENCE = REPO_ROOT / "fixtures" / "app-suite" / "hydration" / "fixture-postgres-api" / "staging"
 LOCAL_PROFILES = REPO_ROOT / "config" / "ophelia-live-drills.yml"
 
 
@@ -347,6 +348,38 @@ class LiveHydrationTests(unittest.TestCase):
         self.assertFalse(any(action["copy_performed"] for action in report["file_actions"]))
         self.assertNotIn("DATABASE_URL=", encoded)
         self.assertNotIn("replace-with-real-release-id", encoded)
+
+    def test_reviewed_fixture_evidence_is_probe_review_ready_without_mutation(self) -> None:
+        validation = live_hydration_evidence_validate(
+            profile="fixture-postgres-focused",
+            profiles_path=FIXTURE_PROFILES,
+            input_dir=FIXTURE_REVIEWED_EVIDENCE,
+        )
+        gate = live_hydration_probe_gate(
+            profile="fixture-postgres-focused",
+            profiles_path=FIXTURE_PROFILES,
+            input_dir=FIXTURE_REVIEWED_EVIDENCE,
+        )
+        plan = live_hydration_promotion_plan(
+            profile="fixture-postgres-focused",
+            profiles_path=FIXTURE_PROFILES,
+            input_dir=FIXTURE_REVIEWED_EVIDENCE,
+        )
+        encoded = json.dumps(plan, sort_keys=True)
+
+        self.assertEqual("ok", validation["status"])
+        self.assertEqual("warning", gate["status"])
+        self.assertEqual("review", gate["go_no_go"])
+        self.assertFalse(gate["probes_executed"])
+        self.assertGreaterEqual(len(gate["probe_commands"]), 1)
+        self.assertEqual("warning", plan["status"])
+        self.assertEqual("ok", plan["evidence_status"])
+        self.assertEqual("review", plan["probe_gate_go_no_go"])
+        self.assertFalse(plan["mutates_state"])
+        self.assertFalse(any(action["copy_performed"] for action in plan["file_actions"]))
+        self.assertTrue(all(action["source"]["sha256"] for action in plan["file_actions"]))
+        self.assertNotIn("fixture-postgres-token-value", encoded)
+        self.assertNotIn("fixture-db-password", encoded)
 
     def test_promotion_plan_blocks_secret_values_without_emitting_them(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

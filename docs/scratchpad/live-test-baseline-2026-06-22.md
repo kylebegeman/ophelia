@@ -40,7 +40,13 @@ refresh, and apply/create commands were not run.
   --profile quark-ops-staging-file-baseline \
   --profiles config/ophelia-live-drills.yml \
   --json
+./cli/ship live-hydration promotion-plan \
+  --profile fixture-postgres-focused \
+  --profiles fixtures/app-suite/live-drills.yml \
+  --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging \
+  --json
 make live-drills-fixtures
+make live-hydration-reviewed-fixture
 ```
 
 ## Result Summary
@@ -98,6 +104,9 @@ blockers expected for this first live baseline.
   default evidence directory is absent and can produce a warning checklist from
   a temporary generated scaffold with source hashes, target paths, and no file
   contents.
+- `fixture-postgres-focused` now has a committed reviewed evidence kit that
+  validates as `ok`. Its promotion plan remains read-only and warning-only
+  because fixture drift still requires review before probes.
 - Secret-provider metadata is useful after the live-readiness redaction fix:
   compact secret reports now show kind, status, key count, missing count,
   blocker count, warning count, and summary without exposing values.

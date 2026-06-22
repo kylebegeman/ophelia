@@ -97,6 +97,12 @@ Temporary scaffold promotion-plan smoke:
 make live-hydration-promotion-plan-quark-staging
 ```
 
+Rehearse the reviewed-evidence flow against the committed fixture kit:
+
+```bash
+make live-hydration-reviewed-fixture
+```
+
 Run from explicit app inputs instead of a profile:
 
 ```bash
@@ -194,6 +200,22 @@ The gate is a decision report, not a runner. Current Quark staging returns
 The promotion plan is an evidence handoff checklist. It intentionally does not
 copy reviewed files into runtime paths, edit provider observation files, merge
 host inventory, or run probes.
+
+## Reviewed Fixture Kit
+
+`fixtures/app-suite/hydration/fixture-postgres-api/staging/` is a committed,
+synthetic reviewed evidence kit for `fixture-postgres-focused`. It is useful
+when changing hydration contracts because it exercises the post-template flow:
+
+- evidence validation returns `ok`
+- promotion planning returns a warning checklist because fixture drift still
+  needs review
+- probe gate returns `review` and emits explicit probe commands without running
+  them
+
+The kit stores env shape, observed secret names, synthetic release metadata, and
+host capability facts. It does not contain runtime values and must not be copied
+into a real runtime root.
 
 ## Current Quark Staging Result
 

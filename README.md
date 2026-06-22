@@ -129,6 +129,7 @@ make validate-fixtures
 make validate-fixture-plugins
 make live-readiness-fixtures
 make live-drills-fixtures
+make live-hydration-reviewed-fixture
 make live-hydration-quark-staging
 make live-hydration-scaffold-quark-staging
 make live-hydration-validate-evidence-quark-staging
@@ -153,6 +154,7 @@ make production-hardening-fixtures
 ./cli/ship workflow resume latest:dragon-writer --confirm-node export-create=<token> --set MANIFEST_PATH=manifests/dragon-writer.ophelia.yml --set PROVIDER_CONFIG=providers.json --set MANIFEST_DIR=manifests --set EXPORT_BUNDLE=exports/dragon-writer --json
 ./cli/ship workflow pause latest:dragon-writer --json
 ./cli/ship workflow cancel latest:dragon-writer --json
+./cli/ship live-hydration promotion-plan --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
 ./cli/ship receipts list --app dragon-writer --json
 ./cli/ship pack init --app dragon-writer --environment production --critical --postgres --uploads --json
 ./cli/ship inspect conflicts
@@ -225,7 +227,8 @@ starting SSH and never prints their values.
 16. Phase 14 has landed: hydration evidence validation now checks scaffold/evidence directories without promotion or value emission.
 17. Phase 15 has landed: a no-probe gate now combines hydration and evidence validation before suggesting opt-in probe commands.
 18. Phase 16 has landed: a read-only promotion plan now turns reviewed evidence kits into hashed source and target checklists without copying files.
-19. Next work: collect one real app runtime snapshot from reviewed scaffold templates, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
+19. Phase 17 has landed: a committed reviewed fixture evidence kit now rehearses validation, promotion planning, and probe review without live values.
+20. Next work: collect one real app runtime snapshot from reviewed scaffold templates, then run opt-in HTTP/Docker/provider probes behind explicit read-only flags before any production migration rehearsal.
 
 ## Deploy Flows
 
@@ -260,6 +263,7 @@ shape: plan, inspect the report, then pass the matching `--confirm` token.
 - `ship live-readiness run` for a read-only aggregate over real runtime/manifests, provider observations, host readiness, placement, observability, secrets, and drift. HTTP and Docker probes are opt-in.
 - `make validate-fixtures` and `make live-readiness-fixtures` for the committed synthetic app suite. The live-readiness fixture target uses `--allow-blocked` because one fixture is intentionally incomplete.
 - `ship live-drills list|run|run-all` for named read-only drill profiles over live-readiness and optional hardening. `make live-drills-fixtures` runs the committed fixture profiles and validates their expected mixed states.
+- `make live-hydration-reviewed-fixture` for a committed reviewed Postgres evidence kit that validates cleanly and produces a read-only promotion checklist before probe review.
 - `ship live-hydration report` for one-app, read-only baseline evidence gaps before enabling probes. `make live-hydration-quark-staging` runs the current focused Quark staging audit and preserves `status: "blocked"` in JSON while exiting zero for repeatable review.
 - `ship live-hydration scaffold` for non-secret env, secret-name, release, and host inventory templates in a separate hydration workspace. It is dry-run by default; `--write` writes templates only, not live runtime evidence.
 - `ship live-hydration validate-evidence` for read-only scaffold/evidence validation. It blocks malformed kits and secret-looking scaffold values without copying or promoting runtime files.

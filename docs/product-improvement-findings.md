@@ -398,3 +398,8 @@ mutation: it maps reviewed evidence-kit files to consumed runtime, provider
 observation, release metadata, and host inventory targets with source hashes and
 target existence checks. It deliberately remains read-only, so it improves
 handoff quality without introducing an automated promotion path yet.
+
+The reviewed fixture evidence kit makes that handoff testable without live
+values. The fixture Postgres app now carries a committed evidence directory that
+validates cleanly, produces a promotion checklist, and moves the probe gate to
+operator review without executing probes.

@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-quark-staging live-hydration-scaffold-quark-staging live-hydration-validate-evidence-quark-staging live-hydration-probe-gate-quark-staging live-hydration-promotion-plan-quark-staging lumen-console-fixtures production-hardening-fixtures test compile docs-check
+.PHONY: venv validate-examples render-examples validate-manifests render-manifests validate-fixtures validate-fixture-plugins live-readiness-fixtures live-drills-fixtures live-hydration-reviewed-fixture live-hydration-quark-staging live-hydration-scaffold-quark-staging live-hydration-validate-evidence-quark-staging live-hydration-probe-gate-quark-staging live-hydration-promotion-plan-quark-staging lumen-console-fixtures production-hardening-fixtures test compile docs-check
 
 venv:
 	python3 -m venv .venv
@@ -38,6 +38,10 @@ live-readiness-fixtures:
 
 live-drills-fixtures:
 	@./cli/ship live-drills run-all --profiles fixtures/app-suite/live-drills.yml --json
+
+live-hydration-reviewed-fixture:
+	@./cli/ship live-hydration validate-evidence --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json >/dev/null
+	@./cli/ship live-hydration promotion-plan --profile fixture-postgres-focused --profiles fixtures/app-suite/live-drills.yml --input-dir fixtures/app-suite/hydration/fixture-postgres-api/staging --json
 
 live-hydration-quark-staging:
 	@./cli/ship live-hydration report --profile quark-ops-staging-file-baseline --profiles config/ophelia-live-drills.yml --allow-blocked --json
