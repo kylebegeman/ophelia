@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "kind": "ophelia.llm_manifest",
+  "project": "ophelia",
+  "status": "pre-1.0",
+  "summary": "Fixture-first VPS deployment control plane with manifest validation, runtime rendering, safety-gated operations, receipts, and agent-readable JSON contracts.",
+  "primary_commands": [
+    "./cli/ship self-test --json",
+    "./cli/ship commands catalog --json",
+    "./cli/ship schema manifest --json",
+    "./cli/ship open-source audit --json"
+  ],
+  "validation_commands": [
+    "make validate-examples",
+    "make validate-manifests",
+    "make validate-fixtures",
+    "make validate-adoption-fixtures",
+    "make validate-fixture-plugins",
+    "make render-examples",
+    "make render-manifests",
+    "make test",
+    "make compile",
+    "make docs-check",
+    "make open-source-audit-strict"
+  ],
+  "entrypoints": [
+    {
+      "label": "README",
+      "path": "../../README.md",
+      "purpose": "Human and agent overview, quick start, command map, and documentation map."
+    },
+    {
+      "label": "Platform handbook",
+      "path": "../platform-handbook.md",
+      "purpose": "Operator model and public-safe platform direction."
+    },
+    {
+      "label": "Manifest spec",
+      "path": "../manifest-spec.md",
+      "purpose": "App manifest field reference and examples."
+    },
+    {
+      "label": "Job and action API",
+      "path": "../job-action-api.md",
+      "purpose": "Command catalog, JSON envelopes, local API, and agent contracts."
+    },
+    {
+      "label": "Fixture app suite",
+      "path": "../fixture-app-suite.md",
+      "purpose": "Synthetic apps and runtime observations used for tests and demos."
+    },
+    {
+      "label": "Open source readiness",
+      "path": "../open-source-readiness.md",
+      "purpose": "Public-release audit, governance, and hygiene rules."
+    }
+  ],
+  "safety": {
+    "default_posture": "read-only",
+    "mutating_commands_require_plan": true,
+    "confirmation_tokens_required_for_risky_apply": true,
+    "secret_values_allowed_in_public_repo": false,
+    "public_examples_use": [
+      "fixtures",
+      "synthetic app names",
+      "example.com domains"
+    ]
+  }
+}
