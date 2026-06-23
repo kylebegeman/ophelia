@@ -77,6 +77,16 @@ class PortabilityTests(unittest.TestCase):
         self.assertNotIn("postgres://user:password", blob)
         self.assertIn("<redacted>", blob)
 
+    def test_pack_validation_warns_when_offsite_required_without_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "demo-service.ophelia.yml"
+            manifest_path.write_text(_portable_manifest())
+            manifest = load_manifest(manifest_path)
+
+            report = pack_validation_report(manifest, manifest_path)
+
+        self.assertIn("offsite_backup_target_missing", {item["code"] for item in report["warnings"]})
+
     def test_export_plan_is_read_only_and_redacts_env_shape(self) -> None:
         with self._skip_docker_status():
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -545,6 +555,85 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual("succeeded", receipt["status"])
         self.assertTrue(drill_plan_exists)
         self.assertTrue(artifact_checks_exists)
+
+    def test_restore_drill_apply_runs_exported_volume_verify_command(self) -> None:
+        with self._skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                runtime_root = root / "runtime"
+                uploads_root = root / "uploads"
+                checks_root = root / "ophelia" / "checks"
+                uploads_root.mkdir()
+                checks_root.mkdir(parents=True)
+                (uploads_root / "draft.txt").write_text("portable fixture\n")
+                verify_script = checks_root / "data-verify.sh"
+                verify_script.write_text(
+                    "#!/usr/bin/env sh\n"
+                    "set -eu\n"
+                    "test -f \"$1/draft.txt\"\n"
+                    "printf '{\"ok\":true}\\n'\n"
+                )
+                verify_script.chmod(0o755)
+                manifest_path = root / "volume-verify.ophelia.yml"
+                manifest_path.write_text(_portable_manifest_with_volume_verify())
+                manifest = load_manifest(manifest_path)
+                app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+                (app_root / "active_release.json").write_text((app_root / "release.json").read_text())
+                _write_filled_env(app_root)
+                _write_backup(runtime_root, "volume-verify-app")
+                export = export_plan("volume-verify-app", "production", runtime_root, manifest_path, root)
+                export_receipt = export_create(
+                    "volume-verify-app",
+                    "production",
+                    runtime_root,
+                    manifest_path,
+                    str(export["confirmation_token"]),
+                    root,
+                )
+                bundle_path = Path(str(export_receipt["bundle_path"]))
+                source = Path(str(export_receipt["bundle_tar_path"]))
+                plan = restore_drill_plan("volume-verify-app", "production", runtime_root, manifest_path, source)
+                receipt = restore_drill_apply(
+                    "volume-verify-app",
+                    "production",
+                    runtime_root,
+                    manifest_path,
+                    source,
+                    str(plan["confirmation_token"]),
+                )
+                backup_plan = restore_drill_plan(
+                    "volume-verify-app",
+                    "production",
+                    runtime_root,
+                    manifest_path,
+                    source,
+                    operation_base="backup.rehearse",
+                    readiness_gate=False,
+                )
+                backup_receipt = restore_drill_apply(
+                    "volume-verify-app",
+                    "production",
+                    runtime_root,
+                    manifest_path,
+                    source,
+                    str(backup_plan["confirmation_token"]),
+                    operation_base="backup.rehearse",
+                    readiness_gate=False,
+                )
+                verifier_copied = (bundle_path / "runtime" / "ophelia" / "checks" / "data-verify.sh").exists()
+                backup_receipt_path = Path(str(backup_receipt["drill_path"])) / "receipts" / "backup-rehearse-apply.json"
+                backup_receipt_file_exists = backup_receipt_path.exists()
+
+        self.assertEqual([], plan["blockers"])
+        self.assertEqual("succeeded", receipt["status"])
+        self.assertEqual("backup.rehearse.plan", backup_plan["operation"])
+        self.assertEqual("backup.rehearse.apply", backup_receipt["operation"])
+        self.assertEqual("succeeded", backup_receipt["status"])
+        self.assertTrue(verifier_copied)
+        self.assertTrue(backup_receipt_file_exists)
+        check = next(item for item in receipt["checks"] if item.get("name") == "app_verify_hook:uploads")
+        self.assertTrue(check["ok"])
+        self.assertIn("exit 0", check["message"])
 
     def test_cutover_apply_writes_checkpoint_without_route_mutation(self) -> None:
         with self._skip_docker_status():
@@ -1986,6 +2075,48 @@ data:
 verify:
   - name: health
     url: https://demo-service.example.net/health
+""".strip() + "\n"
+
+
+def _portable_manifest_with_volume_verify() -> str:
+    return """
+version: 1
+app: volume-verify-app
+environment: production
+kind: service
+image: ghcr.io/example/volume-verify-app@sha256:aaaaaaaa
+pack:
+  portability: critical
+  owner: personal
+host_requirements:
+  min_disk_free: 1b
+services:
+  web:
+    port: 3000
+routes:
+  - domain: volume-verify.example.net
+    service: web
+data:
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      source: uploads
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+      verify:
+        command: ophelia/checks/data-verify.sh {path}
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/volume-verify-app
+      retention_days: 30
+verify:
+  - name: health
+    url: https://volume-verify.example.net/health
 """.strip() + "\n"
 
 

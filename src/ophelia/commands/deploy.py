@@ -223,6 +223,7 @@ def _run_verification(manifest, args: Namespace):
         attempts=args.verify_attempts,
         interval=args.verify_interval,
         failure_mode=args.verify_failure_mode,
+        runtime_root=args.runtime_root,
     )
 
 
@@ -237,9 +238,13 @@ def _print_verification(app: str, verification: dict) -> None:
     )
     for item in verification["results"]:
         prefix = "ok" if item["ok"] else "failed"
-        detail = f"HTTP {item['status_code']}" if item["status_code"] is not None else "request failed"
+        if item.get("type") == "command":
+            detail = f"exit {item.get('returncode')}"
+        else:
+            detail = f"HTTP {item['status_code']}" if item.get("status_code") is not None else "request failed"
         phase = item.get("phase") or verification.get("phase")
-        print(f"  {prefix} {item['name']}: phase={phase} {detail} -> {item['url']}")
+        target = item.get("url") or item.get("command") or item.get("service") or ""
+        print(f"  {prefix} {item['name']}: phase={phase} {detail} -> {target}")
         if item.get("error"):
             kind = f"{item.get('error_kind')}: " if item.get("error_kind") else ""
             print(f"    {kind}{item['error']}")

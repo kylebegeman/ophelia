@@ -95,6 +95,10 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/demo-service
+      retention_days: 30
 
 hooks:
   freeze: ophelia/hooks/freeze.sh
@@ -107,6 +111,17 @@ verify:
   - name: home
     url: https://demo-service.example.com/
     expect_status: 200
+  - name: internal-runtime-health
+    type: command
+    service: web
+    command:
+      - npm
+      - run
+      - ophelia:health
+      - --
+      - --json
+    expect_json:
+      status: ok
 ```
 
 `data.volumes[].mount` is both a portability contract and a runtime contract.
@@ -118,6 +133,16 @@ Compose-relative source path. Export create archives declared host sources
 directly. For app-owned Docker named volumes, export create uses a local helper
 image to mount the volume read-only and write the archive into the export
 bundle without printing data.
+
+Top-level `verify` supports both public HTTP checks and internal command checks.
+Use `type: command` for app-owned health or release commands that should run
+inside the app service network with `docker compose exec -T <service> ...`.
+Both HTTP and command checks can declare `expect_json` dot-path assertions for
+stable app-owned JSON fields.
+
+When `data.backups.offsite_required: true`, declare the concrete offsite target:
+`data.backups.offsite.provider`, `target`, and `retention_days`. Pack
+validation warns with `offsite_backup_target_missing` until all three are set.
 
 ## Field Reference
 
@@ -232,6 +257,7 @@ demo-service.production.export.<timestamp>.tar.zst
     active_release.json
     compose.yml
     caddy/
+    ophelia/
   data/
     postgres/
       demo_service.dump
@@ -290,6 +316,23 @@ credential URLs are masked while preserving enough command shape for review.
 These commands are read-only. They report redacted env shape, backup freshness,
 route/domain ownership, portability score, generated runbook text, and existing
 operation receipts.
+
+### Backup Rehearsal Commands
+
+```bash
+./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
+./cli/ship backup rehearse apply ./exports/demo-service.production.export.tar --manifest .ophelia.yml --confirm <token> --json
+```
+
+`backup rehearse` is the app-manifest-facing rehearsal flow for a concrete
+export bundle directory, `.tar`, or `.tar.zst`. Plan is read-only. Apply is
+confirmation-gated, writes only under the app restore-drills directory, safely
+extracts archives into isolated paths, and runs declared
+`data.volumes[].verify.command` hooks against extracted volume data.
+
+Verifier commands should be read-only and deterministic. They can use `{path}`,
+`{data_path}`, or `{volume_path}` to receive the extracted volume path; if no
+placeholder is present, Ophelia appends the path as the final argument.
 
 #### Readiness Report Fields
 
@@ -434,8 +477,10 @@ start containers, or change Caddy/DNS.
 ```
 
 A restore drill proves the exported artifacts are usable without damaging the
-live app. The current apply form validates bundle/artifact readability and writes
-a restore-drill receipt. It does not restore over production or start services.
+live app. Apply validates bundle/artifact readability, safely extracts artifact
+contents into an isolated drill directory, runs declared app-owned volume
+verifier commands, and writes a restore-drill receipt. It does not restore over
+production or start services.
 
 ### Cutover Commands
 

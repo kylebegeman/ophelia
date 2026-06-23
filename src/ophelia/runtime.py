@@ -117,6 +117,8 @@ def _bundle_support_file_map(manifest: Manifest) -> List[tuple[str, Path, bool]]
         add(source, Path(source), required=True)
     for source in _manifest_relative_data_command_paths(manifest):
         add(source, Path(source), required=False)
+    for source in _manifest_relative_verify_command_paths(manifest):
+        add(source, Path(source), required=False)
 
     return files
 
@@ -151,6 +153,18 @@ def _manifest_relative_data_command_paths(manifest: Manifest) -> List[str]:
             if path:
                 paths.append(path)
 
+    return paths
+
+
+def _manifest_relative_verify_command_paths(manifest: Manifest) -> List[str]:
+    paths: List[str] = []
+    for check in manifest.verify:
+        command = check.command or []
+        if not command:
+            continue
+        candidate = command[0]
+        if _is_relative_support_path(candidate):
+            paths.append(candidate)
     return paths
 
 

@@ -5,7 +5,7 @@
 **A fixture-first deployment control plane for VPS apps, safe operations, and agent-readable workflows.**
 
 [![CI](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.3.7-2563EB)
+![Version](https://img.shields.io/badge/version-0.3.8-2563EB)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
@@ -49,7 +49,7 @@ made.
 
 | Item | Status |
 | --- | --- |
-| Current version | `0.3.7` |
+| Current version | `0.3.8` |
 | Stability | Pre-1.0, core contracts are active but still evolving deliberately. |
 | Distribution | GitHub only. No PyPI release path is configured. |
 | Visibility | Private until the public release decision is made. |
@@ -114,7 +114,7 @@ PY
 Expected output:
 
 ```text
-0.3.7
+0.3.8
 Repository, https://github.com/mrbagels/ophelia
 Issues, https://github.com/mrbagels/ophelia/issues
 ```
@@ -210,21 +210,40 @@ Production apply requires the confirmation token from the matching plan:
 Minimal service manifest:
 
 ```yaml
-schema_version: 1
+version: 1
 app: demo-service
 environment: staging
 kind: service
 image: ghcr.io/example/demo-service:latest
-runtime:
-  internal_port: 8080
+services:
+  web:
+    port: 8080
 routes:
-  - host: demo-service.example.com
-    path: /
-checks:
-  health_url: https://demo-service.example.com/health
+  - domain: demo-service.example.com
+    service: web
+data:
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/demo-service
+      retention_days: 30
 verify:
-  restore:
-    command: ./scripts/verify-restore.sh
+  - name: health
+    url: https://demo-service.example.com/health
+  - name: internal-runtime-health
+    type: command
+    service: web
+    command:
+      - npm
+      - run
+      - ophelia:health
+      - --
+      - --json
+    expect_json:
+      status: ok
 ```
 
 Full field reference: [Manifest Spec](docs/manifest-spec.md).
@@ -249,11 +268,11 @@ Ophelia's default posture is conservative:
 | `validate`, `explain`, `schema` | Manifest validation and contract discovery. |
 | `render`, `deploy`, `diff`, `rollback` | Runtime bundle planning and controlled apply flows. |
 | `pack`, `app adoption`, `app readiness` | App portability, manifest bootstrap, migration readiness, and adoption checks. |
-| `backup`, `restore`, `restore-drills` | Backup planning, restore previews, and drill receipts. |
+| `backup`, `restore`, `restore-drills` | Backup planning, artifact rehearsal, restore previews, and drill receipts. |
 | `host`, `live-readiness`, `live-drills`, `live-hydration` | Host readiness, app readiness, evidence scaffolds, and reviewed live observations. |
 | `workflow`, `operations`, `receipts`, `state` | Agent-executable operation graphs, receipts, and local state indexing. |
 | `providers`, `secrets`, `policy`, `hardening` | Provider readiness, secret references, safety policy, and production go/no-go checks. |
-| `plugins`, `lumen`, `api` | Plugin metadata, read-only operator-console payloads, and local API integration. |
+| `plugins`, operator-console API, `api` | Plugin metadata, read-only operator-console payloads, and local API integration. |
 | `open-source` | Public-release hygiene scanning. |
 
 Machine-readable discovery:

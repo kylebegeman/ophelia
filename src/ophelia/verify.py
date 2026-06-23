@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import errno
+import json
+import shlex
 import socket
 import ssl
+import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .config import DEFAULT_RUNTIME_ROOT
 from .manifest import Manifest, VerificationCheck, VerificationPolicy
-from .redaction import redact_url
+from .redaction import deep_redact, redact_command_string, redact_url
 
 
 TLS_PHASE = "certificate_obtain"
@@ -52,8 +57,11 @@ def run_verifications(
     interval: Optional[float] = None,
     failure_mode: Optional[str] = None,
     wait_for_tls: bool = True,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
 ) -> Dict[str, Any]:
     checks = verification_checks(manifest)
+    http_checks = [check for check in checks if check.type == "http"]
+    command_checks = [check for check in checks if check.type == "command"]
     policy = effective_verification_policy(
         manifest,
         timeout=timeout,
@@ -83,18 +91,26 @@ def run_verifications(
         ok = True
 
         if wait_for_tls:
-            tls_readiness = _check_tls_readiness(checks, timeout=policy["timeout"], ssl_context=ssl_context)
+            tls_readiness = _check_tls_readiness(http_checks, timeout=policy["timeout"], ssl_context=ssl_context)
             failed_tls = [item for item in tls_readiness if not item["ok"]]
             if failed_tls:
                 phase = TLS_PHASE
-                results = _tls_results_for_checks(checks, tls_readiness)
+                results = _tls_results_for_checks(http_checks, tls_readiness)
+                results.extend(
+                    _run_command_check(manifest, check, runtime_root=runtime_root, timeout=policy["timeout"])
+                    for check in command_checks
+                )
                 ok = False
 
         if ok:
             results = [
                 _run_check(check, timeout=policy["timeout"], ssl_context=ssl_context)
-                for check in checks
+                for check in http_checks
             ]
+            results.extend(
+                _run_command_check(manifest, check, runtime_root=runtime_root, timeout=policy["timeout"])
+                for check in command_checks
+            )
             ok = all(result["ok"] for result in results)
 
         payload = _verification_payload(
@@ -181,6 +197,15 @@ def _verification_payload(
 
 
 def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLContext) -> Dict[str, Any]:
+    if check.url is None:
+        return {
+            "name": check.name or "http",
+            "type": check.type,
+            "phase": ROUTE_PHASE,
+            "ok": False,
+            "error": "HTTP verification check is missing a URL.",
+            "error_kind": "manifest_invalid",
+        }
     display_url = redact_url(check.url)
     name = check.name or display_url
     request = urllib.request.Request(check.url, headers={"User-Agent": "ophelia-verify/1.0"})
@@ -191,14 +216,19 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
             matched = status == check.expect_status
             if matched and check.contains:
                 matched = check.contains in body
+            json_assertions = _json_assertions(body, check.expect_json)
+            if json_assertions and not all(item["ok"] for item in json_assertions):
+                matched = False
 
             return {
                 "name": name,
+                "type": "http",
                 "url": display_url,
                 "phase": ROUTE_PHASE,
                 "status_code": status,
                 "expected_status": check.expect_status,
                 "contains": check.contains,
+                "json_assertions": json_assertions,
                 "ok": matched,
             }
     except urllib.error.HTTPError as exc:
@@ -206,13 +236,18 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
         matched = exc.code == check.expect_status
         if matched and check.contains:
             matched = check.contains in body
+        json_assertions = _json_assertions(body, check.expect_json)
+        if json_assertions and not all(item["ok"] for item in json_assertions):
+            matched = False
         result = {
             "name": name,
+            "type": "http",
             "url": display_url,
             "phase": ROUTE_PHASE,
             "status_code": exc.code,
             "expected_status": check.expect_status,
             "contains": check.contains,
+            "json_assertions": json_assertions,
             "ok": matched,
         }
         if not matched:
@@ -222,6 +257,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
     except Exception as exc:  # pragma: no cover - network failures vary by environment.
         return {
             "name": name,
+            "type": "http",
             "url": display_url,
             "phase": ROUTE_PHASE,
             "status_code": None,
@@ -231,6 +267,133 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
             "error": str(exc),
             "error_kind": _classify_error(exc),
         }
+
+
+def _run_command_check(
+    manifest: Manifest,
+    check: VerificationCheck,
+    runtime_root: Path,
+    timeout: float,
+) -> Dict[str, Any]:
+    app_root = runtime_root / "apps" / manifest.app
+    compose_path = app_root / "compose.yml"
+    service = check.service or ""
+    command = list(check.command or [])
+    name = check.name or f"{service}:command"
+    display_command = redact_command_string(shlex.join(command))
+    if not compose_path.exists():
+        return {
+            "name": name,
+            "type": "command",
+            "service": service,
+            "phase": "internal_service_verify",
+            "command": display_command,
+            "ok": False,
+            "error": f"Compose file not found: {compose_path}",
+            "error_kind": "compose_missing",
+        }
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "-f", str(compose_path), "exec", "-T", service, *command],
+            cwd=app_root,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "name": name,
+            "type": "command",
+            "service": service,
+            "phase": "internal_service_verify",
+            "command": display_command,
+            "ok": False,
+            "error": f"Command timed out after {timeout:g}s.",
+            "error_kind": "timeout",
+        }
+    except OSError as exc:
+        return {
+            "name": name,
+            "type": "command",
+            "service": service,
+            "phase": "internal_service_verify",
+            "command": display_command,
+            "ok": False,
+            "error": str(exc),
+            "error_kind": type(exc).__name__,
+        }
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    exit_ok = result.returncode == (0 if check.expect_exit is None else check.expect_exit)
+    contains_ok = True if check.contains is None else check.contains in stdout
+    json_assertions = _json_assertions(stdout, check.expect_json)
+    json_ok = all(item["ok"] for item in json_assertions)
+    return {
+        "name": name,
+        "type": "command",
+        "service": service,
+        "phase": "internal_service_verify",
+        "command": display_command,
+        "returncode": result.returncode,
+        "expected_exit": 0 if check.expect_exit is None else check.expect_exit,
+        "contains": check.contains,
+        "json_assertions": json_assertions,
+        "stdout_excerpt": _redacted_excerpt(stdout),
+        "stderr_excerpt": _redacted_excerpt(stderr),
+        "ok": exit_ok and contains_ok and json_ok,
+    }
+
+
+def _json_assertions(body: str, expected: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not expected:
+        return []
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        return [
+            {
+                "path": "<json>",
+                "ok": False,
+                "expected": "valid JSON",
+                "actual": "invalid JSON",
+                "error": str(exc),
+            }
+        ]
+    assertions: List[Dict[str, Any]] = []
+    for field_path, expected_value in sorted(expected.items()):
+        found, actual = _json_path(payload, field_path)
+        ok = found and actual == expected_value
+        assertions.append(
+            deep_redact(
+                {
+                    "path": field_path,
+                    "ok": ok,
+                    "expected": expected_value,
+                    "actual": actual if found else None,
+                    "present": found,
+                },
+                propagate=True,
+            )
+        )
+    return assertions
+
+
+def _json_path(payload: Any, field_path: str) -> Tuple[bool, Any]:
+    current = payload
+    for part in field_path.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        return False, None
+    return True, current
+
+
+def _redacted_excerpt(value: str, limit: int = 240) -> str:
+    if not value:
+        return ""
+    redacted = deep_redact({"value": value}, propagate=True).get("value", "")
+    return str(redacted).replace("\x00", "")[:limit]
 
 
 def _check_tls_readiness(
@@ -270,6 +433,8 @@ def _check_tls_readiness(
 def _https_hosts(checks: List[VerificationCheck]) -> List[Tuple[str, int]]:
     seen: Dict[Tuple[str, int], None] = {}
     for check in checks:
+        if check.url is None:
+            continue
         parsed = urllib.parse.urlparse(check.url)
         if parsed.scheme != "https" or parsed.hostname is None:
             continue
@@ -284,6 +449,8 @@ def _tls_results_for_checks(
     by_host = {(str(item["host"]), int(item["port"])): item for item in tls_readiness}
     results: List[Dict[str, Any]] = []
     for check in checks:
+        if check.url is None:
+            continue
         parsed = urllib.parse.urlparse(check.url)
         display_url = redact_url(check.url)
         name = check.name or display_url
@@ -291,6 +458,7 @@ def _tls_results_for_checks(
             results.append(
                 {
                     "name": name,
+                    "type": "http",
                     "url": display_url,
                     "phase": TLS_PHASE,
                     "status_code": None,
@@ -304,6 +472,7 @@ def _tls_results_for_checks(
         tls_result = by_host.get((parsed.hostname, parsed.port or 443), {})
         result = {
             "name": name,
+            "type": "http",
             "url": display_url,
             "phase": TLS_PHASE,
             "status_code": None,

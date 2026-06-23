@@ -260,6 +260,10 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/demo-service
+      retention_days: 30
 
 hooks:
   pre_export: ophelia/hooks/pre-export.sh
@@ -281,6 +285,17 @@ verify:
     url: https://demo-service.example.com/health
   - name: home
     url: https://demo-service.example.com/
+  - name: internal-runtime-health
+    type: command
+    service: web
+    command:
+      - npm
+      - run
+      - ophelia:health
+      - --
+      - --json
+    expect_json:
+      status: ok
 ```
 
 ## Example: path-routed multi-service app
@@ -328,6 +343,8 @@ Portable pack and readiness commands are read-only by default:
 ./cli/ship pack explain examples/service-app.ophelia.yml --json
 ./cli/ship env diff demo-service --environment production --json
 ./cli/ship backup status demo-service --environment production --json
+./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
+./cli/ship backup rehearse apply ./exports/demo-service.production.export.tar --manifest .ophelia.yml --confirm <token> --json
 ./cli/ship app readiness demo-service --environment production --json
 ./cli/ship app runbook demo-service --environment production
 ./cli/ship app export plan demo-service --environment production --json
@@ -362,8 +379,10 @@ read-only `pg_dump` path. If local `zstd` is available, export create also
 writes the planned `.tar.zst` archive. Production traffic mutation remains
 explicitly gated and must use confirmation tokens from matching plans.
 `ship app import apply` writes an isolated rehearsal preview only. Restore drill
-apply validates export artifact readability and writes receipts. Cutover apply
-writes a checkpoint receipt and does not mutate Caddy or DNS.
+apply validates export artifact readability, safely extracts bundle data into
+an isolated drill directory, runs declared app-owned volume verifier commands,
+and writes receipts. Cutover apply writes a checkpoint receipt and does not
+mutate Caddy or DNS.
 Traffic apply writes a production traffic checkpoint receipt with DNS/Caddy
 provider intent by default. File-backed provider execution is available only
 when the matching plan and apply use `--execute-provider-mutation`,
@@ -395,7 +414,8 @@ When `console.admin_domain` is set, Ophelia will synthesize a route for that hos
 
 ## Verification Checks
 
-`verify` entries are HTTP checks that `ship verify` or `ship deploy --apply --verify` can run after deployment.
+`verify` entries are post-deploy checks that `ship verify` or
+`ship deploy --apply --verify` can run after deployment.
 Ophelia-owned manifests should include at least one explicit verification check
 so preflight, conflict scanning, rollback reports, and operator views can
 show concrete post-change checks.
@@ -403,9 +423,20 @@ show concrete post-change checks.
 Fields:
 
 - `name`: optional human label
-- `url`: required `http://` or `https://` URL
-- `expect_status`: expected status code, default `200`
-- `contains`: optional substring that must appear in the response body
+- `type`: `http` or `command`. Defaults to `http` unless `command` is present.
+- `url`: required `http://` or `https://` URL for `type: http`. URLs cannot
+  contain credentials, query strings, or fragments.
+- `expect_status`: expected HTTP status code, default `200`.
+- `service`: Compose service name for `type: command`.
+- `command`: argv array or shell-tokenized string for `type: command`. Command
+  checks run as `docker compose exec -T <service> ...` inside the rendered app
+  compose project.
+- `expect_exit`: expected command exit code, default `0`.
+- `contains`: optional substring that must appear in the HTTP response body or
+  command stdout.
+- `expect_json`: optional mapping of dot-paths to exact JSON values. HTTP checks
+  parse the response body; command checks parse stdout. Values and command text
+  are redacted in plans and receipts.
 
 `verify_policy` controls retry behavior and whether failed verification should
 block the command. Defaults are tuned for first deploys where Caddy may still be
@@ -419,12 +450,28 @@ obtaining a certificate:
 Verification uses backoff between attempts and separates certificate readiness
 from external route checks for `https://` URLs. A failed run reports the phase as
 `certificate_obtain` when TLS is not ready, or `external_route_verify` when TLS is
-ready but the HTTP check still fails.
+ready but the HTTP check still fails. Command checks still run when HTTP/TLS
+checks fail, so app-owned runtime evidence remains visible in the same receipt.
 
 ```yaml
 verify:
   - name: health
+    type: http
     url: https://ops.example.net/health
+    expect_json:
+      status: ok
+  - name: internal-health
+    type: command
+    service: web
+    command:
+      - npm
+      - run
+      - ophelia:health
+      - --
+      - --json
+    expect_json:
+      status: ok
+      checks.runtime.ok: true
 verify_policy:
   attempts: 12
   interval: 5
@@ -471,6 +518,28 @@ the target container:
 - `class`: optional data class such as `critical`.
 - `export`, `import`, `verify`: portability behavior for movement and restore
   drills.
+
+`data.volumes[].verify.command` is an app-owned read-only verifier for restored
+volume contents. It can use `{path}`, `{data_path}`, or `{volume_path}` as a
+placeholder for the isolated extracted volume path; otherwise Ophelia appends
+that path as the last argument.
+
+`data.backups.offsite_required: true` should include concrete target metadata:
+
+```yaml
+data:
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/demo-service
+      retention_days: 30
+```
+
+When offsite is required but `provider`, `target`, or `retention_days` is
+missing, pack validation emits `offsite_backup_target_missing`.
 
 Named Docker volume ids include the app and environment, for example
 `demo-service-production-uploads`, so staging and production apps on the same

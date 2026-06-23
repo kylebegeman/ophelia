@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
+import shlex
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -29,10 +30,15 @@ class MountConfig:
 
 @dataclass
 class VerificationCheck:
-    url: str
+    url: Optional[str] = None
     expect_status: int = 200
     contains: Optional[str] = None
     name: Optional[str] = None
+    type: str = "http"
+    service: Optional[str] = None
+    command: Optional[List[str]] = None
+    expect_exit: Optional[int] = None
+    expect_json: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -101,10 +107,19 @@ class DataVolumeConfig:
 
 
 @dataclass
+class OffsiteBackupConfig:
+    provider: Optional[str] = None
+    target: Optional[str] = None
+    retention_days: Optional[int] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class DataBackupsConfig:
     required: bool = False
     restore_drill_required: bool = False
     offsite_required: bool = False
+    offsite: Optional[OffsiteBackupConfig] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -557,25 +572,50 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
         if not isinstance(item, dict):
             raise ManifestError(f"`verify[{index}]` must be a mapping.")
 
+        check_type = _optional_str(item.get("type"), f"verify[{index}].type")
+        if check_type is None:
+            check_type = "command" if item.get("command") is not None else "http"
+        if check_type not in {"http", "command"}:
+            raise ManifestError(f"`verify[{index}].type` must be `http` or `command`.")
         url = _optional_str(item.get("url"), f"verify[{index}].url")
-        if url is None or not url.startswith(("http://", "https://")):
-            raise ManifestError(f"`verify[{index}].url` must start with `http://` or `https://`.")
-        parsed_url = urlparse(url)
-        if parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
-            raise ManifestError(
-                f"`verify[{index}].url` must not contain credentials, query strings, or fragments."
-            )
+        if check_type == "http":
+            if url is None or not url.startswith(("http://", "https://")):
+                raise ManifestError(f"`verify[{index}].url` must start with `http://` or `https://`.")
+            parsed_url = urlparse(url)
+            if parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
+                raise ManifestError(
+                    f"`verify[{index}].url` must not contain credentials, query strings, or fragments."
+                )
+        elif url is not None:
+            raise ManifestError(f"`verify[{index}].url` is only supported for `type: http` checks.")
+
+        service = _optional_str(item.get("service"), f"verify[{index}].service")
+        command = _optional_command(item.get("command"), f"verify[{index}].command")
+        if check_type == "command" and (service is None or not command):
+            raise ManifestError(f"`verify[{index}]` command checks require `service` and `command`.")
+        if check_type == "http" and command:
+            raise ManifestError(f"`verify[{index}].command` is only supported for `type: command` checks.")
+
+        expect_exit = _optional_exit_code(item.get("expect_exit"), f"verify[{index}].expect_exit")
+        if check_type == "command" and expect_exit is None:
+            expect_exit = 0
         expect_status = item.get("expect_status", 200)
         if not isinstance(expect_status, int) or expect_status < 100 or expect_status > 599:
             raise ManifestError(f"`verify[{index}].expect_status` must be a valid HTTP status code.")
         contains = _optional_str(item.get("contains"), f"verify[{index}].contains")
         name = _optional_str(item.get("name"), f"verify[{index}].name")
+        expect_json = _parse_expect_json(item.get("expect_json"), f"verify[{index}].expect_json")
         checks.append(
             VerificationCheck(
                 url=url,
                 expect_status=expect_status,
                 contains=contains,
                 name=name,
+                type=check_type,
+                service=service,
+                command=command,
+                expect_exit=expect_exit,
+                expect_json=expect_json,
             )
         )
     return checks
@@ -807,7 +847,7 @@ def _parse_data_backups(raw: Any) -> Optional[DataBackupsConfig]:
         return None
     if not isinstance(raw, dict):
         raise ManifestError("`data.backups` must be a mapping.")
-    known = {"required", "restore_drill_required", "offsite_required"}
+    known = {"required", "restore_drill_required", "offsite_required", "offsite"}
     return DataBackupsConfig(
         required=_as_bool(raw.get("required", False), "data.backups.required"),
         restore_drill_required=_as_bool(
@@ -816,8 +856,27 @@ def _parse_data_backups(raw: Any) -> Optional[DataBackupsConfig]:
         offsite_required=_as_bool(
             raw.get("offsite_required", False), "data.backups.offsite_required"
         ),
+        offsite=_parse_offsite_backup(raw.get("offsite")),
         extra={
             key: _json_compatible(value, f"data.backups.{key}")
+            for key, value in raw.items()
+            if key not in known
+        },
+    )
+
+
+def _parse_offsite_backup(raw: Any) -> Optional[OffsiteBackupConfig]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError("`data.backups.offsite` must be a mapping.")
+    known = {"provider", "target", "retention_days"}
+    return OffsiteBackupConfig(
+        provider=_optional_str(raw.get("provider"), "data.backups.offsite.provider"),
+        target=_optional_offsite_target(raw.get("target"), "data.backups.offsite.target"),
+        retention_days=_optional_int(raw.get("retention_days"), "data.backups.offsite.retention_days"),
+        extra={
+            key: _json_compatible(value, f"data.backups.offsite.{key}")
             for key, value in raw.items()
             if key not in known
         },
@@ -1003,6 +1062,7 @@ def _validate_manifest(manifest: Manifest) -> None:
 
     _validate_edge(manifest)
     _validate_data_volumes(manifest)
+    _validate_verification_checks(manifest)
 
 
 def _validate_data_volumes(manifest: Manifest) -> None:
@@ -1035,6 +1095,16 @@ def _validate_data_volumes(manifest: Manifest) -> None:
                 raise ManifestError(
                     f"`{field_name}.service` is required when mounting a data volume in a multi-service manifest."
                 )
+
+
+def _validate_verification_checks(manifest: Manifest) -> None:
+    for index, check in enumerate(manifest.verify):
+        field_name = f"verify[{index}]"
+        if check.type == "command":
+            if manifest.kind not in {"service", "multi-service"}:
+                raise ManifestError(f"`{field_name}` command checks require a service-based manifest.")
+            if check.service not in manifest.services:
+                raise ManifestError(f"`{field_name}.service` references unknown service `{check.service}`.")
 
 
 def _validate_edge(manifest: Manifest) -> None:
@@ -1208,6 +1278,14 @@ def _optional_int(value: Any, field_name: str) -> Optional[int]:
     return value
 
 
+def _optional_exit_code(value: Any, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+        raise ManifestError(f"`{field_name}` must be an integer from 0 to 255.")
+    return value
+
+
 def _optional_float(value: Any, field_name: str) -> Optional[float]:
     if value is None:
         return None
@@ -1244,6 +1322,42 @@ def _string_list(value: Any, field_name: str) -> List[str]:
             raise ManifestError(f"`{field_name}` must contain non-empty strings.")
         items.append(item)
     return items
+
+
+def _optional_command(value: Any, field_name: str) -> Optional[List[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value.strip():
+            raise ManifestError(f"`{field_name}` must be a non-empty string or list.")
+        try:
+            items = shlex.split(value)
+        except ValueError as exc:
+            raise ManifestError(f"`{field_name}` must be shell-tokenizable.") from exc
+        if not items:
+            raise ManifestError(f"`{field_name}` must not be empty.")
+        return items
+    if not isinstance(value, list):
+        raise ManifestError(f"`{field_name}` must be a non-empty string or list.")
+    items: List[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ManifestError(f"`{field_name}` must contain non-empty strings.")
+        items.append(item)
+    if not items:
+        raise ManifestError(f"`{field_name}` must not be empty.")
+    return items
+
+
+def _parse_expect_json(value: Any, field_name: str) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ManifestError(f"`{field_name}` must be a mapping of JSON field paths to expected values.")
+    return {
+        _mapping_key(key, field_name): _json_compatible(item, f"{field_name}.{key}")
+        for key, item in value.items()
+    }
 
 
 def _mapping_as_str_dict(value: Any, field_name: str) -> Dict[str, str]:
@@ -1320,6 +1434,18 @@ def _json_compatible(value: Any, field_name: str) -> Any:
             for key, item in value.items()
         }
     raise ManifestError(f"`{field_name}` must be JSON-compatible.")
+
+
+def _optional_offsite_target(value: Any, field_name: str) -> Optional[str]:
+    target = _optional_str(value, field_name)
+    if target is None:
+        return None
+    parsed = urlparse(target)
+    if parsed.scheme and (parsed.username or parsed.password or parsed.query or parsed.fragment):
+        raise ManifestError(
+            f"`{field_name}` must not contain credentials, query strings, or fragments."
+        )
+    return target
 
 
 def _optional_bool(value: Any, field_name: str) -> Optional[bool]:

@@ -18,6 +18,9 @@ from ophelia.verify import run_verifications, verification_blocks_release
 class _FakeResponse:
     status = 200
 
+    def __init__(self, body: bytes = b"ok"):
+        self.body = body
+
     def __enter__(self):
         return self
 
@@ -25,7 +28,7 @@ class _FakeResponse:
         return False
 
     def read(self) -> bytes:
-        return b"ok"
+        return self.body
 
 
 class VerifyTests(unittest.TestCase):
@@ -97,6 +100,61 @@ class VerifyTests(unittest.TestCase):
         self.assertFalse(urlopen.called)
         sleep.assert_called_once_with(1)
 
+    def test_command_verification_runs_even_when_tls_is_not_ready(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="mixed-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(name="public-health", url="https://example.com/health"),
+                VerificationCheck(
+                    name="internal-health",
+                    type="command",
+                    service="web",
+                    command=["npm", "run", "ophelia:health", "--", "--json"],
+                    expect_exit=0,
+                    expect_json={"status": "ok"},
+                ),
+            ],
+        )
+        tls_result = [
+            {
+                "host": "example.com",
+                "port": 443,
+                "phase": "certificate_obtain",
+                "ok": False,
+                "error": "certificate not ready",
+                "error_kind": "tls_handshake",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            app_root = runtime_root / "apps" / "mixed-app"
+            app_root.mkdir(parents=True)
+            (app_root / "compose.yml").write_text("services:\n  web:\n    image: example/app\n")
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout='{"status":"ok"}',
+                stderr="",
+            )
+            with mock.patch("ophelia.verify._check_tls_readiness", return_value=tls_result), mock.patch(
+                "ophelia.verify.urllib.request.urlopen"
+            ) as urlopen, mock.patch("ophelia.verify.subprocess.run", return_value=completed) as run:
+                payload = run_verifications(manifest, runtime_root=runtime_root, attempts=1)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual("certificate_obtain", payload["phase"])
+        self.assertFalse(urlopen.called)
+        run.assert_called_once()
+        command_result = next(item for item in payload["results"] if item["type"] == "command")
+        self.assertTrue(command_result["ok"])
+
     def test_warn_failure_mode_does_not_block_release(self) -> None:
         manifest = Manifest(
             version=1,
@@ -143,6 +201,79 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual("https://<redacted>@example.com/health?<redacted>#<redacted>", result_url)
         self.assertNotIn("secret", json.dumps(payload))
         self.assertNotIn("token=abc", json.dumps(payload))
+
+    def test_http_verification_can_assert_json_fields(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="json-http-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="health",
+                    url="http://example.com/ophelia/health",
+                    expect_json={"status": "ok", "checks.runtime.ok": True},
+                )
+            ],
+        )
+
+        response = _FakeResponse(b'{"status":"ok","checks":{"runtime":{"ok":true}}}')
+        with mock.patch("ophelia.verify.urllib.request.urlopen", return_value=response):
+            payload = run_verifications(manifest, wait_for_tls=False)
+
+        self.assertTrue(payload["ok"])
+        assertions = payload["results"][0]["json_assertions"]
+        self.assertEqual(["checks.runtime.ok", "status"], [item["path"] for item in assertions])
+        self.assertTrue(all(item["ok"] for item in assertions))
+
+    def test_command_verification_runs_inside_compose_service_and_asserts_json(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="command-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="ophelia-health",
+                    type="command",
+                    service="web",
+                    command=["npm", "run", "ophelia:health", "--", "--json"],
+                    expect_exit=0,
+                    expect_json={"status": "ok", "release.version": "1.2.3"},
+                )
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            app_root = runtime_root / "apps" / "command-app"
+            app_root.mkdir(parents=True)
+            (app_root / "compose.yml").write_text("services:\n  web:\n    image: example/app\n")
+
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout='{"status":"ok","release":{"version":"1.2.3"}}',
+                stderr="",
+            )
+            with mock.patch("ophelia.verify.subprocess.run", return_value=completed) as run:
+                payload = run_verifications(manifest, runtime_root=runtime_root, wait_for_tls=False)
+
+        self.assertTrue(payload["ok"])
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(["docker", "compose", "-f", str(app_root / "compose.yml"), "exec", "-T", "web"], command[:7])
+        self.assertEqual(["npm", "run", "ophelia:health", "--", "--json"], command[7:])
+        result = payload["results"][0]
+        self.assertEqual("command", result["type"])
+        self.assertTrue(all(item["ok"] for item in result["json_assertions"]))
 
     def test_cli_verify_app_name_updates_current_release(self) -> None:
         repo = Path(__file__).resolve().parents[1]

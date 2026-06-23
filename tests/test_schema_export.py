@@ -80,7 +80,11 @@ class SchemaExportTests(unittest.TestCase):
         self.assertEqual(props["edge"]["properties"]["tls"]["properties"]["mode"]["enum"], ["auto", "internal", "custom"])
         self.assertEqual(props["console"]["properties"]["surface"]["enum"], ["console", "root"])
         self.assertEqual(props["verify_policy"]["properties"]["failure_mode"]["enum"], ["hard", "warn"])
+        self.assertEqual(props["verify"]["items"]["properties"]["type"]["enum"], ["http", "command"])
         self.assertEqual(props["verify"]["items"]["properties"]["url"]["pattern"], r"^https?://(?![^/?#]*@)[^?#]*$")
+        backups = props["data"]["properties"]["backups"]["properties"]
+        self.assertIn("offsite", backups)
+        self.assertIn("retention_days", backups["offsite"]["properties"])
 
     def test_additional_properties_matches_lenient_parser(self) -> None:
         # The parser silently ignores unknown top-level keys, so the schema must

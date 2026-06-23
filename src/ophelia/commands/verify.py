@@ -51,6 +51,7 @@ def run(args: Namespace) -> int:
             attempts=args.attempts,
             interval=args.interval,
             failure_mode=args.failure_mode,
+            runtime_root=args.runtime_root,
         )
     except ValueError as exc:
         print_error(str(exc), "verification_error", json_output=args.json)
@@ -69,9 +70,13 @@ def run(args: Namespace) -> int:
     )
     for result in payload["results"]:
         prefix = "ok" if result["ok"] else "failed"
-        detail = f"HTTP {result['status_code']}" if result["status_code"] is not None else "request failed"
+        if result.get("type") == "command":
+            detail = f"exit {result.get('returncode')}"
+        else:
+            detail = f"HTTP {result['status_code']}" if result.get("status_code") is not None else "request failed"
         phase = result.get("phase") or payload.get("phase")
-        print(f"  {prefix} {result['name']}: phase={phase} {detail} -> {result['url']}")
+        target = result.get("url") or result.get("command") or result.get("service") or ""
+        print(f"  {prefix} {result['name']}: phase={phase} {detail} -> {target}")
         if result.get("error"):
             kind = f"{result.get('error_kind')}: " if result.get("error_kind") else ""
             print(f"    {kind}{result['error']}")

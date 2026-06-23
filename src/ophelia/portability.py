@@ -27,6 +27,7 @@ from .manifest import (
     HooksConfig,
     Manifest,
     ManifestError,
+    VerificationCheck,
     load_manifest,
 )
 from .operation_schema import artifact, issue as schema_issue, plan_envelope, receipt_envelope, report_envelope
@@ -67,6 +68,7 @@ EXPORT_BUNDLE_RUNTIME_FILES = (
     "runtime/active_release.json",
     "runtime/compose.yml",
     "runtime/caddy/",
+    "runtime/ophelia/",
 )
 EXPORT_BUNDLE_DATA_PATHS = (
     "data/postgres/",
@@ -228,6 +230,13 @@ def pack_validation_report(
             "data.backups.offsite_required",
             "No offsite backup requirement is recorded for this pack.",
         )
+    elif not _offsite_backup_config_complete(data.backups):
+        _issue(
+            warnings,
+            "offsite_backup_target_missing",
+            "data.backups.offsite",
+            "Offsite backups are required, but provider, target, and retention_days are not all declared.",
+        )
     if manifest.environment == "production":
         for service, image in sorted(image_references(manifest).items()):
             if "@sha256:" not in image:
@@ -284,6 +293,50 @@ def pack_validation_report(
     report["errors"] = errors
     report["score_details"] = _pack_quality_score_details(manifest, ok=not errors)
     return report
+
+
+def _offsite_backup_config_complete(backups: object) -> bool:
+    offsite = getattr(backups, "offsite", None)
+    if offsite is None:
+        return False
+    return bool(offsite.provider and offsite.target and offsite.retention_days)
+
+
+def _offsite_requirement_summary(manifest: Optional[Manifest]) -> Dict[str, object]:
+    backups = manifest.data.backups if manifest is not None else None
+    offsite = backups.offsite if backups is not None else None
+    return deep_redact(
+        {
+            "required": bool(backups and backups.offsite_required),
+            "configured": _offsite_backup_config_complete(backups) if backups is not None else False,
+            "provider": offsite.provider if offsite is not None else None,
+            "target": offsite.target if offsite is not None else None,
+            "retention_days": offsite.retention_days if offsite is not None else None,
+        },
+        propagate=True,
+    )
+
+
+def _verification_check_summary(check: VerificationCheck) -> Dict[str, object]:
+    if check.type == "command":
+        command = shlex.join(check.command or [])
+        return {
+            "name": check.name or f"{check.service}:command",
+            "type": "command",
+            "service": check.service,
+            "command": redact_command_string(command),
+            "expect_exit": 0 if check.expect_exit is None else check.expect_exit,
+            "expect_json": deep_redact(check.expect_json or {}, propagate=True),
+        }
+    url = check.url or ""
+    return {
+        "name": check.name or redact_url(url),
+        "type": "http",
+        "url": redact_url(url),
+        "expect_status": check.expect_status,
+        "contains": check.contains,
+        "expect_json": deep_redact(check.expect_json or {}, propagate=True),
+    }
 
 
 def _pack_quality_score_details(manifest: Manifest, *, ok: bool) -> Dict[str, Dict[str, object]]:
@@ -353,7 +406,7 @@ def pack_explain_report(manifest: Manifest, manifest_path: Path) -> Dict[str, ob
             for route in manifest.routes
         ],
         "verification_checks": [
-            {"name": check.name or redact_url(check.url), "url": redact_url(check.url), "expect_status": check.expect_status}
+            _verification_check_summary(check)
             for check in checks
         ],
         "movement_readiness": {
@@ -583,7 +636,7 @@ def export_plan(
         "images": image_references(manifest),
         "env_shape": _env_shape(manifest, app_root),
         "verification_checks": [
-            {"name": check.name or redact_url(check.url), "url": redact_url(check.url), "expect_status": check.expect_status}
+            _verification_check_summary(check)
             for check in verification_checks(manifest)
         ],
         "runtime_files": runtime_files,
@@ -1123,6 +1176,7 @@ def backup_status_report(
         latest_backup=latest,
         freshness=freshness,
         coverage=(latest or {}).get("coverage", {}),
+        offsite_requirement=_offsite_requirement_summary(manifest),
         validation={"status": "metadata-only", "destructive_restore_supported": False},
     )
 
@@ -1794,12 +1848,15 @@ def restore_drill_plan(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     manifest_path: Optional[Path] = None,
     source: Optional[Path] = None,
+    operation_base: str = "app.restore-drill",
+    readiness_gate: bool = True,
 ) -> Dict[str, object]:
     readiness = app_readiness_report(app, environment, runtime_root, manifest_path)
     source_plan = import_plan(source, runtime_root=runtime_root, mode="rehearsal") if source is not None else None
-    blockers = _restore_drill_plan_blockers(readiness.get("blockers", []))
+    blockers = _restore_drill_plan_blockers(readiness.get("blockers", [])) if readiness_gate else []
     warnings = list(readiness.get("warnings", []))
     checks = list(readiness.get("checks", []))
+    resolved_environment = str(readiness.get("environment") or environment or "unknown")
     if source is None:
         blockers.append(schema_issue("restore_source_missing", "Restore drill apply requires an export bundle source."))
     elif source_plan is not None:
@@ -1807,14 +1864,14 @@ def restore_drill_plan(
         warnings.extend(_as_issues(source_plan.get("warnings", [])))
         checks.append({"name": "source_import_plan", "ok": not source_plan.get("blockers"), "message": source_plan.get("summary")})
     token = _token(
-        "app.restore-drill.apply",
-        {"app": app, "environment": readiness.get("environment"), "source": str(source) if source is not None else None},
+        f"{operation_base}.apply",
+        {"app": app, "environment": resolved_environment, "source": str(source) if source is not None else None},
     )
     return plan_envelope(
-        "app.restore-drill.plan",
+        f"{operation_base}.plan",
         app,
-        str(readiness.get("environment") or environment or "unknown"),
-        f"Restore drill plan for {app}.",
+        resolved_environment,
+        _restore_drill_plan_summary(operation_base, app),
         blockers=blockers,
         warnings=warnings,
         checks=checks,
@@ -1822,9 +1879,13 @@ def restore_drill_plan(
         confirmation_required=True,
         confirmation_token=token,
         exact_apply_input={
-            "command": (
-                f"ship app restore-drill apply {app} --environment {readiness.get('environment') or environment or 'unknown'} "
-                f"{f'--source {source} ' if source is not None else ''}--confirm {token}"
+            "command": _restore_drill_apply_command(
+                operation_base,
+                app,
+                resolved_environment,
+                manifest_path,
+                source,
+                token,
             )
         },
         risk="high",
@@ -1832,6 +1893,7 @@ def restore_drill_plan(
         source=str(source) if source is not None else None,
         source_plan=source_plan,
         apply_supported=source is not None,
+        apply_operation=f"{operation_base}.apply",
     )
 
 
@@ -1842,9 +1904,19 @@ def restore_drill_apply(
     manifest_path: Optional[Path] = None,
     source: Optional[Path] = None,
     confirm: Optional[str] = None,
+    operation_base: str = "app.restore-drill",
+    readiness_gate: bool = True,
 ) -> Dict[str, object]:
     started_at = _utc_now()
-    plan = restore_drill_plan(app, environment, runtime_root, manifest_path, source)
+    plan = restore_drill_plan(
+        app,
+        environment,
+        runtime_root,
+        manifest_path,
+        source,
+        operation_base=operation_base,
+        readiness_gate=readiness_gate,
+    )
     blockers = _as_issues(plan.get("blockers", []))
     warnings = _as_issues(plan.get("warnings", []))
     expected = plan.get("confirmation_token")
@@ -1852,12 +1924,12 @@ def restore_drill_apply(
     if source is None:
         blockers.append(schema_issue("restore_source_missing", "Restore drill apply requires --source."))
     if not isinstance(confirm, str) or not confirm:
-        blockers.append(schema_issue("confirmation_token_missing", "Restore drill apply requires a confirmation token from app restore-drill plan."))
+        blockers.append(schema_issue("confirmation_token_missing", _restore_drill_confirmation_message(operation_base)))
     elif confirm != expected:
         blockers.append(schema_issue("confirmation_token_mismatch", "Restore drill confirmation token does not match the current plan."))
     if blockers:
         return receipt_envelope(
-            "app.restore-drill.apply",
+            f"{operation_base}.apply",
             app,
             resolved_environment,
             "blocked",
@@ -1877,11 +1949,27 @@ def restore_drill_apply(
     drill_root = runtime_root / "apps" / app / "restore-drills" / drill_id
     drill_root.mkdir(parents=True, exist_ok=False)
     artifact_checks = _restore_drill_artifact_checks(source) if source is not None else []
-    status = "succeeded" if all(bool(check.get("ok")) for check in artifact_checks) else "failed"
+    resolution = resolve_app_manifest(app, environment, manifest_path=manifest_path)
+    manifest = resolution.manifest
+    rehearsal_checks = (
+        _restore_drill_rehearsal_checks(
+            source,
+            drill_root,
+            manifest,
+            resolution.manifest_path or manifest_path,
+            runtime_root,
+            app,
+        )
+        if source is not None
+        else []
+    )
+    all_checks = [*artifact_checks, *rehearsal_checks]
+    status = "succeeded" if all(bool(check.get("ok")) for check in all_checks) else "failed"
     _write_json(drill_root / "restore-drill-plan.json", plan)
     _write_json(drill_root / "artifact-checks.json", artifact_checks)
+    _write_json(drill_root / "rehearsal-checks.json", rehearsal_checks)
     receipt = receipt_envelope(
-        "app.restore-drill.apply",
+        f"{operation_base}.apply",
         app,
         resolved_environment,
         status,
@@ -1891,11 +1979,12 @@ def restore_drill_apply(
             artifact(str(drill_root), "restore-drill", "Isolated restore drill artifacts", present=True),
             artifact(str(drill_root / "restore-drill-plan.json"), "restore-drill-plan", present=True),
             artifact(str(drill_root / "artifact-checks.json"), "restore-drill-checks", present=True),
+            artifact(str(drill_root / "rehearsal-checks.json"), "restore-drill-rehearsal-checks", present=True),
         ],
         checks=[
             {"name": "confirmation_token", "ok": True, "message": "Matched current restore drill plan."},
             {"name": "active_runtime_unchanged", "ok": True, "message": "No active runtime files were modified."},
-            *artifact_checks,
+            *all_checks,
         ],
         rollback={"available": True, "note": "Delete the restore drill directory if this rehearsal artifact is no longer needed."},
         plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
@@ -1905,9 +1994,45 @@ def restore_drill_apply(
         inputs_redacted=True,
         secrets_redacted=True,
     )
-    _write_json(drill_root / "receipts" / "restore-drill-apply.json", receipt)
+    _write_json(drill_root / "receipts" / _restore_drill_receipt_filename(operation_base), receipt)
     _write_json(runtime_root / "apps" / app / "receipts" / f"{receipt['operation_id']}.json", receipt)
     return receipt
+
+
+def _restore_drill_plan_summary(operation_base: str, app: str) -> str:
+    if operation_base == "backup.rehearse":
+        return f"Backup rehearsal plan for {app}."
+    return f"Restore drill plan for {app}."
+
+
+def _restore_drill_apply_command(
+    operation_base: str,
+    app: str,
+    environment: str,
+    manifest_path: Optional[Path],
+    source: Optional[Path],
+    token: str,
+) -> str:
+    if operation_base == "backup.rehearse":
+        manifest_arg = f" --manifest {manifest_path}" if manifest_path is not None else ""
+        environment_arg = f" --environment {environment}" if environment != "unknown" else ""
+        return f"ship backup rehearse apply {source}{manifest_arg}{environment_arg} --confirm {token}"
+    return (
+        f"ship app restore-drill apply {app} --environment {environment} "
+        f"{f'--source {source} ' if source is not None else ''}--confirm {token}"
+    )
+
+
+def _restore_drill_confirmation_message(operation_base: str) -> str:
+    if operation_base == "backup.rehearse":
+        return "Backup rehearsal apply requires a confirmation token from backup rehearse plan."
+    return "Restore drill apply requires a confirmation token from app restore-drill plan."
+
+
+def _restore_drill_receipt_filename(operation_base: str) -> str:
+    if operation_base == "backup.rehearse":
+        return "backup-rehearse-apply.json"
+    return "restore-drill-apply.json"
 
 
 def cutover_plan(
@@ -4374,7 +4499,7 @@ def _restore_drill_receipts(runtime_root: Path, app: str) -> List[Dict[str, obje
         for path in sorted(root.rglob("*.json")):
             payload = _read_json(path)
             operation = str(payload.get("operation") or "")
-            if "restore-drill" in operation or "restore_drill" in operation:
+            if "restore-drill" in operation or "restore_drill" in operation or operation == "backup.rehearse.apply":
                 receipts.append(
                     {
                         "receipt_id": str(payload.get("operation_id") or path.stem),
@@ -4494,6 +4619,306 @@ def _restore_drill_artifact_checks(source: Path) -> List[Dict[str, object]]:
     else:
         checks.append({"name": "source_artifact_scan", "ok": True, "message": "No deep archive validation available for this source type."})
     return checks
+
+
+def _restore_drill_rehearsal_checks(
+    source: Path,
+    drill_root: Path,
+    manifest: Optional[Manifest],
+    manifest_path: Optional[Path],
+    runtime_root: Path,
+    app: str,
+) -> List[Dict[str, object]]:
+    checks: List[Dict[str, object]] = []
+    prepared = _prepare_rehearsal_bundle(source, drill_root / "source-bundle")
+    checks.append(prepared["check"])
+    if not prepared.get("ok"):
+        return checks
+    bundle_root = Path(str(prepared["bundle_root"]))
+    if manifest is None:
+        checks.append(
+            {
+                "name": "app_verify_commands",
+                "ok": True,
+                "status": "skipped",
+                "message": "Manifest unavailable; no app-owned data verifier commands were run.",
+            }
+        )
+        return checks
+    volume_checks = _run_volume_verify_commands(
+        manifest,
+        bundle_root,
+        drill_root / "volume-data",
+        manifest_path,
+        runtime_root,
+        app,
+    )
+    if volume_checks:
+        checks.extend(volume_checks)
+    else:
+        checks.append(
+            {
+                "name": "app_verify_commands",
+                "ok": True,
+                "status": "skipped",
+                "message": "No data.volumes[].verify.command entries are declared.",
+            }
+        )
+    return checks
+
+
+def _prepare_rehearsal_bundle(source: Path, destination: Path) -> Dict[str, object]:
+    if source.is_dir():
+        return {
+            "ok": True,
+            "bundle_root": str(source),
+            "check": {
+                "name": "rehearsal_source_ready",
+                "ok": True,
+                "status": "directory",
+                "message": str(source),
+            },
+        }
+    destination.mkdir(parents=True, exist_ok=True)
+    if source.suffix == ".tar":
+        extraction = _safe_extract_tar(source, destination)
+    elif source.name.endswith(".tar.zst"):
+        extraction = _safe_extract_tar_zst(source, destination)
+    else:
+        return {
+            "ok": False,
+            "bundle_root": str(destination),
+            "check": {
+                "name": "rehearsal_source_ready",
+                "ok": False,
+                "message": "Only export bundle directories, .tar, and .tar.zst sources can be rehearsed.",
+            },
+        }
+    return {
+        "ok": bool(extraction.get("ok")),
+        "bundle_root": str(destination),
+        "check": {
+            "name": "rehearsal_source_ready",
+            "ok": bool(extraction.get("ok")),
+            "status": "extracted" if extraction.get("ok") else "failed",
+            "message": str(extraction.get("message") or source),
+            "files": extraction.get("files", 0),
+            "skipped_links": extraction.get("skipped_links", 0),
+        },
+    }
+
+
+def _safe_extract_tar_zst(source: Path, destination: Path) -> Dict[str, object]:
+    zstd = shutil.which("zstd")
+    if not zstd:
+        return {"ok": False, "message": "zstd is not available for compressed export bundle rehearsal."}
+    temp_tar = destination.parent / f"{destination.name}.tar"
+    try:
+        with temp_tar.open("wb") as output:
+            result = subprocess.run(
+                [zstd, "-dc", str(source)],
+                stdout=output,
+                stderr=subprocess.PIPE,
+                text=False,
+                timeout=120,
+            )
+        if result.returncode != 0:
+            return {
+                "ok": False,
+                "message": "zstd decompression failed: " + _redacted_text_excerpt(result.stderr.decode("utf-8", errors="replace")),
+            }
+        return _safe_extract_tar(temp_tar, destination)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "message": str(exc)}
+
+
+def _safe_extract_tar(source: Path, destination: Path) -> Dict[str, object]:
+    files = 0
+    skipped_links = 0
+    try:
+        with tarfile.open(source) as archive:
+            for member in archive.getmembers():
+                normalized = _normalized_tar_member(member.name)
+                if not normalized or normalized == ".":
+                    continue
+                target = _safe_extract_target(destination, normalized)
+                if target is None:
+                    return {"ok": False, "message": f"Unsafe tar member path refused: {member.name}", "files": files}
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if member.issym() or member.islnk():
+                    skipped_links += 1
+                    continue
+                if not member.isfile():
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source_file = archive.extractfile(member)
+                if source_file is None:
+                    continue
+                with source_file, target.open("wb") as output:
+                    shutil.copyfileobj(source_file, output)
+                try:
+                    target.chmod(member.mode & 0o777)
+                except OSError:
+                    pass
+                files += 1
+    except (tarfile.TarError, OSError) as exc:
+        return {"ok": False, "message": str(exc), "files": files, "skipped_links": skipped_links}
+    return {"ok": True, "message": f"{files} file(s) extracted safely.", "files": files, "skipped_links": skipped_links}
+
+
+def _safe_extract_target(destination: Path, member_name: str) -> Optional[Path]:
+    raw = Path(member_name)
+    if raw.is_absolute() or ".." in raw.parts:
+        return None
+    target = (destination / raw).resolve(strict=False)
+    root = destination.resolve(strict=False)
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return None
+    return target
+
+
+def _run_volume_verify_commands(
+    manifest: Manifest,
+    bundle_root: Path,
+    volume_root: Path,
+    manifest_path: Optional[Path],
+    runtime_root: Path,
+    app: str,
+) -> List[Dict[str, object]]:
+    checks: List[Dict[str, object]] = []
+    for volume in manifest.data.volumes:
+        verify = volume.verify or {}
+        command = verify.get("command") if isinstance(verify, dict) else None
+        if not command:
+            continue
+        archive = bundle_root / "data" / "volumes" / f"{_safe_artifact_name(volume.name)}.tar"
+        extract_dir = volume_root / _safe_artifact_name(volume.name)
+        if not archive.exists():
+            checks.append(
+                {
+                    "name": f"app_verify_hook:{volume.name}",
+                    "ok": False,
+                    "message": f"Volume archive not found: data/volumes/{_safe_artifact_name(volume.name)}.tar",
+                }
+            )
+            continue
+        extraction = _safe_extract_tar(archive, extract_dir)
+        checks.append(
+            {
+                "name": f"volume_archive_extract:{volume.name}",
+                "ok": bool(extraction.get("ok")),
+                "message": str(extraction.get("message") or archive),
+            }
+        )
+        if not extraction.get("ok"):
+            continue
+        command_check = _run_restore_verify_command(
+            str(command),
+            extract_dir,
+            bundle_root,
+            manifest_path,
+            runtime_root,
+            app,
+            volume.name,
+        )
+        checks.append(command_check)
+    return checks
+
+
+def _run_restore_verify_command(
+    command: str,
+    data_path: Path,
+    bundle_root: Path,
+    manifest_path: Optional[Path],
+    runtime_root: Path,
+    app: str,
+    volume_name: str,
+) -> Dict[str, object]:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        return {
+            "name": f"app_verify_hook:{volume_name}",
+            "ok": False,
+            "message": f"Verifier command is not shell-tokenizable: {exc}",
+            "command": redact_command_string(command),
+        }
+    if not parts:
+        return {
+            "name": f"app_verify_hook:{volume_name}",
+            "ok": False,
+            "message": "Verifier command is empty.",
+        }
+    args = _restore_verify_args(parts, data_path)
+    cwd = _restore_verify_cwd(parts, bundle_root, manifest_path, runtime_root, app)
+    display = redact_command_string(shlex.join(args))
+    try:
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "name": f"app_verify_hook:{volume_name}",
+            "ok": False,
+            "message": str(exc),
+            "command": display,
+            "cwd": str(cwd),
+        }
+    return {
+        "name": f"app_verify_hook:{volume_name}",
+        "ok": result.returncode == 0,
+        "message": f"exit {result.returncode}",
+        "command": display,
+        "cwd": str(cwd),
+        "stdout_excerpt": _redacted_text_excerpt(result.stdout),
+        "stderr_excerpt": _redacted_text_excerpt(result.stderr),
+    }
+
+
+def _restore_verify_args(parts: List[str], data_path: Path) -> List[str]:
+    replacement = str(data_path)
+    replaced = [
+        part.replace("{path}", replacement)
+        .replace("{data_path}", replacement)
+        .replace("{volume_path}", replacement)
+        for part in parts
+    ]
+    return replaced if replaced != parts else [*parts, replacement]
+
+
+def _restore_verify_cwd(
+    parts: List[str],
+    bundle_root: Path,
+    manifest_path: Optional[Path],
+    runtime_root: Path,
+    app: str,
+) -> Path:
+    first = parts[0]
+    candidate = Path(first)
+    roots = [bundle_root / "runtime"]
+    if manifest_path is not None:
+        roots.append(manifest_path.expanduser().parent)
+    roots.append(runtime_root / "apps" / app)
+    if not candidate.is_absolute():
+        for root in roots:
+            if (root / candidate).exists():
+                return root
+    return roots[0] if roots else bundle_root
+
+
+def _redacted_text_excerpt(value: object, limit: int = 240) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    redacted = deep_redact({"value": value}, propagate=True).get("value", "")
+    return str(redacted).replace("\x00", "")[:limit]
 
 
 def _directory_nested_archive_checks(source: Path, records: List[object]) -> List[Dict[str, object]]:
@@ -4952,6 +5377,7 @@ def _runtime_export_files(app_root: Path) -> List[Dict[str, object]]:
         Path("active_release.json"),
         Path("compose.yml"),
         Path("caddy"),
+        Path("ophelia"),
     ]
     result = []
     for relative_path in paths:

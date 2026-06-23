@@ -134,11 +134,27 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/portable
+      retention_days: 30
 hooks:
   freeze: ophelia/hooks/freeze.sh
 verify:
   - name: health
     url: https://portable.example.com/health
+  - name: ophelia-health
+    type: command
+    service: web
+    command:
+      - npm
+      - run
+      - ophelia:health
+      - --
+      - --json
+    expect_json:
+      status: ok
+      checks.runtime.ok: true
 """
         loaded = self._load(manifest)
         lock = loaded.to_lock_dict()
@@ -150,6 +166,55 @@ verify:
         self.assertEqual("critical", lock["data"]["volumes"][0]["class"])
         self.assertEqual("ophelia/hooks/freeze.sh", lock["hooks"]["freeze"])
         self.assertEqual(["PORTABLE_API_TOKEN"], lock["required_env"])
+        self.assertEqual("restic", lock["data"]["backups"]["offsite"]["provider"])
+        self.assertEqual("command", lock["verify"][1]["type"])
+        self.assertEqual(["npm", "run", "ophelia:health", "--", "--json"], lock["verify"][1]["command"])
+        self.assertEqual(True, lock["verify"][1]["expect_json"]["checks.runtime.ok"])
+
+    def test_verify_command_requires_known_service(self) -> None:
+        manifest = """
+version: 1
+app: command-verify
+kind: service
+image: ghcr.io/example/command-verify:latest
+services:
+  web:
+    port: 3000
+routes:
+  - domain: command-verify.example.com
+    service: web
+verify:
+  - name: bad
+    type: command
+    service: worker
+    command: npm run ophelia:health -- --json
+"""
+        with self.assertRaisesRegex(ManifestError, "unknown service"):
+            self._load(manifest)
+
+    def test_offsite_backup_target_rejects_secret_shaped_url(self) -> None:
+        manifest = """
+version: 1
+app: offsite-secret
+kind: service
+image: ghcr.io/example/offsite-secret:latest
+services:
+  web:
+    port: 3000
+routes:
+  - domain: offsite-secret.example.com
+    service: web
+data:
+  backups:
+    required: true
+    offsite_required: true
+    offsite:
+      provider: s3
+      target: https://user:secret@example.com/backups?token=abc
+      retention_days: 30
+"""
+        with self.assertRaisesRegex(ManifestError, "must not contain credentials"):
+            self._load(manifest)
 
     def test_required_env_renders_template_without_compose_override(self) -> None:
         manifest = """

@@ -66,3 +66,4 @@
 | [0062](0062-runtime-injected-env-readiness.md) | 2026-06-23 | landed | Runtime-injected env readiness | readiness, drift, env, retained-apps, tests |
 | [0063](0063-export-backed-backup-readiness.md) | 2026-06-23 | landed | Export-backed backup readiness | backup, export, readiness, docker-volumes, tests |
 | [0064](0064-export-backup-report-polish.md) | 2026-06-23 | landed | Export backup report polish | backup, export, readiness, reports, tests |
+| [0065](0065-native-rehearsal-and-internal-verification.md) | 2026-06-23 | landed | Native rehearsal and internal verification | verification, backup, restore-drill, manifest, docs, tests |

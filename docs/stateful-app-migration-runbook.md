@@ -69,6 +69,23 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/demo-service
+      retention_days: 30
+
+verify:
+  - name: internal-runtime-health
+    type: command
+    service: web
+    command:
+      - npm
+      - run
+      - ophelia:health
+      - --
+      - --json
+    expect_json:
+      status: ok
 
 hooks:
   pre_export: ophelia/hooks/pre-export.sh
@@ -105,6 +122,7 @@ Do not proceed to final cutover until all gates pass:
 ./cli/ship app readiness demo-service --environment production --json
 ./cli/ship app runbook demo-service --environment production
 ./cli/ship app export plan demo-service --environment production --json
+./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
 ./cli/ship app restore-drill plan demo-service --environment production --json
 ./cli/ship app cutover plan demo-service --from source-host --to target-host --environment production --json
 ./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --json
@@ -119,6 +137,7 @@ Confirmed commands require tokens from matching plans:
 
 ```bash
 ./cli/ship app export create demo-service --environment production --confirm <token> --json
+./cli/ship backup rehearse apply ./exports/demo-service.production.export.tar --manifest .ophelia.yml --confirm <token> --json
 ./cli/ship app import apply ./exports/demo-service.production.export.tar --confirm <token> --json
 ./cli/ship app restore-drill apply demo-service --environment production --source ./exports/demo-service.production.export.tar --confirm <token> --json
 ./cli/ship app cutover apply demo-service --from source-host --to target-host --environment production --confirm <token> --json

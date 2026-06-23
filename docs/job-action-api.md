@@ -22,6 +22,7 @@ Operator consoles and local agents can call these read-only commands today:
 - `ship pack init --app <app> --json` for preview-only scaffolding
 - `ship env diff <app> --environment <env> --json`
 - `ship backup status <app> --environment <env> --json`
+- `ship backup rehearse plan <bundle> --manifest <manifest> --json`
 - `ship app readiness <app> --environment <env> --json`
 - `ship app runbook <app> --environment <env> --json`
 - `ship app export plan <app> --environment <env> --json`
@@ -50,9 +51,10 @@ Mutating commands require confirmation tokens from their matching plans:
 - `ship rollback apply ... --confirm <token>`
 - `ship backup create ... --confirm <token>`
 - `ship restore apply ... --confirm <token>`
+- `ship backup rehearse apply ... --manifest <manifest> --confirm <token>`
 - `ship app export create ... --confirm <token>` for metadata/runtime export bundles
 - `ship app import apply ... --confirm <token>` for isolated rehearsal import previews
-- `ship app restore-drill apply ... --confirm <token>` for artifact/listability drill receipts
+- `ship app restore-drill apply ... --confirm <token>` for artifact extraction and verifier drill receipts
 - `ship app cutover apply ... --confirm <token>` for cutover checkpoint receipts
 - `ship app traffic apply ... --confirm <token>` for production traffic checkpoint receipts
 - `ship app traffic rollback apply ... --confirm <token>` for file-provider traffic rollback receipts
