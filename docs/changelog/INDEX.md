@@ -62,3 +62,4 @@
 | [0058](0058-required-env-contract.md) | 2026-06-23 | landed | Required env contract | manifest, runtime, env, migrations, docs, tests |
 | [0059](0059-volume-verify-hook-contract.md) | 2026-06-23 | landed | Volume verify hook contract | backup, restore, verification, data, redaction, tests |
 | [0060](0060-deploy-support-file-sync.md) | 2026-06-23 | landed | Deploy support file sync | deploy, runtime, hooks, data, tests |
+| [0061](0061-private-registry-local-image-fallback.md) | 2026-06-23 | landed | Private registry local image fallback | deploy, runtime, docker, private-registry, tests |

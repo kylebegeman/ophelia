@@ -210,6 +210,40 @@ routes:
             self.assertIn(["docker", "network", "create", "ophelia-edge"], create_calls)
             self.assertIn(["docker", "network", "create", "ophelia-internal"], create_calls)
 
+    def test_apply_uses_local_image_when_private_pull_fails_but_image_exists(self) -> None:
+        from ophelia.manifest import load_manifest
+        from ophelia.runtime import apply_local_bundle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "service.ophelia.yml"
+            manifest_path.write_text(_service_manifest())
+            manifest = load_manifest(manifest_path)
+            commands: list[list[str]] = []
+
+            def fake_run(command, capture_output=False, allow_failure=False, env=None):
+                commands.append(command)
+                if command[:2] == ["docker", "compose"] and command[-1] == "pull":
+                    raise subprocess.CalledProcessError(
+                        1,
+                        command,
+                        stderr="error from registry: denied",
+                    )
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with mock.patch("ophelia.runtime._run", side_effect=fake_run):
+                app_root = apply_local_bundle(manifest, manifest_path, runtime_root, root)
+
+            release = json.loads((app_root / "release.json").read_text())
+            self.assertTrue(release["applied"])
+            self.assertEqual("applied", release["apply"]["status"])
+            self.assertIn(
+                ["docker", "image", "inspect", "ghcr.io/example/private@sha256:aaaaaaaa"],
+                commands,
+            )
+            self.assertTrue(any(command[:2] == ["docker", "compose"] and "up" in command for command in commands))
+
     def test_on_demand_tls_global_config_is_host_consolidated(self) -> None:
         from ophelia.manifest import load_manifest
         from ophelia.runtime import apply_local_bundle
@@ -284,6 +318,22 @@ edge:
     ask: {ask}
   catch_all:
     upstream: host.docker.internal:3000
+""".strip() + "\n"
+
+
+def _service_manifest() -> str:
+    return """
+version: 1
+app: private-service
+environment: staging
+kind: service
+image: ghcr.io/example/private@sha256:aaaaaaaa
+services:
+  app:
+    port: 3000
+routes:
+  - domain: private-service.example.com
+    service: app
 """.strip() + "\n"
 
 

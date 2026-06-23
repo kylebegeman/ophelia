@@ -364,8 +364,11 @@ def apply_local_bundle(
 
                 # Image pulls are release-critical. Continuing after a failed pull can
                 # leave a host serving a stale local tag while the deploy appears done.
+                # For private retained deployments, a digest-pinned image may already
+                # exist locally while registry pulls are denied. In that case the local
+                # cache is an exact target and apply can continue.
                 mark_phase("image_pull", "running")
-                _run_apply_phase(["docker", "compose", "-f", str(compose_path), "pull"], "image_pull")
+                _pull_or_use_local_images(compose_path, manifest)
                 mark_phase("image_pull", "ok")
 
                 mark_phase("container_health", "running")
@@ -1002,6 +1005,29 @@ def _run_apply_phase(
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr or exc.stdout or str(exc)
         raise ApplyPhaseError(phase, detail) from exc
+
+
+def _pull_or_use_local_images(compose_path: Path, manifest: Manifest) -> None:
+    try:
+        _run_apply_phase(["docker", "compose", "-f", str(compose_path), "pull"], "image_pull")
+        return
+    except ApplyPhaseError as exc:
+        missing = _missing_local_images(manifest)
+        if missing:
+            joined = ", ".join(missing)
+            raise ApplyPhaseError(
+                "image_pull",
+                f"{exc}; missing local image reference(s): {joined}",
+            ) from exc
+
+
+def _missing_local_images(manifest: Manifest) -> List[str]:
+    missing: List[str] = []
+    for image in sorted(set(image_references(manifest).values())):
+        result = _run(["docker", "image", "inspect", image], capture_output=True, allow_failure=True)
+        if result is None:
+            missing.append(image)
+    return missing
 
 
 def _resolve_support_path(manifest_dir: Path, source: str) -> Path:
