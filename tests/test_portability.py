@@ -1339,6 +1339,8 @@ class PortabilityTests(unittest.TestCase):
             bundle = runtime_root / "apps" / "demo-service" / "export-bundles" / "demo-service.production.export.20260623T120000Z"
             receipt_dir = bundle / "receipts"
             receipt_dir.mkdir(parents=True)
+            archive_path = bundle.with_suffix(".tar.zst")
+            archive_path.write_bytes(b"archive")
             (bundle / "manifest.json").write_text("{}\n")
             (receipt_dir / "export-create.json").write_text(
                 json.dumps(
@@ -1350,7 +1352,7 @@ class PortabilityTests(unittest.TestCase):
                         "runtime_files_copied": [{"path": "runtime/manifest.lock.json"}],
                         "data_archives": [{"name": "uploads", "status": "archived"}],
                         "postgres_exports": [],
-                        "compressed_archive": {"status": "created"},
+                        "bundle_archive_path": str(archive_path),
                     }
                 )
                 + "\n"
@@ -1362,6 +1364,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual([], report["blockers"])
         self.assertEqual("app.export.create", report["latest_backup"]["source"])
         self.assertEqual(1, report["latest_backup"]["coverage"]["data_archives"])
+        self.assertTrue(report["latest_backup"]["coverage"]["compressed_archive"])
+        self.assertTrue(next(item for item in report["checks"] if item["name"] == "backup_directory")["ok"])
 
     def test_backup_status_ignores_incomplete_export_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

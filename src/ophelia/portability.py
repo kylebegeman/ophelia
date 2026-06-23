@@ -1097,7 +1097,11 @@ def backup_status_report(
         warnings.append(schema_issue("backup_contract_missing", "No `data.backups` contract is declared.", "data.backups"))
 
     checks = [
-        {"name": "backup_directory", "ok": backups_root.exists(), "message": str(backups_root)},
+        {
+            "name": "backup_directory",
+            "ok": backups_root.exists() or bool(backups),
+            "message": str(backups_root),
+        },
         {"name": "latest_backup", "ok": latest is not None, "message": latest["backup_id"] if latest else "none"},
         {"name": "freshness", "ok": freshness["status"] == "fresh", "message": freshness["status"]},
     ]
@@ -4234,6 +4238,10 @@ def _export_backup_records(export_root: Path) -> List[Dict[str, object]]:
         data_archives = payload.get("data_archives") if isinstance(payload.get("data_archives"), list) else []
         postgres_exports = payload.get("postgres_exports") if isinstance(payload.get("postgres_exports"), list) else []
         compressed_archive = payload.get("compressed_archive") if isinstance(payload.get("compressed_archive"), dict) else {}
+        bundle_archive_path = payload.get("bundle_archive_path") if isinstance(payload.get("bundle_archive_path"), str) else None
+        compressed_archive_present = compressed_archive.get("status") == "created" or (
+            bool(bundle_archive_path) and Path(str(bundle_archive_path)).exists()
+        )
         records.append(
             {
                 "backup_id": backup_id,
@@ -4245,7 +4253,7 @@ def _export_backup_records(export_root: Path) -> List[Dict[str, object]]:
                         "runtime_files": bool(payload.get("runtime_files_copied")),
                         "data_archives": sum(1 for item in data_archives if isinstance(item, dict) and item.get("status") == "archived"),
                         "postgres_exports": sum(1 for item in postgres_exports if isinstance(item, dict) and item.get("status") == "dumped"),
-                        "compressed_archive": compressed_archive.get("status") == "created",
+                        "compressed_archive": compressed_archive_present,
                     },
                     propagate=True,
                 ),
