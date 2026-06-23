@@ -1,24 +1,24 @@
 ---
 id: 0028
-title: Phase 8 Lumen console MVP
+title: Phase 8 operator console MVP
 date: 2026-06-22
 status: landed
-areas: [lumen, console, api, cli, fixtures, docs, tests]
+areas: [operator-console, console, api, cli, fixtures, docs, tests]
 change_type: feature
 commits: []
 ---
 
 ## Summary
 
-Added a read-only Lumen operator console payload that composes apps, readiness,
+Added a read-only operator console payload that composes apps, readiness,
 approvals, workflows, plugins, quick actions, and source metadata into one
 bounded contract.
 
 ## Why
 
-Lumen needs one stable payload to render an operator cockpit without
+Private operator UIs need one stable payload to render an operator cockpit without
 reconstructing Ophelia state from many shell commands. Ophelia should remain the
-executor, while Lumen owns presentation and approval UX.
+executor, while private operator UIs own presentation and approval UX.
 
 ## Changed Areas
 
@@ -32,7 +32,7 @@ executor, while Lumen owns presentation and approval UX.
 - `tests/test_lumen_adapter.py`: verifies fixture console shape, custom
   manifest path handling, redaction, plugin visibility, quick actions, and
   approval metadata.
-- `docs/lumen-operator-console.md`, README, fixture docs, roadmap, findings,
+- `docs/operator-console-adapter.md`, README, fixture docs, roadmap, findings,
   and changelog index updated.
 
 ## Contract Impact
@@ -63,5 +63,5 @@ bounded and redacted.
 
 ## Follow-Ups
 
-- Render the console payload in Lumen UI.
+- Render the console payload in private operator UI.
 - Add production hardening drills and migration guidance in Phase 9.

@@ -49,7 +49,7 @@ def register(subparsers: _SubParsersAction) -> None:
     status_parser.set_defaults(handler=run_status)
 
     export_parser = obs_subparsers.add_parser(
-        "export", help="Compact, redacted observability snapshot for Lumen/state"
+        "export", help="Compact, redacted observability snapshot for operator UIs/state"
     )
     _add_common_args(export_parser)
     export_parser.set_defaults(handler=run_export)
@@ -247,7 +247,7 @@ register_cli_descriptor(
     CommandDescriptor(
         command="ship observability export",
         operation="observability.export",
-        summary="Compact, redacted observability snapshot suitable for Lumen/state (no unbounded logs).",
+        summary="Compact, redacted observability snapshot suitable for operator UI/state (no unbounded logs).",
         risk="low",
         mutates_state=False,
         requires_confirmation=False,

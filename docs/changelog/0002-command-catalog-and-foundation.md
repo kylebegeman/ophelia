@@ -18,7 +18,7 @@ through `ship commands catalog --json` and `GET /commands`, plus an additive
 
 ## Why
 
-Agents (Lumen, Legacy Console) need one machine-readable way to discover every command
+Agents (private operator UI, Legacy Console) need one machine-readable way to discover every command
 with explicit risk, mutation, and confirmation metadata, and one consistent
 error shape across CLI and HTTP. The foundation modules give every later phase a
 single source of truth for redaction, findings/remediations, and error payloads
@@ -61,7 +61,7 @@ Phase 1 command catalog and consistency pass:
   `--json` consistency. Error paths now merge `error_envelope(...)` while
   keeping the existing `ok` key; the `deploy --json` (without `--plan`) guard
   now emits a pure-JSON error envelope instead of prose.
-- `docs/job-action-api.md`, `docs/lumen-vps-ophelia-2-handoff.md`: document the
+- `docs/job-action-api.md`, `docs/private-operator-vps-ophelia-2-handoff.md`: document the
   catalog command, `GET /commands`, and the `CommandDescriptor` fields.
 - `tests/test_command_catalog.py`, `tests/test_json_output_consistency.py`: new
   coverage for catalog invariants and pure-JSON output.

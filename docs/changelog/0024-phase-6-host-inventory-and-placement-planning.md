@@ -12,7 +12,7 @@ commits: []
 
 Implemented Phase 6 of the strategic roadmap: read-only host inventory,
 host readiness checks, app placement planning, placement-aware move workflows,
-and Lumen placement surfaces.
+and private operator UI placement surfaces.
 
 ## Why
 

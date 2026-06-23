@@ -11,7 +11,7 @@ commits: []
 ## Summary
 
 Added a read-only production hardening report that composes live readiness,
-Lumen console data, plugin validation, workflow availability, state status,
+operator console data, plugin validation, workflow availability, state status,
 command catalog safety, and optional fixture-suite drills into one go/no-go
 payload.
 

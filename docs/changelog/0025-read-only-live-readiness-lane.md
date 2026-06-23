@@ -23,7 +23,7 @@ provider observation files without applying changes.
 ## Changed Areas
 
 - `src/ophelia/live_readiness.py`: aggregates host inventory/readiness, GitHub
-  provider status, secret provider status, state status, Lumen dashboard data,
+  provider status, secret provider status, state status, operator dashboard data,
   app readiness, placement, observability, secret-provider presence, and drift.
 - `src/ophelia/commands/live_readiness.py`: adds
   `ship live-readiness run`.

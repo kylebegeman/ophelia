@@ -1,6 +1,6 @@
 """Read-only traffic provider config validation and explanation.
 
-Lumen and operators point ``ship app traffic`` at a JSON provider config to
+Operator UIs and operators point ``ship app traffic`` at a JSON provider config to
 drive opt-in DNS/Caddy writes. This module validates that config *before* any
 mutation is planned, and explains in plain language what each declared provider
 *would* do, without ever touching a VPS, the network, or a secret value.

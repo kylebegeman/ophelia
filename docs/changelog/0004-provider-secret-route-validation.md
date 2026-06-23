@@ -10,7 +10,7 @@ commits: []
 
 ## Summary
 
-Phase 3 adds three read-only validation surfaces that let agents (Lumen, Legacy Console)
+Phase 3 adds three read-only validation surfaces that let agents (private operator UI, Legacy Console)
 and operators check the risky edges of a move before any mutation is planned,
 without ever exposing a secret value or touching a VPS.
 

@@ -11,7 +11,7 @@ commits: []
 ## Summary
 
 Implemented the next roadmap slice: workflow graph execution for non-mutating
-nodes, token-gated GitHub provisioning apply, populated Lumen traffic and
+nodes, token-gated GitHub provisioning apply, populated private operator UI traffic and
 observability aggregates, and a cron-friendly observability schedule runner.
 
 ## Why
@@ -34,7 +34,7 @@ observability sweeps from external schedulers.
 - `src/ophelia/commands/*.py`: exposed the new CLI commands and catalog
   descriptors.
 - `tests/`: added focused coverage for workflow execution, GitHub provisioning,
-  Lumen aggregates, and scheduled observability.
+  private operator UI aggregates, and scheduled observability.
 
 ## Contract Impact
 

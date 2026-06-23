@@ -8,7 +8,8 @@ operator commands.
 
 Ophelia is a fixture-first VPS deployment control plane. It validates app
 manifests, renders runtime bundles, plans and gates risky operations, records
-receipts, and exposes JSON surfaces for humans, automation, Lumen, and agents.
+receipts, and exposes JSON surfaces for humans, automation, private operator
+UIs, and agents.
 
 Do not use private deployments as examples. Work from public fixtures,
 `example.com` domains, and synthetic app names unless an operator explicitly

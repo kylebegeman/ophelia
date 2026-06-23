@@ -91,15 +91,16 @@ The existing `/host/inventory` and `operator_reports.host_inventory` surface
 remain backwards-compatible with the legacy top-level keys while also carrying
 the richer `hosts` list.
 
-## Workflow And Lumen Integration
+## Workflow And Operator UI Integration
 
 The `move-app` workflow now includes an `app.placement.plan` node after
 readiness and before export planning. This keeps placement recommendations in
 the agent-executable graph before the first mutating node pauses for
 confirmation.
 
-The Lumen adapter exposes `host_inventory` and `placement` surfaces through the
-same redacted report path used by readiness, receipts, state, and workflows.
+The operator-console adapter exposes `host_inventory` and `placement` surfaces
+through the same redacted report path used by readiness, receipts, state, and
+workflows.
 
 ## Safety
 

@@ -232,7 +232,7 @@ def observability_export(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     manifest_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Compact, redacted observability snapshot suitable for Lumen/state.
+    """Compact, redacted observability snapshot suitable for operator UI/state.
 
     Built from :func:`observability_status` (no probing) and reduced to scalar
     summaries: it never carries unbounded logs and never carries secret values.
@@ -268,7 +268,7 @@ def observability_schedule_run(
     """Run a cron-friendly observability sweep across all registered manifests.
 
     This is not a daemon or scheduler. It is a deterministic command target for
-    cron/systemd/Lumen: scan the manifest registry, call
+    cron/systemd/operator UI: scan the manifest registry, call
     :func:`observability_status` for each app, write a timestamped run artifact
     plus ``latest.json``, and return a compact aggregate receipt.
     """
@@ -391,7 +391,7 @@ def observability_schedule_run(
 def compact_observability_summary(status: Dict[str, Any]) -> Dict[str, Any]:
     """Reduce a full status payload to a compact, scalar-only summary.
 
-    Used by the export view and by the Lumen dashboard adapter so neither emits
+    Used by the export view and by the operator dashboard adapter so neither emits
     unbounded structures or duplicates the reduction logic.
     """
     health = status.get("health") if isinstance(status.get("health"), dict) else {}

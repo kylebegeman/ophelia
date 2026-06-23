@@ -90,7 +90,7 @@ def _conflict_message(item: Dict[str, object]) -> str:
     """Compose a human-readable message instead of a raw dict repr.
 
     The structured `conflicts`/`warnings` lists keep the full machine-readable
-    item; this only shapes the envelope `message` so Lumen/operators do not have
+    item; this only shapes the envelope `message` so operator UIs do not have
     to parse a Python dict string.
     """
     kind = str(item.get("type"))
@@ -239,7 +239,7 @@ def _owner(path: Path, manifest: Manifest, source: str, release_id: object = Non
         "environment": manifest.environment,
         "manifest_path": str(path),
         "source": source,
-        # ``route_source`` mirrors ``source`` so route-conflict consumers (Lumen)
+        # ``route_source`` mirrors ``source`` so route-conflict consumers
         # can tell a declared manifest claim apart from an active runtime claim
         # without re-deriving it.
         "route_source": source,

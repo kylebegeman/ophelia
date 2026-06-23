@@ -20,7 +20,7 @@ is also served at `GET /schema/manifest`.
 
 ## Why
 
-Agents (Lumen, Legacy Console) need a machine-readable manifest contract they can
+Agents (private operator UI, Legacy Console) need a machine-readable manifest contract they can
 validate against before authoring or deploying a manifest, and operators need a
 fast first smoke command that confirms an install is healthy on a fresh host
 before running anything that could mutate state. The schema is derived from the
@@ -54,7 +54,7 @@ instead of drifting as a hand-maintained artifact.
 - `src/ophelia/api.py`: adds `GET /schema/manifest` returning the schema dict.
 - `pyproject.toml`: adds `[project.optional-dependencies] test = ["jsonschema>=4"]`.
   Runtime `dependencies` unchanged.
-- `README.md`, `docs/lumen-vps-ophelia-2-handoff.md`, `docs/job-action-api.md`:
+- `README.md`, `docs/private-operator-vps-ophelia-2-handoff.md`, `docs/job-action-api.md`:
   document `ship self-test` as the first smoke command and `ship schema
   manifest --json` near the manifest/discovery surfaces.
 - `tests/test_schema_export.py`, `tests/test_self_test.py`: new coverage.

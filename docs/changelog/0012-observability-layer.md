@@ -14,7 +14,7 @@ Phase 11 adds a lightweight, read-only observability layer. A new optional
 `observability` manifest block declares a health endpoint, a metrics endpoint,
 and container-log retention. A new `ophelia.observability` module composes a
 *configured + locally-derived* status for an app/environment, and a new
-`ship observability plan|status|export` command group surfaces it. The Lumen
+`ship observability plan|status|export` command group surfaces it. The private operator UI
 dashboard now fills its previously reserved per-app `observability` key with a
 compact summary.
 
@@ -60,7 +60,7 @@ is validated to be credential-free, emitting it by value carries no secret.
 
 Every output stores **summaries, never unbounded logs**: counts, statuses,
 freshness, a capped (last 5) list of failed-receipt identifiers, and scalar
-snapshot fields. The full status payload and the Lumen per-app summary are both
+snapshot fields. The full status payload and the private operator UI per-app summary are both
 swept with `deep_redact` (with `secrets_redacted` passed through as a safe key).
 
 ## Manifest block (optional, backwards-compatible)

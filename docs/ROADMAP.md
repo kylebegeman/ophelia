@@ -23,7 +23,7 @@ reference doc for the feature being changed.
 | App factory and adoption | Landed with per-template scaffolds, overwrite guards, manifest bootstrap, adoption fixtures, and redacted metadata. |
 | Fixture suite | Landed with synthetic service, static, stateful, worker, provider, incomplete, multi-service, and console-profile fixtures. |
 | Readiness and hardening | Landed with live-readiness lanes, reviewed evidence promotion, no-probe gates, drill profiles, and production hardening reports. |
-| Lumen and plugins | Landed as read-only console payloads, API summaries, and fixture plugin contracts. |
+| Operator console and plugins | Landed as read-only console payloads, API summaries, and fixture plugin contracts. |
 | Open-source preparation | Landed with Apache-2.0, DCO, governance files, public-safe docs, CI, docs-check, and strict zero-warning audit. |
 
 ## Next Practical Work

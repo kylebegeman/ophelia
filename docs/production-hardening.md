@@ -51,7 +51,7 @@ GET /hardening/production-readiness
 ```
 
 The API route uses the configured runtime root and repo-local manifests and
-plugins. It is read-only and suitable for Lumen discovery.
+plugins. It is read-only and suitable for private operator UI discovery.
 
 ## Payload
 
@@ -72,7 +72,7 @@ The report emits:
 The aggregate checks:
 
 - live-readiness status
-- Lumen console payload shape
+- operator-console payload shape
 - plugin inventory validation
 - state service status
 - workflow template availability

@@ -21,7 +21,7 @@ exercise, plus major systems 1, 2, 3, 4, 5, and 8:
 - Restore Drill System
 - Cutover Orchestrator
 - Per-App Isolation Refactor
-- Lumen Ops Adapter Surface
+- private operator UI Adapter Surface
 
 Host bootstrap/reconcile remains useful future work. Initial read-only
 multi-host placement planning has since landed in Phase 6 of the strategic
@@ -31,8 +31,8 @@ roadmap.
 
 Ophelia should become the agent-friendly VPS runtime substrate for portable apps.
 It should make app state visible, movement safe, and operation plans explicit.
-The operator experience can later live in Lumen Ops, but Ophelia must expose the
-stable commands, JSON contracts, receipts, and safety gates that Lumen and LLM
+The operator experience can later live in private operator UI, but Ophelia must expose the
+stable commands, JSON contracts, receipts, and safety gates that private operator UI and LLM
 agents can rely on.
 
 Ophelia defines the product/runtime contract first. Future software should be
@@ -41,7 +41,7 @@ we explicitly enter a retained-product adoption, migration, or deployment phase.
 Until then, synthetic fixtures are the correct way to prove behavior.
 
 Legacy Console, Legacy Runtime, and Legacy Orchestration are not long-term foundations for this roadmap. They
-may exist on current hosts as legacy deployments, but Lumen replaces them. Agents
+may exist on current hosts as legacy deployments, but private operator UIs replace them. Agents
 should avoid designing new features around Legacy Console, Legacy Runtime, or Legacy Orchestration except when
 reading legacy inventory or preparing a separately approved decommission plan.
 
@@ -221,7 +221,7 @@ High
 **Dependencies or future opportunities unlocked**
 
 Depends on portable app pack metadata and backup status. Unlocks cutover gates,
-Lumen Ops migration UI, and host cleanup confidence.
+private operator UI migration UI, and host cleanup confidence.
 
 **Technical insight and implementation tips**
 
@@ -275,7 +275,7 @@ High
 
 **Dependencies or future opportunities unlocked**
 
-Unlocks import previews, target bootstrap checks, Lumen Ops secret readiness, and
+Unlocks import previews, target bootstrap checks, private operator UI secret readiness, and
 safer agent-run deploys.
 
 **Technical insight and implementation tips**
@@ -322,7 +322,7 @@ High
 
 **Dependencies or future opportunities unlocked**
 
-Unlocks cutover gates, cleanup gates, restore drills, and Lumen Ops backup
+Unlocks cutover gates, cleanup gates, restore drills, and private operator UI backup
 dashboards.
 
 **Technical insight and implementation tips**
@@ -370,7 +370,7 @@ High
 
 **Dependencies or future opportunities unlocked**
 
-Unlocks safer consolidation, cutover planning, Lumen Ops route maps, and cleanup
+Unlocks safer consolidation, cutover planning, private operator UI route maps, and cleanup
 planning.
 
 **Technical insight and implementation tips**
@@ -424,7 +424,7 @@ Medium
 
 **Dependencies or future opportunities unlocked**
 
-Depends on readiness, data contracts, and backup status. Unlocks Lumen Ops
+Depends on readiness, data contracts, and backup status. Unlocks private operator UI
 portfolio views and cleanup planning.
 
 **Technical insight and implementation tips**
@@ -472,7 +472,7 @@ Medium
 
 **Dependencies or future opportunities unlocked**
 
-Unlocks Lumen Ops docs panes, incident handoff, and agent task prompts.
+Unlocks private operator UI docs panes, incident handoff, and agent task prompts.
 
 **Technical insight and implementation tips**
 
@@ -521,7 +521,7 @@ Medium
 
 **Dependencies or future opportunities unlocked**
 
-Unlocks Lumen run ledger integration, incident review, and rollback discovery.
+Unlocks private operator UI run ledger integration, incident review, and rollback discovery.
 
 **Technical insight and implementation tips**
 
@@ -608,7 +608,7 @@ what checks prove it is healthy.
 
 **Why it improves the product**
 
-This is the foundation for reliable migrations, restore drills, and future Lumen
+This is the foundation for reliable migrations, restore drills, and future private operator UI
 Ops control.
 
 **Complexity**
@@ -809,7 +809,7 @@ retained-app-production-internal
 
 **User experience**
 
-Demo Service, Lumen, Retained App, and SaaS apps can live on the same host without
+Demo Service, private operator UI, Retained App, and SaaS apps can live on the same host without
 accidental coupling.
 
 **Why it improves the product**
@@ -828,7 +828,7 @@ High
 **Dependencies or future opportunities unlocked**
 
 Unlocks safer multi-app hosts, cleaner app movement, better topology views, and
-future Lumen Ops service maps.
+future private operator UI service maps.
 
 **Technical insight and implementation tips**
 
@@ -838,16 +838,16 @@ future Lumen Ops service maps.
 - Write migration docs for shared Postgres and Redis access.
 - Test rendered Compose carefully.
 
-### 8. Lumen Ops Adapter Surface
+### 8. private operator UI Adapter Surface
 
 **Summary**
 
-Expose Ophelia as a stable agent and product backend for Lumen Ops.
+Expose Ophelia as a stable agent and product backend for private operator UI.
 
 **How it works**
 
 Provide JSON inventory, operation descriptors, plans, receipts, and approval-ready
-payloads. Lumen Ops should call Ophelia primitives instead of raw shell commands
+payloads. private operator UIs should call Ophelia primitives instead of raw shell commands
 for supported workflows.
 
 Initial surfaces:
@@ -865,12 +865,12 @@ host-bound API.
 
 **User experience**
 
-Lumen can display hosts, apps, health, backups, plans, approvals, and receipts
+private operator UIs can display hosts, apps, health, backups, plans, approvals, and receipts
 without asking an agent to improvise shell commands.
 
 **Why it improves the product**
 
-It lets Ophelia remain a reliable engine while Lumen becomes the cockpit.
+It lets Ophelia remain a reliable engine while private operator UI becomes the cockpit.
 
 **Complexity**
 
@@ -882,7 +882,7 @@ Transformational
 
 **Dependencies or future opportunities unlocked**
 
-Depends on stable JSON contracts and receipts. Unlocks Lumen Ops UI, approval
+Depends on stable JSON contracts and receipts. Unlocks private operator UI UI, approval
 inbox, run ledger, mobile visibility, and safer LLM automation.
 
 **Technical insight and implementation tips**
@@ -892,7 +892,7 @@ inbox, run ledger, mobile visibility, and safer LLM automation.
 - Expose action metadata: name, description, risk, dry-run support, required
   args, output schema, and whether approval is required.
 - Make API errors structured.
-- Include artifact paths that Lumen can render later.
+- Include artifact paths that private operator UIs can render later.
 
 ## Suggested Implementation Order
 
@@ -913,7 +913,7 @@ inbox, run ledger, mobile visibility, and safer LLM automation.
 15. Per-app isolation compatibility mode.
 16. Cutover plan.
 17. Cutover apply.
-18. Lumen Ops action descriptors and API hardening.
+18. private operator UI action descriptors and API hardening.
 
 ## Testing Strategy
 
@@ -932,7 +932,7 @@ inbox, run ledger, mobile visibility, and safer LLM automation.
 - Update `manifest-spec.md` as fields graduate from draft to implemented.
 - Add operator examples to `operator-runbook.md`.
 - Add app-specific Demo Service examples.
-- Add Lumen Ops adapter docs once JSON action descriptors stabilize.
+- Add private operator UI adapter docs once JSON action descriptors stabilize.
 - Keep `demo-service-migration-runbook.md` aligned with implemented commands.
 
 ## Out Of Scope For This Selected Batch

@@ -26,7 +26,7 @@ Core constraints:
 - Do not print or commit secrets.
 - Preserve backwards compatibility with existing manifests.
 - Keep all mutating operations dry-run-first with confirmation tokens.
-- Prefer JSON receipts for anything that Lumen Ops may consume later.
+- Prefer JSON receipts for anything that private operator UI may consume later.
 - Add focused tests for manifest parsing, validation, plan generation, and receipt shape.
 
 Implementation order:

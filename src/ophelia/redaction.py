@@ -1,7 +1,7 @@
 """Centralized redaction helpers.
 
 Every Ophelia surface that emits JSON (plans, receipts, reports, the state DB,
-Lumen payloads, and diff artifacts) must route secret-bearing values through
+operator-console payloads, and diff artifacts) must route secret-bearing values through
 this module. Redaction is decided by key name and by value shape, never by the
 caller guessing. The existing whitelist redactors that used to live in
 ``portability.py`` (`redacted_cloudflare_record`, `redacted_compose_text`) now

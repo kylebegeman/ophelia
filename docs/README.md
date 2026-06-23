@@ -58,7 +58,7 @@ reference docs below.
 | --- | --- |
 | [Job And Action API](job-action-api.md) | Command catalog, operation envelopes, local API, and JSON contracts. |
 | [Plugin Contracts](plugin-contracts.md) | Fixture plugin manifests, validation, and metadata surfaces. |
-| [Lumen Operator Console](lumen-operator-console.md) | Read-only Lumen console payloads and UI-facing summaries. |
+| [Operator Console Adapter](operator-console-adapter.md) | Read-only console payloads for private or internal operator UIs. |
 | [Source Of Truth](ophelia-source-of-truth.md) | Source-of-truth position for future apps and legacy inventory boundaries. |
 
 ## Change Records

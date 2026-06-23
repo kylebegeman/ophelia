@@ -5,7 +5,7 @@ Status: planning direction
 Ophelia remains the deployment control plane for Kyle's VPS platform. The next
 architecture should make Ophelia easier to use, safer for important data, and
 portable across any current or future VPS without turning it into a second UI
-product that competes with Lumen Ops.
+product that competes with private operator UI.
 
 The working goal is simple:
 
@@ -22,13 +22,13 @@ buy or rebuild a VPS
 
 Ophelia is the deterministic host-side deploy/runtime substrate.
 
-Lumen Ops is the eventual cockpit over that substrate. Lumen should read
+a private operator UI is the eventual cockpit over that substrate. private operator UIs should read
 inventory, show plans, collect approvals, and retain receipts. Ophelia should
 continue to own the host contracts, app manifests, rendered runtime files,
 export/import mechanics, Caddy validation, Docker orchestration, and migration
 safety primitives.
 
-This boundary keeps Ophelia useful now while allowing Lumen Ops to absorb the
+This boundary keeps Ophelia useful now while allowing private operator UI to absorb the
 operator experience later.
 
 Ophelia defines the source-of-truth contract before product-specific adoption
@@ -38,7 +38,7 @@ future migration or decommission plan, not architecture anchors for new core
 behavior.
 
 Legacy Console, Legacy Runtime, and Legacy Orchestration are legacy platform/runtime components for the current
-target host deployment. Lumen replaces them as the long-term product and control plane.
+target host deployment. private operator UIs replace them as the long-term product and control plane.
 New Ophelia architecture should not preserve Legacy Console, Legacy Runtime, or Legacy Orchestration as target
 foundations. Treat their `/opt/...` deployments as inventory, migration context,
 or future decommission targets only. Deleting or modifying them remains a
@@ -56,7 +56,7 @@ separate approved cleanup operation.
   and restore checks are part of the app contract.
 - Allow one host to run many unrelated apps without accidental shared state.
 - Preserve one shared public edge per host while isolating app internals.
-- Produce receipts for risky operations that Lumen Ops can ingest later.
+- Produce receipts for risky operations that private operator UIs can ingest later.
 - Prefer dry-run plans, confirmation tokens, and explicit cutover commands over
   implicit mutation.
 
@@ -70,16 +70,16 @@ The next selected product-improvement batch is documented in:
 The roadmap adds operator readability, richer diagnostics, operation aliases,
 durable state, drift detection, workflow orchestration, GitHub App and secret
 provider integrations, read-only multi-host placement, plugin contracts, and a
-Lumen operator console.
+operator console.
 
 Implementation should follow the documented phase order. Foundational contracts,
-state, redaction, and diagnostic work come before Lumen UI and plugin
+state, redaction, and diagnostic work come before private operator UI and plugin
 expansion. Host placement is currently a read-only recommendation surface, not
 an automated scheduler.
 
 ## Non-Goals
 
-- Do not replace Lumen Ops with an Ophelia UI.
+- Do not replace private operator UI with an Ophelia UI.
 - Do not make Ophelia a generic Kubernetes replacement.
 - Do not require every app to be rewritten for a new framework.
 - Do not make Lakebed a runtime dependency.
@@ -104,7 +104,7 @@ borrowing are:
 - state and log inspection commands that are available before guessing
 
 Ophelia should adapt those ideas to arbitrary Dockerized apps, VPS hosts,
-Postgres, Redis, Caddy, uploads, static assets, and Lumen Ops receipts.
+Postgres, Redis, Caddy, uploads, static assets, and private operator UI receipts.
 
 ## Core Concepts
 
@@ -193,7 +193,7 @@ Examples:
 - Caddy validation
 - DNS checklist or handoff
 
-Lumen Ops can later read these receipts directly.
+private operator UIs can later read these receipts directly.
 
 ## Isolation Model
 
@@ -301,9 +301,9 @@ New command families should build on the same plan/apply pattern:
 - `ship app placement`
 - `ship app move plan`
 
-## Lumen Ops Integration
+## private operator UI Integration
 
-Ophelia should expose machine-readable outputs before Lumen Ops writes exist.
+Ophelia should expose machine-readable outputs before private operator UI writes exist.
 
 Minimum integration surface:
 
@@ -315,7 +315,7 @@ Minimum integration surface:
 - bounded command list for read-only and mutating operations
 - secret refs instead of raw secret values
 
-Lumen Ops should not call arbitrary shell commands on a host when an Ophelia
+private operator UIs should not call arbitrary shell commands on a host when an Ophelia
 operation exists.
 
 ## Implementation Phases
@@ -375,12 +375,12 @@ Implemented foundation:
 - Add DNS checklist output for providers that are not yet native.
 - Add source retention receipts and rollback notes.
 
-### Phase 5: Lumen Ops Adapter
+### Phase 5: private operator UI Adapter
 
-- Let Lumen Ops consume Ophelia inventory, plans, receipts, and operation
+- Let private operator UI consume Ophelia inventory, plans, receipts, and operation
   descriptors.
 - Keep Ophelia as the host-side deterministic executor.
-- Keep approvals and human-facing orchestration in Lumen Ops.
+- Keep approvals and human-facing orchestration in private operator UI.
 
 ## Safety Rules
 
@@ -399,8 +399,8 @@ Implemented foundation:
 - Whether runtime roots should remain `apps/<app>` or move to
   `apps/<app>/<environment>` with a compatibility alias.
 - Whether Ophelia should ship a tiny host agent/API server or stay SSH/CLI-first
-  until Lumen Ops needs a persistent endpoint.
-- Which secret-ref store should become canonical before Lumen Ops Secret Vault is
+  until a private operator UI needs a persistent endpoint.
+- Which secret-ref store should become canonical before private operator UI Secret Vault is
   ready.
 - Whether object storage should be implemented first as local archives, B2/S3
   sync, or both.

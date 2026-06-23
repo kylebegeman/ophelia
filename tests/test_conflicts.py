@@ -83,7 +83,7 @@ class ConflictTests(unittest.TestCase):
         for owner in owners:
             self.assertEqual(owner["route_source"], "active_runtime")
             self.assertIn("runtime_bundle_path", owner)
-        # The blocker list (Lumen reads this directly) must surface it.
+        # The blocker list must surface it.
         self.assertTrue(report["blockers"], "active route collision must populate blockers")
         blocker_codes = {item.get("code") for item in report["blockers"]}
         self.assertTrue(blocker_codes & {"duplicate_route", "duplicate_domain"})

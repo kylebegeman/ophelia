@@ -11,20 +11,20 @@ commits: []
 ## Summary
 
 Added metadata-only plugin contracts with trusted-directory discovery,
-validation, plugin catalog surfaces, Lumen/API exposure, and fixture plugin
+validation, plugin catalog surfaces, operator UI/API exposure, and fixture plugin
 coverage.
 
 ## Why
 
 Ophelia needs extension points for app templates, workflow templates, policy
-packs, provider adapters, secret providers, host inventory adapters, and Lumen
+packs, provider adapters, secret providers, host inventory adapters, and private operator UI
 surfaces. Before runtime plugin execution exists, the platform needs a safe
 contract that can validate metadata without importing or executing code.
 
 ## Changed Areas
 
 - `src/ophelia/plugin_contracts.py`: validates plugin manifests, capability
-  descriptors, command descriptors, Lumen surfaces, compatibility metadata, and
+  descriptors, command descriptors, private operator UI surfaces, compatibility metadata, and
   safety notes.
 - `src/ophelia/commands/plugins.py`: adds `ship plugins list`, `ship plugins
   catalog`, and `ship plugins validate`.
@@ -37,7 +37,7 @@ contract that can validate metadata without importing or executing code.
 - `Makefile`: adds `validate-fixture-plugins`.
 - `tests/test_plugin_contracts.py`: covers trusted discovery, redaction,
   unsafe mutation rejection, unbounded schema rejection, literal secret
-  rejection, command-catalog isolation, CLI JSON, and Lumen visibility.
+  rejection, command-catalog isolation, CLI JSON, and operator-console visibility.
 - `docs/plugin-contracts.md`, README, fixture docs, roadmap, findings, and
   changelog index updated.
 

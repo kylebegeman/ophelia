@@ -42,7 +42,7 @@ should be fixed before treating the roadmap as complete.
   external symlinks are blocked for backup, export, restore-preview, rollback,
   and support-file materialization.
 - `policy.py`: declared defaults are enforced as implicit policy rules.
-- `api_routes.py`, `lumen_adapter.py`: Lumen HTTP endpoint metadata is derived
+- `api_routes.py`, `lumen_adapter.py`: private operator UI HTTP endpoint metadata is derived
   from the shared route list.
 
 ## Contract Impact

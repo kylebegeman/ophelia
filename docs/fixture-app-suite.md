@@ -66,7 +66,7 @@ Run every committed live drill profile:
 make live-drills-fixtures
 ```
 
-Run the Lumen console payload against the fixture suite:
+Run the operator-console payload against the fixture suite:
 
 ```bash
 make lumen-console-fixtures
@@ -107,7 +107,7 @@ A healthy fixture run should produce:
   and not a freshly rendered runtime bundle
 - no raw env, database, token, or provider values in output
 
-The fixture Lumen console run should also show eight app rows, one fixture
+The fixture operator-console run should also show eight app rows, one fixture
 plugin, a non-empty approval queue, and the same one-blocked/seven-warning
 readiness mix.
 
@@ -142,7 +142,7 @@ target passes `--allow-blocked-live-readiness`.
 - Keep the suite fast and read-only. It should be safe to run in local unit
   tests and CI.
 - Add focused fixture cases when new readiness, placement, provider, backup,
-  restore, drift, workflow, plugin, Lumen console, or production hardening
+  restore, drift, workflow, plugin, operator console, or production hardening
   behavior needs realistic multi-app coverage.
 
 ## Plugin Metadata
@@ -154,5 +154,5 @@ fixtures/app-suite/plugins/fixture-app-suite/ophelia-plugin.yml
 ```
 
 The plugin manifest describes fixture apps, provider observations, secret
-observations, host inventory, and a Lumen surface. It does not execute code or
+observations, host inventory, and an operator-console surface. It does not execute code or
 register new commands.

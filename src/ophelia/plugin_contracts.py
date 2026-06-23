@@ -332,7 +332,7 @@ def _normalize_lumen_surfaces(value: Any, blockers: List[Dict[str, str]]) -> Lis
     for index, item in enumerate(value):
         path = f"lumen_surfaces[{index}]"
         if not isinstance(item, dict):
-            blockers.append(issue("plugin_lumen_surface_invalid", "Lumen surface entries must be mappings.", path))
+            blockers.append(issue("plugin_lumen_surface_invalid", "operator-console surface entries must be mappings.", path))
             continue
         surfaces.append(
             {

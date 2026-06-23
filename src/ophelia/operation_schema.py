@@ -78,7 +78,7 @@ def attach_digest(
     """Attach a compact, redacted operator digest to a plan/report/receipt.
 
     The digest is intentionally redundant with the full payload. It gives humans,
-    Lumen, and downstream agents a bounded summary of operation identity, risk,
+    operator UIs, and downstream agents a bounded summary of operation identity, risk,
     confirmation/rollback posture, and blocker/warning counts without requiring
     every consumer to understand every operation-specific field.
     """

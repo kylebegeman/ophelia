@@ -293,7 +293,7 @@ class OpheliaHandler(BaseHTTPRequestHandler):
         return base
 
     def _lumen_apps(self) -> dict:
-        """List apps/environments from the manifest registry, framed for Lumen.
+        """List apps/environments from the manifest registry, framed for operator UIs.
 
         Degrades gracefully: a missing manifests directory yields an empty
         ``apps`` list (HTTP 200), never a 500.

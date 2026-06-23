@@ -110,7 +110,7 @@ Top-level checks:
 - GitHub provider status
 - secret provider status
 - state DB status (read-only, no rebuild)
-- Lumen dashboard data
+- operator-console dashboard data
 
 Per-app checks:
 

@@ -26,7 +26,7 @@ agent moving an app between hosts had to discover and order the prerequisite
 steps itself (validate manifest, audit secrets, check route conflicts and
 backups, score readiness, then plan export/import/restore-drill/traffic). Phase
 8 encodes that sequence as an inspectable graph an agent can read, link to
-Lumen action descriptors (every node operation appears in the command catalog),
+private operator UI action descriptors (every node operation appears in the command catalog),
 and reason about before acting, without giving it any new way to mutate state.
 
 ## Plan-only contract

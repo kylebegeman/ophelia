@@ -42,7 +42,7 @@ The selected major features are:
 7. Runtime State Database
 8. Production Traffic Controller
 9. Backup And Restore Verification Platform
-10. Lumen Ops Adapter
+10. private operator UI Adapter
 
 Major feature 4, Host Capability And Inventory Registry, was not selected in
 this batch. Do not build a broad placement registry unless a selected feature
@@ -61,7 +61,7 @@ needs a narrow host capability read model.
 - Every command that may mutate state must have a read-only `plan` form and a
   separate confirmed `apply`, `create`, or `execute` form.
 - Every command must support stable `--json` output before it is considered
-  usable by Lumen or other agents.
+  usable by private operator UI or other agents.
 - Prefer typed arguments over shell snippets.
 - Hook execution must be allowlisted, bounded, and recorded as artifacts.
 - Keep existing manifests backwards compatible.
@@ -79,10 +79,10 @@ Read these before implementation:
 - [Preflight and Safety](../../preflight-and-safety.md)
 - [Releases and Rollback](../../releases-and-rollback.md)
 - [Job / Action API Notes](../../job-action-api.md)
-- [Operator Handoff Note](../handoffs/lumen-vps-ophelia-2-handoff.md)
-- Lumen change-log precedent:
+- [Operator Handoff Note](../handoffs/private-operator-vps-ophelia-2-handoff.md)
+- private operator UI change-log precedent:
   `/path/to/lumen/docs/changelog/README.md`
-- Lumen change-log template precedent:
+- private operator UI change-log template precedent:
   `/path/to/lumen/docs/changelog/TEMPLATE.md`
 
 Primary source modules to inspect:
@@ -115,13 +115,13 @@ manifest and app pack
   -> confirmation token
   -> apply/create with receipt
   -> receipt timeline
-  -> Lumen Ops adapter surfaces the same contracts
+  -> private operator UI adapter surfaces the same contracts
 ```
 
-Lumen should not depend on Kyle's local checkout or hidden conventions. It
+private operator UIs should not depend on Kyle's local checkout or hidden conventions. It
 should call Ophelia through installed CLI commands, `ship api serve`, future MCP
 adapters, or stable JSON files. Ophelia owns the runtime contracts and plan
-execution. Lumen owns operator UX, approval collection, dashboards, and
+execution. private operator UIs own operator UX, approval collection, dashboards, and
 long-lived cockpit workflows.
 
 ## Shared Contract Rules
@@ -191,7 +191,7 @@ Implement in this order:
 7. Runtime state database
 8. Policy engine
 9. Agent-native operation graph
-10. Lumen Ops adapter
+10. private operator UI adapter
 11. App factory and GitHub release/deploy model
 12. Observability and telemetry layer
 13. Backup and restore verification platform
@@ -300,7 +300,7 @@ registry used by:
 - `ship operations --json`
 - `GET /actions`
 - `GET /operations`
-- future Lumen adapter commands
+- future private operator UI adapter commands
 
 Add a command:
 
@@ -374,7 +374,7 @@ Test expectations:
 
 - Every descriptor has an operation name.
 - Every mutating descriptor has a plan command or a documented reason.
-- Every `--json` command used by Lumen docs can be parsed by `json.loads`.
+- Every `--json` command used by private operator UI docs can be parsed by `json.loads`.
 - No command descriptor exposes a raw secret argument default.
 - `ship actions --json` and `GET /actions` share the same descriptor source.
 
@@ -383,7 +383,7 @@ Test expectations:
 Update:
 
 - [Job / Action API Notes](../../job-action-api.md)
-- [Operator Handoff Note](../handoffs/lumen-vps-ophelia-2-handoff.md)
+- [Operator Handoff Note](../handoffs/private-operator-vps-ophelia-2-handoff.md)
 
 Add a change record.
 
@@ -513,7 +513,7 @@ Tests:
 Docs:
 
 - Add to README quick start.
-- Add to Lumen handoff docs as the first smoke command.
+- Add to private operator UI handoff docs as the first smoke command.
 
 ## Phase 3: Provider, Secret, And Route Validation Refinements
 
@@ -667,7 +667,7 @@ Requirements:
 - Domain conflicts are blockers when two active apps claim the same host and
   path without an explicit shared route policy.
 - JSON output must include `blockers` and `warnings`.
-- Lumen should be able to show conflict ownership without parsing Caddy text.
+- private operator UIs should be able to show conflict ownership without parsing Caddy text.
 
 Add tests under `tests/test_conflicts.py`.
 
@@ -682,7 +682,7 @@ Selected items covered:
 ### Goal
 
 Turn readiness from a pass/fail report into an action-oriented checklist. Agents
-and Lumen should be able to see what is wrong, why it matters, and which exact
+and private operator UIs should be able to see what is wrong, why it matters, and which exact
 command or manifest change to do next.
 
 ### Implementation
@@ -993,7 +993,7 @@ Expose read-only endpoints:
 - `GET /state/routes`
 - `GET /state/backups`
 
-Lumen should use these instead of crawling files once available.
+private operator UIs should use these instead of crawling files once available.
 
 ### Tests
 
@@ -1103,7 +1103,7 @@ Selected item covered:
 
 ### Goal
 
-Represent multi-step operations as explicit graphs that agents and Lumen can
+Represent multi-step operations as explicit graphs that agents and private operator UIs can
 inspect, execute step by step, resume, cancel, or explain. This makes complex
 workflows less dependent on prompt memory.
 
@@ -1182,18 +1182,18 @@ Tests:
 - Move-app graph includes the expected nodes in dependency order.
 - No mutating node is runnable without a prior plan and confirmation.
 - JSON command arrays contain no shell metacharacter assumptions.
-- Lumen action descriptors can link to workflow graph nodes.
+- private operator UI action descriptors can link to workflow graph nodes.
 
-## Phase 9: Lumen Ops Adapter
+## Phase 9: private operator UI Adapter
 
 Selected item covered:
 
-- Major 10: Lumen Ops Adapter
+- Major 10: private operator UI Adapter
 
 ### Goal
 
-Make Ophelia easy for Lumen to consume without importing Ophelia internals or
-parsing human output. Lumen should use stable command descriptors, operation
+Make Ophelia easy for private operator UI to consume without importing Ophelia internals or
+parsing human output. private operator UIs should use stable command descriptors, operation
 graphs, state queries, receipts, and policy results.
 
 ### Relationship To CLI, Agents, And MCP
@@ -1201,7 +1201,7 @@ graphs, state queries, receipts, and policy results.
 This should work hand in hand with all three:
 
 - CLI remains the canonical operator and automation surface.
-- Lumen calls `ship api serve`, reads JSON receipts, and can shell out to
+- private operator UI calls `ship api serve`, reads JSON receipts, and can shell out to
   installed `ship` when appropriate.
 - Agents use the same stable JSON contracts and command catalog.
 - A future MCP server should wrap the command/action registry. It should not
@@ -1267,7 +1267,7 @@ Tests:
 Docs:
 
 - Update [Job / Action API Notes](../../job-action-api.md).
-- Add Lumen consumption examples to the handoff docs.
+- Add private operator UI consumption examples to the handoff docs.
 
 ## Phase 10: App Factory And Default GitHub Release/Deploy Model
 
@@ -1284,15 +1284,15 @@ environment manifests without bespoke CI glue.
 
 ### Product Boundary
 
-This feature should work with Lumen, agents, and CLI/MCP:
+This feature should work with private operator UI, agents, and CLI/MCP:
 
 - CLI: deterministic `ship app create plan` and `ship app create apply`.
-- Lumen: form-based wizard that calls the same plan/apply API and shows
+- private operator UI: form-based wizard that calls the same plan/apply API and shows
   generated artifacts.
 - Agents: command catalog, schema export, and operation graph describe the steps.
 - MCP: future wrapper around the same action descriptors.
 
-Do not require Lumen to exist for the CLI flow to work.
+Do not require private operator UI to exist for the CLI flow to work.
 
 ### App Factory Commands
 
@@ -1432,7 +1432,7 @@ Selected item covered:
 ### Goal
 
 Every app running inside Ophelia should get a baseline monitoring and telemetry
-contract for free, and Lumen should be able to show health, status, resource,
+contract for free, and private operator UIs should be able to show health, status, resource,
 release, backup, and traffic data without bespoke per-app setup.
 
 ### First Version
@@ -1449,7 +1449,7 @@ Keep the first version lightweight:
 - Receipt failure counts
 - Optional app-defined metrics endpoint
 
-Do not introduce a heavy metrics stack until the data model and Lumen adapter are
+Do not introduce a heavy metrics stack until the data model and private operator UI adapter are
 stable.
 
 ### Implementation
@@ -1494,7 +1494,7 @@ Rules:
 - Metrics scraping is read-only and bounded.
 - Store summaries, not unbounded logs, in receipts/state DB.
 
-Lumen dashboard should consume:
+operator dashboard should consume:
 
 - app status
 - health summary
@@ -1518,7 +1518,7 @@ Tests:
 - Health URL validation rejects credentialed URLs.
 - Status command times out cleanly.
 - Missing optional metrics endpoint is a warning.
-- Lumen dashboard data includes observability summary when present.
+- operator dashboard data includes observability summary when present.
 
 ## Phase 12: Backup And Restore Verification Platform
 
@@ -1600,7 +1600,7 @@ Selected item covered:
 Make traffic movement production-ready in implementation and contracts before
 polish. The current traffic plan/apply foundation should become a robust,
 policy-gated controller with provider validation, health checks, rollback
-receipts, dry-run diffs, and Lumen visibility.
+receipts, dry-run diffs, and operator-console visibility.
 
 ### Implementation
 
@@ -1668,7 +1668,7 @@ Use focused tests as each feature lands:
 - Fixture runtime roots for receipts, releases, backups, and route conflicts.
 - Golden-ish schema tests where stable contracts matter.
 - Redaction tests with known fake secret values.
-- API tests for Lumen endpoints.
+- API tests for private operator UI endpoints.
 
 Do not weaken existing tests to make new features pass.
 
@@ -1708,7 +1708,7 @@ Rules:
 
 - Redact by key name and by value shape where possible.
 - Preserve useful metadata: key present, source, required, ref name.
-- Never include raw values in receipts, plans, state DB, Lumen payloads, or
+- Never include raw values in receipts, plans, state DB, private operator UI payloads, or
   artifacts.
 - Add tests that fail if fixture secret strings appear in JSON output.
 
@@ -1739,9 +1739,9 @@ Every agent-facing command should:
 - point to artifact files instead of printing large content
 - include docs references for remediation
 
-### Lumen Ergonomics
+### private operator UI Ergonomics
 
-Lumen should never need to parse human CLI text. For every Lumen surface:
+private operator UIs should never need to parse human CLI text. For every private operator UI surface:
 
 - prefer HTTP API if `ship api serve` is available
 - fall back to installed `ship ... --json`
@@ -1757,7 +1757,7 @@ This plan is complete when:
 - All selected minor and major items above have command or API surfaces.
 - Every mutating operation has a read-only plan form and confirmation token.
 - Every agent-consumed command has stable `--json` output.
-- Lumen can discover capabilities and actions without local source imports.
+- private operator UIs can discover capabilities and actions without local source imports.
 - Ophelia can scaffold a repo and GitHub release/deploy contract in preview
   mode and apply only with confirmation.
 - Readiness reports include remediation and detailed scoring.
@@ -1765,7 +1765,7 @@ This plan is complete when:
 - Runtime state can be rebuilt into a local query database.
 - Policy evaluation gates risky operations.
 - Operation graphs can plan an app move.
-- Observability summaries are available to Lumen.
+- Observability summaries are available to private operator UI.
 - Backup verification proves restore readiness through receipts.
 - Traffic automation is provider-validated, policy-gated, health-checked, and
   rollback-aware.

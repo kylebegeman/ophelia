@@ -4,13 +4,13 @@ Status: selected next-stage roadmap, Phases 1-15 landed plus read-only live read
 
 Date: 2026-06-21
 
-Audience: implementation agents, Kyle, and future Lumen/Ophelia planning work.
+Audience: implementation agents, Kyle, and future operator UI/Ophelia planning work.
 
 This roadmap sequences the selected product improvements from
 [Product Improvement Findings](product-improvement-findings.md). It is designed
 for phased implementation with milestone commits between phases. The order is
 dependency-driven: foundational contracts, state, and safety primitives come
-before orchestration, integrations, placement, plugin boundaries, and Lumen UI.
+before orchestration, integrations, placement, plugin boundaries, and private operator UI.
 
 ## Scope
 
@@ -24,7 +24,7 @@ Selected minor improvements:
 
 Selected major systems:
 
-- Lumen Operator Console
+- private operator UI Operator Console
 - Full Workflow Orchestrator
 - GitHub App Integration
 - Drift Detection Engine
@@ -40,7 +40,7 @@ rebuilt:
 
 - Standard plan, report, receipt, and error envelopes in `operation_schema.py`.
 - Central redaction and propagated data redaction.
-- Command catalog and Lumen action descriptors.
+- Command catalog and private operator UI action descriptors.
 - App factory, scaffold apply, and token-gated GitHub provisioning via `gh`.
 - GitHub provider contracts with GitHub App metadata and `gh` fallback.
 - Secret provider reports for runtime env, GitHub environment observations, and
@@ -58,7 +58,7 @@ rebuilt:
   placement, drift, backup, restore, provider, and secret-provider testing.
 - Metadata-only plugin contracts, trusted-directory discovery, validation, and
   plugin catalog surfaces.
-- Read-only Lumen operator console payload over dashboard, app rows, approvals,
+- Read-only operator console payload over dashboard, app rows, approvals,
   workflows, plugins, and quick actions.
 - Read-only production hardening report that composes live readiness, console
   data, plugin validation, workflow availability, state status, command catalog
@@ -94,7 +94,7 @@ rebuilt:
   receipt.
 - JSON contracts must stay stable and documented.
 - Secret values must never be stored, printed, or included in receipts.
-- Lumen UI work should consume Ophelia contracts; Ophelia remains the
+- private operator UI work should consume Ophelia contracts; Ophelia remains the
   deterministic executor.
 - Each phase gets a changelog record and a milestone commit.
 - If a phase changes public JSON shape, update docs and tests in that phase.
@@ -144,7 +144,7 @@ larger orchestration.
 - Cover deploy, app factory, traffic, workflow, backup/restore, GitHub
   provisioning, and observability through the shared envelope path.
 - Extend `CommandDescriptor` with `examples`.
-- Surface examples through `ship commands catalog`, Lumen action descriptors,
+- Surface examples through `ship commands catalog`, private operator UI action descriptors,
   and docs.
 - Expand `ship doctor` to check:
   - Python/import health
@@ -254,7 +254,7 @@ traffic status, GitHub provisioning contracts, observability schedule runs.
 
 - State refresh is idempotent and safe to run repeatedly.
 - Drift reports are redacted and bounded.
-- Lumen dashboard can read aggregates from the state service instead of
+- operator dashboard can read aggregates from the state service instead of
   re-scanning every file.
 - Tests cover stale index behavior and drift severity ordering.
 
@@ -296,7 +296,7 @@ policy engine, receipt timeline.
 - Mutating workflow nodes never run without matching confirmation.
 - Resume is deterministic after process restart.
 - Failed nodes stop dependent nodes.
-- Lumen can render workflow state from one read model.
+- private operator UIs can render workflow state from one read model.
 
 **Boundary:** Phase 4 persists and resumes local workflow state and executes
 existing typed commands. Full authenticated live GitHub, secrets, and production
@@ -370,7 +370,7 @@ can plug into these contracts later without changing the CLI envelope shape.
   - provider constraints
 - Add `ship host inventory`, `ship host readiness`, and `ship app placement`
   plan surfaces.
-- Feed placement results into workflow templates and Lumen.
+- Feed placement results into workflow templates and private operator UI.
 
 **Dependencies:** Durable state service, drift engine, secrets provider presence,
 observability schedule, readiness reports.
@@ -380,7 +380,7 @@ observability schedule, readiness reports.
 **Implementation status:** Landed in
 [`0024`](../../changelog/0024-phase-6-host-inventory-and-placement-planning.md).
 Phase 6 adds read-only host inventory and readiness reports, app placement
-planning and scoring, move-app workflow integration, Lumen surfaces, default
+planning and scoring, move-app workflow integration, private operator UI surfaces, default
 local host metadata, and durable operator documentation. Placement remains a
 recommendation surface; it does not reserve hosts or execute migrations.
 
@@ -397,7 +397,7 @@ mutation hardening.
 
 **Work items:**
 
-- Aggregate host inventory/readiness, provider status, state status, Lumen
+- Aggregate host inventory/readiness, provider status, state status, private operator UI
   dashboard data, app readiness, placement, observability, secrets, and drift.
 - Keep HTTP and Docker probes disabled unless explicitly requested.
 - Report observation file paths for GitHub, secret-provider, host, and
@@ -463,7 +463,7 @@ sprawl.
   - provider adapters
   - secret providers
   - host inventory adapters
-  - Lumen surface extensions
+  - private operator UI surface extensions
 - Add plugin discovery from an explicit trusted directory.
 - Add validation and catalog surfaces.
 - Keep plugins disabled by default until validated.
@@ -483,23 +483,23 @@ orchestrator, state service, policy engine.
   time.
 
 **Boundary:** Phase 7 is metadata-only. Ophelia validates plugin manifests and
-surfaces capabilities to CLI/API/Lumen, but it does not import, install, execute,
+surfaces capabilities to CLI/API/private operator UI, but it does not import, install, execute,
 or sandbox plugin code. Runtime plugin execution remains later hardening work.
 
-## Phase 8: Lumen Operator Console
+## Phase 8: private operator UI Operator Console
 
 **Status:** Landed in changelog record
-[`0028`](../../changelog/0028-phase-8-lumen-console-mvp.md).
+[`0028`](../../changelog/0028-phase-8-operator-console-payload.md).
 
 **Goal:** Build the operator cockpit on top of Ophelia contracts.
 
 **Implements:**
 
-- Major 1: Lumen Operator Console
+- Major 1: private operator UI Operator Console
 
 **Work items:**
 
-- Define Lumen views for:
+- Define private operator UI views for:
   - app inventory
   - readiness
   - observability and trend history
@@ -511,27 +511,27 @@ or sandbox plugin code. Runtime plugin execution remains later hardening work.
   - host placement
 - Add approval UX for confirmation-token flows.
 - Add copyable exact apply commands and digest cards.
-- Add Lumen-side filtering and search over the state service.
+- Add operator-UI-side filtering and search over the state service.
 - Add accessibility and keyboard navigation requirements.
-- Keep mutation execution in Ophelia; Lumen collects approval and invokes the
+- Keep mutation execution in Ophelia; private operator UI collects approval and invokes the
   stable CLI/API/action contract.
 
 **Dependencies:** Digest cards, command examples, operation aliases, durable
 state service, drift engine, workflow orchestrator, GitHub/secrets providers,
 host placement.
 
-**Milestone commit:** `feat: add Lumen operator console MVP`
+**Milestone commit:** `feat: add operator console MVP`
 
 **Definition of done:**
 
-- Lumen can inspect and approve high-value Ophelia operations without raw shell
+- private operator UIs can inspect and approve high-value Ophelia operations without raw shell
   composition.
 - Console views are backed by stable Ophelia JSON contracts.
 - Mutating actions show digest, risk, token, expected changes, and rollback
   posture before execution.
 
 **Boundary:** Phase 8 adds the read-only console data contract and fixture
-smoke target. Lumen UI rendering lives outside this repo; Ophelia exposes the
+smoke target. private operator UI rendering lives outside this repo; Ophelia exposes the
 bounded payload and keeps mutation execution inside existing plan/confirm/apply
 contracts.
 
@@ -545,7 +545,7 @@ onto them.
 
 **Work items:**
 
-- Add a read-only production hardening aggregate over live readiness, Lumen
+- Add a read-only production hardening aggregate over live readiness, private operator UI
   console data, plugin validation, workflow availability, state status, command
   catalog safety, and fixture drills.
 - Expose `ship hardening production-readiness`, command catalog examples, and
@@ -1190,7 +1190,7 @@ Phase 0 docs
         -> Phase 5 GitHub App/secrets
           -> Phase 6 multi-host placement
             -> Phase 7 plugin contracts
-              -> Phase 8 Lumen console
+              -> Phase 8 operator console
                 -> Phase 9 hardening
                   -> Phase 10 live drill profiles
                     -> Phase 11 live test baseline

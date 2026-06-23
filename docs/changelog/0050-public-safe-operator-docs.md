@@ -28,8 +28,8 @@ outside Git.
   adoption/migration outline.
 - `docs/demo-docs-host-layout.md`: replaced product-specific layout details
   with a public-safe note that private product docs belong outside the repo.
-- `docs/lumen-vps-deployment-agent-packaging-note.md` and
-  `docs/lumen-vps-ophelia-2-handoff.md`: replaced private handoff content with
+- `docs/private-operator-vps-deployment-agent-packaging-note.md` and
+  `docs/private-operator-vps-ophelia-2-handoff.md`: replaced private handoff content with
   public integration summaries.
 - `docs/ophelia-improvement-execution-plan.md` and `docs/prompts/*.md`:
   replaced local private paths with generic paths.

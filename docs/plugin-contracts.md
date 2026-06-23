@@ -11,7 +11,7 @@ Plugin discovery is read-only:
 - Ophelia reads `ophelia-plugin.yml`, `ophelia-plugin.yaml`, or
   `ophelia-plugin.json`.
 - Ophelia validates metadata, capability descriptors, command descriptors,
-  Lumen surfaces, compatibility notes, and safety notes.
+  operator-console surfaces, compatibility notes, and safety notes.
 - Ophelia does not import plugin modules.
 - Ophelia does not execute plugin code.
 - Plugin command descriptors are not injected into the executable command
@@ -72,7 +72,7 @@ Validation blocks plugin manifests when:
 
 - `schema_version` is not `1`
 - `kind` is not `ophelia.plugin_manifest`
-- plugin names, capability ids, or Lumen surface ids are not lowercase slugs
+- plugin names, capability ids, or operator-console surface ids are not lowercase slugs
 - `enabled_by_default` is true
 - command `args_schema` is not a bounded object schema with
   `additionalProperties: false`
@@ -93,6 +93,5 @@ fixtures/app-suite/plugins/fixture-app-suite/ophelia-plugin.yml
 ```
 
 It describes the committed fixture apps, local provider observations, secret
-observations, host inventory, and fixture live-readiness Lumen surface. It is a
+observations, host inventory, and fixture live-readiness operator-console surface. It is a
 metadata fixture only; it does not add executable commands.
-

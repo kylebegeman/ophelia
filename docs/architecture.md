@@ -18,10 +18,10 @@ rendered Caddy/Compose/runtime files, host operations, backup and restore
 contracts, rollback, runtime inspection, receipts, safety gates, and the JSON
 surfaces that downstream tools consume.
 
-Lumen can become the operator cockpit over those contracts, but it should not
-replace the host-side source of truth. Existing products and old host services
-are legacy inventory until a separately approved adoption, migration, or
-decommission phase moves them onto the current Ophelia contract.
+Private or internal operator UIs can become cockpits over those contracts, but
+they should not replace the host-side source of truth. Existing products and old
+host services are legacy inventory until a separately approved adoption,
+migration, or decommission phase moves them onto the current Ophelia contract.
 
 ### `ophelia` owns
 

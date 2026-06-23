@@ -16,7 +16,7 @@ Ophelia change records for future implementation work.
 ## Why
 
 The next feature batch spans command catalogs, schema export, readiness
-remediation, provider validation, policy, operation graphs, Lumen integration,
+remediation, provider validation, policy, operation graphs, private operator UI integration,
 observability, app factory, release automation, backup verification, and traffic
 automation. Future agents need a dependency-ordered plan and a durable way to
 record each logical change.

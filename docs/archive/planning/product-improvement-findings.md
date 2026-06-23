@@ -4,7 +4,7 @@ Status: selected for phased planning
 
 Date: 2026-06-21
 
-Audience: Kyle, implementation agents, and future Lumen/Ophelia planning work.
+Audience: Kyle, implementation agents, and future operator UI/Ophelia planning work.
 
 This document records the product improvement opportunities selected for the
 next Ophelia roadmap. Listing a finding here means it is worth designing and
@@ -26,7 +26,7 @@ Selected minor improvements:
 
 Selected major systems:
 
-1. Lumen Operator Console
+1. private operator UI Operator Console
 2. Full Workflow Orchestrator
 3. GitHub App Integration
 4. Drift Detection Engine
@@ -46,9 +46,9 @@ short, stable summary of affected app, risk, mutations, blockers, apply command,
 and rollback posture before deciding what to do.
 
 **Product opportunity:** Add a shared `digest` block to plans, receipts, and
-Lumen surfaces.
+private operator UI surfaces.
 
-**Why it matters:** This improves operator confidence, agent planning, Lumen
+**Why it matters:** This improves operator confidence, agent planning, private operator UI
 card rendering, and approval flows without changing the underlying safety model.
 
 **Roadmap phase:** Phase 1
@@ -122,7 +122,7 @@ The command catalog carries schemas, risk, and output metadata, but it lacks
 copyable examples and common workflow snippets.
 
 **Product opportunity:** Add `examples` to command descriptors and surface them
-in `ship commands catalog`, Lumen action descriptors, and docs.
+in `ship commands catalog`, private operator UI action descriptors, and docs.
 
 **Why it matters:** Better discoverability, safer agent tool use, and lower
 operator learning cost.
@@ -132,15 +132,15 @@ operator learning cost.
 **Implementation status:** Landed in changelog record
 [`0019`](../../changelog/0019-phase-1-operator-readability-and-discovery.md).
 
-### F-006: Lumen Needs A Real Operator Console Over Ophelia Contracts
+### F-006: private operator UI Needs A Real Operator Console Over Ophelia Contracts
 
-**Selected item:** Major 1, Lumen Operator Console
+**Selected item:** Major 1, private operator UI Operator Console
 
 Ophelia now exposes machine-readable contracts, but operators still assemble
 status, readiness, workflow, traffic, observability, and receipts mostly through
 CLI output.
 
-**Product opportunity:** Build a Lumen console with app inventory, health,
+**Product opportunity:** Build a operator console with app inventory, health,
 readiness, traffic state, workflow previews/runs, approvals, and receipts.
 
 **Why it matters:** This turns Ophelia from a powerful CLI substrate into a
@@ -149,11 +149,11 @@ cohesive operator experience while keeping execution deterministic in Ophelia.
 **Roadmap phase:** Phase 8
 
 **Implementation status:** Landed in
-[`0028`](../../changelog/0028-phase-8-lumen-console-mvp.md). Ophelia now exposes
+[`0028`](../../changelog/0028-phase-8-operator-console-payload.md). Ophelia now exposes
 `ship lumen console-data` and `GET /lumen/console-data`, a read-only console
 payload with overview cards, app rows, approval queue metadata, workflow
 summaries, plugin inventory, quick actions, source metadata, and fixture smoke
-coverage. Lumen UI rendering remains outside this repo.
+coverage. private operator UI rendering remains outside this repo.
 
 ### F-007: Workflows Need To Become Resumable End-To-End Operations
 
@@ -211,7 +211,7 @@ a durable, cross-surface signal spanning manifests, runtime files, GitHub, DNS,
 Caddy, backups, state DB, and provider integrations.
 
 **Product opportunity:** Build a drift engine that records snapshots, compares
-desired and observed state, emits plans to reconcile, and feeds Lumen.
+desired and observed state, emits plans to reconcile, and feeds private operator UI.
 
 **Why it matters:** Silent operational drift is one of the highest long-term
 risks in VPS platforms.
@@ -239,7 +239,7 @@ filesystem scans and inconsistent query behavior.
 **Product opportunity:** Promote state into a durable local service with
 migrations, indexing, refresh jobs, query APIs, and stale-data diagnostics.
 
-**Why it matters:** This improves performance, consistency, Lumen ergonomics,
+**Why it matters:** This improves performance, consistency, private operator UI ergonomics,
 historical analytics, and long-term maintainability.
 
 **Roadmap phase:** Phase 3
@@ -248,7 +248,7 @@ historical analytics, and long-term maintainability.
 [`0021`](../../changelog/0021-phase-3-state-service-and-drift-engine.md). The state DB
 schema is now versioned with refresh metadata and freshness checks. Operators
 can run `ship state refresh` to rebuild the local index, `ship state summary` to
-read app aggregates from SQLite without a scan, and Lumen/API consumers can use
+read app aggregates from SQLite without a scan, and operator UI/API consumers can use
 `GET /state/summary`.
 
 ### F-011: Secret Presence Needs Integrations Without Storing Secrets
@@ -257,7 +257,7 @@ read app aggregates from SQLite without a scan, and Lumen/API consumers can use
 
 Ophelia has strong redaction discipline, but operators still need a safer way to
 verify secret presence across GitHub environments, local runtime env, 1Password,
-Doppler, SOPS, Vault, or future Lumen vaults.
+Doppler, SOPS, Vault, or future private operator UI vaults.
 
 **Product opportunity:** Add a secret-reference integration layer that validates
 presence and metadata only, never values.
@@ -294,7 +294,7 @@ optimization, and future automated movement.
 `ship host inventory`, `ship host readiness`, and `ship app placement` now
 provide read-only host records, readiness checks, placement requirements, and
 recommendations. The `move-app` workflow consumes placement before export
-planning, and Lumen has host inventory and placement surfaces.
+planning, and private operator UIs have host inventory and placement surfaces.
 
 ### F-013: Extension Points Need Contracts Before The Platform Grows Too Wide
 
@@ -316,7 +316,7 @@ integrations grow without destabilizing core safety contracts.
 **Implementation status:** Landed in
 [`0027`](../../changelog/0027-phase-7-plugin-contracts.md). Ophelia now supports
 metadata-only plugin manifests, trusted-directory discovery, validation,
-`ship plugins list|catalog|validate`, `/plugins`, Lumen capability exposure,
+`ship plugins list|catalog|validate`, `/plugins`, private operator UI capability exposure,
 and fixture plugin coverage. Runtime plugin execution remains deferred.
 
 ## Prioritization Notes
@@ -333,7 +333,7 @@ Highest ROI near-term:
 
 Most strategic long-term:
 
-- F-006 Lumen Operator Console
+- F-006 private operator UI Operator Console
 - F-007 Full Workflow Orchestrator (local orchestrator landed; live
   integrations continue in later phases)
 - F-010 Durable State Service
@@ -356,13 +356,13 @@ Fastest visible wins:
 
 The committed [Fixture App Suite](../../fixture-app-suite.md) supports the roadmap by
 providing deterministic multi-app inputs for readiness, live-readiness,
-placement, drift, backup, restore, provider, secret-provider, plugin, Lumen
+placement, drift, backup, restore, provider, secret-provider, plugin, private operator UI
 console, and production-hardening behavior. It does not change the selected
 product scope, but it lowers implementation risk by making mixed operational
 states reproducible without production data.
 
 The [Production Hardening Report](../../production-hardening.md) adds a read-only
-go/no-go aggregate over live readiness, Lumen console data, plugin validation,
+go/no-go aggregate over live readiness, operator console data, plugin validation,
 workflow availability, state status, command catalog safety, and fixture drills.
 It is the current bridge between fixture-backed contract work and future
 authenticated live provider probes or production migration rehearsals.

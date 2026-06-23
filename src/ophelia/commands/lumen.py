@@ -10,7 +10,7 @@ from ..lumen_adapter import action_descriptors, capabilities, console_data, dash
 
 
 def register(subparsers: _SubParsersAction) -> None:
-    parser = subparsers.add_parser("lumen", help="Read-only Lumen ops adapter views")
+    parser = subparsers.add_parser("lumen", help="Read-only operator-console adapter views")
     lumen_subparsers = parser.add_subparsers(dest="lumen_command")
 
     cap_parser = lumen_subparsers.add_parser(
@@ -29,13 +29,13 @@ def register(subparsers: _SubParsersAction) -> None:
     dash_parser.set_defaults(handler=run_dashboard_data)
 
     ad_parser = lumen_subparsers.add_parser(
-        "action-descriptors", help="The shared command catalog framed as Lumen action descriptors"
+        "action-descriptors", help="The shared command catalog framed as operator-console action descriptors"
     )
     ad_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     ad_parser.set_defaults(handler=run_action_descriptors)
 
     console_parser = lumen_subparsers.add_parser(
-        "console-data", help="Single bounded payload for the Lumen operator console"
+        "console-data", help="Single bounded payload for an operator console"
     )
     console_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     console_parser.add_argument("--manifests-dir", type=Path, default=REPO_ROOT / "manifests")
@@ -104,7 +104,7 @@ register_cli_descriptor(
     CommandDescriptor(
         command="ship lumen capabilities",
         operation="lumen.capabilities",
-        summary="Manifest of commands, HTTP endpoints, and surfaces Ophelia exposes to Lumen.",
+        summary="Manifest of commands, HTTP endpoints, and surfaces Ophelia exposes to operator UIs.",
         risk="low",
         mutates_state=False,
         requires_confirmation=False,
@@ -130,7 +130,7 @@ register_cli_descriptor(
     CommandDescriptor(
         command="ship lumen console-data",
         operation="lumen.console",
-        summary="Single bounded read-only payload for the Lumen operator console MVP.",
+        summary="Single bounded read-only payload for an operator console.",
         risk="low",
         mutates_state=False,
         requires_confirmation=False,
@@ -190,7 +190,7 @@ register_cli_descriptor(
     CommandDescriptor(
         command="ship lumen action-descriptors",
         operation="lumen.action-descriptors",
-        summary="The shared command catalog framed as Lumen action descriptors (read-only).",
+        summary="The shared command catalog framed as operator-console action descriptors (read-only).",
         risk="low",
         mutates_state=False,
         requires_confirmation=False,

@@ -23,7 +23,7 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `redirect_status`: redirect status for redirect apps
 - `verify`: optional post-deploy HTTP verification checks
 - `console`: Console-specific config when `profile: console`
-- `pack`: optional portable app pack metadata used by inventory, movement plans, and Lumen Ops receipts
+- `pack`: optional portable app pack metadata used by inventory, movement plans, and operator-console receipts
 - `host_requirements`: optional target host capability requirements
 - `networking`: optional Compose network topology, defaulting to shared compatibility
 - `data`: optional data ownership, export, import, backup, and restore-drill contract

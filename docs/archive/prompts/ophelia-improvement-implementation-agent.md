@@ -19,7 +19,7 @@ Read first:
 7. docs/job-action-api.md
 8. docs/portable-app-pack-spec.md
 9. docs/preflight-and-safety.md
-10. docs/lumen-vps-ophelia-2-handoff.md
+10. docs/private-operator-vps-ophelia-2-handoff.md
 
 Before coding:
 1. Run git status --short --branch.
@@ -32,7 +32,7 @@ Implementation rules:
 - Every mutating operation must have a dry-run/read-only plan form, confirmation token, exact apply input, and JSON receipt.
 - Never print raw env values, secrets, database URLs, tokens, private keys, or provider credentials.
 - Prefer shared models in src/ophelia/operation_schema.py, src/ophelia/actions.py, and src/ophelia/api.py over duplicate command-specific contracts.
-- Keep Lumen integration as a thin adapter over Ophelia's command/action/state/receipt models.
+- Keep private operator UI integration as a thin adapter over Ophelia's command/action/state/receipt models.
 - Run focused tests after each phase and the full verification set before handing back:
   PYTHON=python3 make docs-check
   PYTHON=python3 make compile
@@ -41,5 +41,5 @@ Implementation rules:
   git diff --check
 
 Definition of done:
-The selected phase has documented commands or API surfaces, stable JSON contracts, tests, safety gates, Lumen-consumable descriptors, and change records. Final response must list changed files, verification run, and remaining risks.
+The selected phase has documented commands or API surfaces, stable JSON contracts, tests, safety gates, operator-UI-consumable descriptors, and change records. Final response must list changed files, verification run, and remaining risks.
 ```

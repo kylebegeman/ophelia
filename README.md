@@ -27,7 +27,7 @@ snippets, release notes, and deployment state.
 Application repositories declare their runtime contract in `.ophelia.yml`.
 Ophelia validates that contract, renders the runtime files, checks safety
 policy, records what happened, and exposes machine-readable command surfaces
-for automation, Lumen, and downstream agents.
+for automation, private operator UIs, and downstream agents.
 
 The current repository target is `https://github.com/mrbagels/ophelia`. The
 project is GitHub-only and remains private until the public launch decision is
@@ -146,7 +146,6 @@ make validate-adoption-fixtures
 make live-readiness-fixtures
 make live-drills-fixtures
 make live-hydration-reviewed-fixture
-make lumen-console-fixtures
 make production-hardening-fixtures
 ```
 
@@ -254,7 +253,7 @@ Ophelia's default posture is conservative:
 | `host`, `live-readiness`, `live-drills`, `live-hydration` | Host readiness, app readiness, evidence scaffolds, and reviewed live observations. |
 | `workflow`, `operations`, `receipts`, `state` | Agent-executable operation graphs, receipts, and local state indexing. |
 | `providers`, `secrets`, `policy`, `hardening` | Provider readiness, secret references, safety policy, and production go/no-go checks. |
-| `plugins`, `lumen`, `api` | Plugin metadata, read-only Lumen console payloads, and local API integration. |
+| `plugins`, `lumen`, `api` | Plugin metadata, read-only operator-console payloads, and local API integration. |
 | `open-source` | Public-release hygiene scanning. |
 
 Machine-readable discovery:
@@ -300,6 +299,7 @@ Start with [Documentation](docs/README.md). Key references:
 - [Live Readiness Lane](docs/live-readiness-lane.md)
 - [Live Hydration](docs/live-hydration.md)
 - [Production Hardening](docs/production-hardening.md)
+- [Operator Console Adapter](docs/operator-console-adapter.md)
 - [Open Source Readiness](docs/open-source-readiness.md)
 - [Change Records](docs/changelog/README.md)
 

@@ -53,7 +53,7 @@ Selected major features:
 - Restore Drill System
 - Cutover Orchestrator
 - Per-App Isolation Refactor
-- Lumen Ops Adapter Surface
+- private operator UI Adapter Surface
 
 Agent-friendly API requirements:
 - Every command that may mutate state must have a dry-run/read-only plan form.
@@ -76,7 +76,7 @@ Implementation order:
 10. Implement pack init scaffolding in preview mode first, with --write as the explicit file-writing mode.
 11. Implement export plan before export create. Start with metadata and runtime bundle planning, then add volume/archive and Postgres support behind confirmation tokens.
 12. Keep import apply, restore drill apply, cutover apply, and per-app isolation changes behind explicit planning and tests. Do not rush mutating flows.
-13. Expose action descriptors for Lumen Ops as stable JSON once commands exist.
+13. Expose action descriptors for private operator UI as stable JSON once commands exist.
 
 Hard safety constraints:
 - Do not SSH into source-host, target-host, or any other VPS for mutation.

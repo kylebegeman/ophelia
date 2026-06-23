@@ -120,7 +120,7 @@ Compose-relative source path.
 
 ### `pack`
 
-Pack metadata used by inventory, Lumen Ops, and migration plans.
+Pack metadata used by inventory, operator-console views, and migration plans.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -622,6 +622,6 @@ Pack validation should warn when:
   `ophelia/pack.yml`.
 - Whether export bundles should support encrypted env payloads in addition to
   secret refs.
-- Whether Lumen Ops Secret Vault should become the only secret-ref provider.
+- Whether a private operator UI secret vault should become the only secret-ref provider.
 - Whether app-owned Postgres should become the default for `portability:
   critical`.

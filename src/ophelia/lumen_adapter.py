@@ -1,6 +1,6 @@
-"""Lumen ops adapter: a thin translation layer over existing Ophelia contracts.
+"""Operator-console adapter: a thin translation layer over existing Ophelia contracts.
 
-Lumen (the ops UI/agent surface) needs a small, stable set of read-only views:
+Private operator UIs need a small, stable set of read-only views:
 what Ophelia can do (capabilities + action descriptors) and one aggregate
 dashboard of every known app/environment's health. This module is a *thin
 translation layer only*. It reuses the existing, already-redaction-safe
@@ -54,7 +54,7 @@ CONSOLE_KIND = "ophelia.lumen.console"
 # Recent receipts surfaced per app/environment on the dashboard.
 _DASHBOARD_RECEIPT_LIMIT = 10
 
-# The named surfaces Lumen can render. These map to existing Ophelia contracts;
+# The named surfaces an operator console can render. These map to existing Ophelia contracts;
 # this list is descriptive metadata, not a router.
 _SURFACES: List[str] = [
     "catalog",
@@ -79,10 +79,10 @@ _SURFACES: List[str] = [
 
 
 def capabilities(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
-    """Manifest of what Ophelia exposes to Lumen (kind ``ophelia.lumen.capabilities``).
+    """Manifest of what Ophelia exposes to operator UIs (kind ``ophelia.lumen.capabilities``).
 
     Lists the command catalog (with a count), the available read-only HTTP
-    endpoint path templates, the schema version, and the named Lumen surfaces.
+    endpoint path templates, the schema version, and the named operator-console surfaces.
     Carries no secret values.
     """
     descriptors = command_catalog.catalog()
@@ -100,14 +100,14 @@ def capabilities(runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, Any]:
         "summary": (
             f"Ophelia exposes {len(descriptors)} command(s), "
             f"{len(HTTP_ROUTE_PATTERNS)} read-only HTTP endpoint(s), "
-            f"and {len(_SURFACES)} Lumen surface(s)."
+            f"and {len(_SURFACES)} operator-console surface(s)."
         ),
     }
     return deep_redact(payload)
 
 
 def action_descriptors() -> Dict[str, Any]:
-    """Shared command catalog, framed for Lumen (kind ``ophelia.lumen.action_descriptors``).
+    """Shared command catalog, framed for operator UIs (kind ``ophelia.lumen.action_descriptors``).
 
     The ``descriptors`` are sourced directly from the shared command catalog
     (:func:`ophelia.command_catalog.catalog`) so there is no second copy of the
@@ -126,10 +126,10 @@ def console_data(
     manifests_dir: Path = REPO_ROOT / "manifests",
     plugins_dir: Path = REPO_ROOT / "plugins",
 ) -> Dict[str, Any]:
-    """Single read-only payload for the Lumen operator console MVP.
+    """Single read-only payload for an operator console.
 
     The console contract composes existing Ophelia surfaces into a bounded model
-    Lumen can render directly: navigation, overview cards, app rows, approval
+    private operator UIs can render directly: navigation, overview cards, app rows, approval
     queue, workflow summaries, plugin metadata, and safe quick actions. It does
     not execute operations and it does not include raw findings or secret values.
     """
@@ -214,7 +214,7 @@ def console_data(
             "confirmation_tokens_accepted": False,
             "values_redacted": True,
         },
-        "summary": f"Lumen console: {len(apps)} app(s), {len(approval_queue)} approval item(s), {len(workflows)} stored workflow(s).",
+        "summary": f"Operator console: {len(apps)} app(s), {len(approval_queue)} approval item(s), {len(workflows)} stored workflow(s).",
     }
     return deep_redact(payload, safe_keys={"values_redacted"}, propagate=True)
 
@@ -259,7 +259,7 @@ def app_placement(
     source_host: Optional[str] = None,
     target_host: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Thin wrapper over app placement planning for Lumen."""
+    """Thin wrapper over app placement planning for operator UIs."""
     return deep_redact(
         app_placement_plan(
             app,

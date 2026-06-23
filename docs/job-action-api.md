@@ -133,7 +133,7 @@ expires. Successful apply consumes the token.
 
 Canonical plan, report, and receipt envelopes include a compact `digest` block.
 The digest is redundant with the full payload, but bounded for operator cards,
-Lumen previews, and downstream agents that need a quick summary.
+private operator UI previews, and downstream agents that need a quick summary.
 
 Digest fields include:
 
@@ -194,7 +194,7 @@ Each `CommandDescriptor` has these fields:
 - `artifacts`: artifact kinds the command may produce.
 - `safety_notes`: human-readable safety notes plus policy gates.
 - `examples`: copyable example invocations. These are surfaced by
-  `ship commands catalog --json`, `GET /commands`, and Lumen action
+  `ship commands catalog --json`, `GET /commands`, and operator-console action
   descriptors.
 
 ## Doctor Diagnostics

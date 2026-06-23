@@ -1,17 +1,17 @@
 ---
 id: 0010
-title: Lumen ops adapter
+title: Operator console adapter
 date: 2026-06-21
 status: landed
-areas: [cli, api, lumen, redaction, foundation, docs, changelog]
+areas: [cli, api, operator-console, redaction, foundation, docs, changelog]
 change_type: feature
 commits: []
 ---
 
 ## Summary
 
-Phase 9 adds a thin Lumen ops adapter: a small set of read-only translation
-functions that frame Ophelia's existing contracts for the Lumen ops surface. A
+Phase 9 adds a thin operator-console adapter: a small set of read-only translation
+functions that frame Ophelia's existing contracts for private operator UI surfaces. A
 new `ophelia.lumen_adapter` module exposes `capabilities` (what Ophelia can do),
 `action_descriptors` (the shared command catalog), `dashboard_data` (one
 aggregate health view across every known app/environment), and thin
@@ -21,7 +21,7 @@ aggregate health view across every known app/environment), and thin
 
 ## Why
 
-Lumen needs a stable, secret-free read surface: a manifest of capabilities, a
+Private operator UIs need a stable, secret-free read surface: a manifest of capabilities, a
 single source of action descriptors, and one aggregate dashboard rather than a
 dozen per-report calls. Ophelia already computes all of this (readiness,
 receipts, route conflicts, backup freshness, the command catalog); the adapter

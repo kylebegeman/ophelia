@@ -1,9 +1,12 @@
-# Lumen Operator Console
+# Operator Console Adapter
 
-The Lumen operator console MVP is a read-only JSON contract that Lumen can
-render as an operator cockpit. Ophelia remains the deterministic executor:
-console data never runs commands, plugins, workflows, provider calls, or
-mutating operations.
+The operator-console adapter is a read-only JSON contract for private or
+internal operator UIs. Ophelia remains the deterministic executor: console data
+never runs commands, plugins, workflows, provider calls, or mutating operations.
+
+The command group and local API paths are historically named `lumen` for
+compatibility. That name does not refer to a public dependency and no private UI
+repository is required to use Ophelia.
 
 ## Command
 
@@ -74,4 +77,3 @@ The fixture console run should report:
 - one fixture plugin
 - a non-empty approval queue from mutating command descriptors
 - no fake fixture secret values in JSON output
-

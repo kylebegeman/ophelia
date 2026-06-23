@@ -85,7 +85,7 @@ register_cli_descriptor(
         command="ship hardening production-readiness",
         operation="production.hardening",
         summary=(
-            "Compose live readiness, Lumen console data, plugin validation, workflow availability, "
+            "Compose live readiness, operator-console data, plugin validation, workflow availability, "
             "state freshness, catalog safety, and optional fixture drills into a read-only go/no-go report."
         ),
         risk="low",

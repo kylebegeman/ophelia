@@ -107,6 +107,8 @@ Do:
 - keep live values outside the repo
 - write docs around reusable contracts
 - prefer read-only fixture reproductions for bugs
+- describe private or internal UIs as optional consumers of Ophelia contracts,
+  not as public dependencies or repos users can access
 
 Do not commit:
 

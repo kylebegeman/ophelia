@@ -2,10 +2,9 @@
 
 Status: active practice
 
-Ophelia uses lightweight file-per-change records so humans, Lumen, and future
+Ophelia uses lightweight file-per-change records so humans, private operator UIs, and future
 agents can understand what changed without reconstructing intent from Git alone.
-This is inspired by the Lumen changelog practice, but adapted for Ophelia's
-runtime, safety, and agent-contract work.
+This is adapted for Ophelia's runtime, safety, and agent-contract work.
 
 Change records are not release notes. They are small operational memory files
 for logical changes.

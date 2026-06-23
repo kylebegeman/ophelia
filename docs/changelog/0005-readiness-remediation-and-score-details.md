@@ -26,7 +26,7 @@ unchanged.
 
 ## Why
 
-Agents (Lumen, Legacy Console) and operators could read *what* was wrong but had to infer
+Agents (private operator UI, Legacy Console) and operators could read *what* was wrong but had to infer
 the fix. Mapping each known finding code to a typed remediation, and rolling the
 existing portability score up by category, turns the readiness report into a
 ranked to-do list whose commands are safe, typed Ophelia plan forms (never raw
