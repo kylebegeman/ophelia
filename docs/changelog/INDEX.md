@@ -64,3 +64,4 @@
 | [0060](0060-deploy-support-file-sync.md) | 2026-06-23 | landed | Deploy support file sync | deploy, runtime, hooks, data, tests |
 | [0061](0061-private-registry-local-image-fallback.md) | 2026-06-23 | landed | Private registry local image fallback | deploy, runtime, docker, private-registry, tests |
 | [0062](0062-runtime-injected-env-readiness.md) | 2026-06-23 | landed | Runtime-injected env readiness | readiness, drift, env, retained-apps, tests |
+| [0063](0063-export-backed-backup-readiness.md) | 2026-06-23 | landed | Export-backed backup readiness | backup, export, readiness, docker-volumes, tests |

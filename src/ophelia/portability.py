@@ -722,8 +722,9 @@ def export_create(
     bundle_tar_path = _resolved_export_bundle_tar(plan, bundle_directory)
     bundle_archive_path = _resolved_export_bundle_archive(plan, bundle_directory)
 
+    data_failed = any(item.get("status") in {"source_missing", "source_unresolved", "archive_failed"} for item in data_archives)
     postgres_failed = any(item.get("required") is True and item.get("status") != "dumped" for item in postgres_exports)
-    receipt_status = "failed" if postgres_failed else "succeeded"
+    receipt_status = "failed" if data_failed or postgres_failed else "succeeded"
     receipt = receipt_envelope(
         EXPORT_RECEIPT_TYPES["export_create"],
         str(plan.get("app") or app),
@@ -742,7 +743,11 @@ def export_create(
             {"name": "confirmation_token", "ok": True, "message": "Matched current export plan."},
             {"name": "runtime_files", "ok": True, "message": f"{len(runtime_copies)} runtime item(s) copied."},
             {"name": "secrets_redacted", "ok": True, "message": "Runtime env values were not included."},
-            {"name": "data_exports", "ok": True, "message": f"{sum(1 for item in data_archives if item['status'] == 'archived')} data archive(s) created."},
+            {
+                "name": "data_exports",
+                "ok": not data_failed,
+                "message": f"{sum(1 for item in data_archives if item['status'] == 'archived')} data archive(s) created.",
+            },
             {"name": "postgres_dump", "ok": not postgres_failed, "message": _postgres_check_message(postgres_exports, include_postgres)},
         ],
         rollback={"available": False, "note": "Export create only wrote local export artifacts and did not mutate source runtime."},
@@ -1073,6 +1078,9 @@ def backup_status_report(
     manifest = resolution.manifest
     backups_root = runtime_root / "backups" / "apps" / app
     backups = _backup_records(backups_root)
+    if manifest is not None:
+        backups.extend(_export_backup_records(runtime_root / "apps" / manifest.app / "export-bundles"))
+        backups = _sort_backup_records(backups)
     latest = backups[-1] if backups else None
     threshold_hours = _backup_threshold_hours(manifest)
     freshness = _freshness_status(latest, threshold_hours)
@@ -4209,6 +4217,63 @@ def _backup_records(backups_root: Path) -> List[Dict[str, object]]:
                 "secrets_redacted_in_report": True,
             }
         )
+    return _sort_backup_records(records)
+
+
+def _export_backup_records(export_root: Path) -> List[Dict[str, object]]:
+    records: List[Dict[str, object]] = []
+    if not export_root.exists():
+        return records
+    for receipt_path in sorted(export_root.glob("*/receipts/export-create.json")):
+        payload = _read_json(receipt_path)
+        if not _export_receipt_is_backup_eligible(payload):
+            continue
+        bundle_root = receipt_path.parent.parent
+        backup_id = bundle_root.name
+        created_at = str(payload.get("completed_at") or payload.get("started_at") or _backup_id_to_timestamp(backup_id) or "")
+        data_archives = payload.get("data_archives") if isinstance(payload.get("data_archives"), list) else []
+        postgres_exports = payload.get("postgres_exports") if isinstance(payload.get("postgres_exports"), list) else []
+        compressed_archive = payload.get("compressed_archive") if isinstance(payload.get("compressed_archive"), dict) else {}
+        records.append(
+            {
+                "backup_id": backup_id,
+                "created_at": created_at or None,
+                "path": str(bundle_root),
+                "manifest_path": str(bundle_root / "manifest.json"),
+                "coverage": deep_redact(
+                    {
+                        "runtime_files": bool(payload.get("runtime_files_copied")),
+                        "data_archives": sum(1 for item in data_archives if isinstance(item, dict) and item.get("status") == "archived"),
+                        "postgres_exports": sum(1 for item in postgres_exports if isinstance(item, dict) and item.get("status") == "dumped"),
+                        "compressed_archive": compressed_archive.get("status") == "created",
+                    },
+                    propagate=True,
+                ),
+                "database": deep_redact({"postgres_exports": postgres_exports}, propagate=True),
+                "warnings": deep_redact(payload.get("warnings", []), propagate=True),
+                "receipt_path": str(receipt_path),
+                "source": "app.export.create",
+                "secrets_redacted_in_report": True,
+            }
+        )
+    return _sort_backup_records(records)
+
+
+def _export_receipt_is_backup_eligible(payload: Dict[str, object]) -> bool:
+    if payload.get("status") != "succeeded":
+        return False
+    data_archives = payload.get("data_archives") if isinstance(payload.get("data_archives"), list) else []
+    for item in data_archives:
+        if isinstance(item, dict) and item.get("status") != "archived":
+            return False
+    postgres_exports = payload.get("postgres_exports") if isinstance(payload.get("postgres_exports"), list) else []
+    for item in postgres_exports:
+        if isinstance(item, dict) and item.get("required") is True and item.get("status") != "dumped":
+            return False
+    return True
+
+
+def _sort_backup_records(records: List[Dict[str, object]]) -> List[Dict[str, object]]:
     # created_at is already normalized to a timestamp (or "") at construction;
     # break ties / empty-timestamp sets deterministically by backup_id so a mixed
     # set is never ordered by inconsistent keys.
@@ -5015,6 +5080,10 @@ def _create_data_archives(
         target = bundle_directory / "data" / "volumes" / f"{_safe_artifact_name(volume.name)}.tar"
         metadata_path = target.with_suffix(".metadata.json")
         if source is None:
+            docker_record = _archive_docker_volume(manifest, volume, target, bundle_directory)
+            if docker_record is not None:
+                records.append(docker_record)
+                continue
             record = {
                 "name": volume.name,
                 "data": "volume",
@@ -5041,6 +5110,127 @@ def _create_data_archives(
             )
         )
     return records
+
+
+def _archive_docker_volume(
+    manifest: Manifest,
+    volume: DataVolumeConfig,
+    target: Path,
+    bundle_directory: Path,
+) -> Optional[Dict[str, object]]:
+    volume_name = _docker_data_volume_name(manifest, volume)
+    if not _docker_volume_exists(volume_name):
+        return None
+    metadata_path = target.with_suffix(".metadata.json")
+    helper_image = _docker_export_helper_image()
+    if helper_image is None:
+        record = {
+            "name": volume.name,
+            "data": "volume",
+            "status": "archive_failed",
+            "archive_path": None,
+            "metadata_path": str(metadata_path.relative_to(bundle_directory)),
+            "reason": "No local Docker helper image is available to archive the named volume.",
+            "mount": volume.mount,
+            "source": volume.source,
+            "docker_volume": volume_name,
+        }
+        _write_json(metadata_path, record)
+        return record
+    target.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{volume_name}:/source:ro",
+            "-v",
+            f"{target.parent}:/backup",
+            helper_image,
+            "tar",
+            "-cf",
+            f"/backup/{target.name}",
+            "-C",
+            "/source",
+            ".",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0 or not target.exists():
+        record = {
+            "name": volume.name,
+            "data": "volume",
+            "status": "archive_failed",
+            "archive_path": None,
+            "metadata_path": str(metadata_path.relative_to(bundle_directory)),
+            "reason": (result.stderr or result.stdout or "Docker volume archive did not create the target archive.").strip(),
+            "mount": volume.mount,
+            "source": volume.source,
+            "docker_volume": volume_name,
+            "helper_image": helper_image,
+        }
+        _write_json(metadata_path, record)
+        return record
+    record = {
+        "name": volume.name,
+        "data": "volume",
+        "status": "archived",
+        "archive_path": str(target),
+        "metadata_path": str(metadata_path.relative_to(bundle_directory)),
+        "source_present": True,
+        "source_type": "docker-volume",
+        "docker_volume": volume_name,
+        "helper_image": helper_image,
+        "mount": volume.mount,
+        "archive_size_bytes": target.stat().st_size,
+        "contract_source": volume.source,
+        "secret_values_redacted": False,
+    }
+    _write_json(metadata_path, record)
+    return record
+
+
+def _docker_volume_exists(volume_name: str) -> bool:
+    result = subprocess.run(
+        ["docker", "volume", "inspect", volume_name],
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _docker_export_helper_image() -> Optional[str]:
+    candidates = [
+        item
+        for item in [
+            os.environ.get("OPHELIA_EXPORT_HELPER_IMAGE"),
+            "caddy:2-alpine",
+            "busybox:1.36",
+            "alpine:3.20",
+        ]
+        if item
+    ]
+    for image in candidates:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image],
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode == 0:
+            return image
+    return None
+
+
+def _docker_data_volume_name(manifest: Manifest, volume: DataVolumeConfig) -> str:
+    environment = manifest.environment or "default"
+    return _safe_artifact_name(f"{manifest.app}-{environment}-{volume.name}")
 
 
 def _static_asset_sources(manifest: Manifest, manifest_path: Optional[Path]) -> List[Dict[str, object]]:

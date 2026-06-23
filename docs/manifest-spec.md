@@ -354,7 +354,9 @@ manifests require `--domain` and `--image`, and static manifests require
 `--domain`.
 `ship app export create` is confirmation-gated. By default it writes metadata,
 redacted runtime files, local static/volume archives for declared local sources,
-checksums, receipts, and a deterministic `.tar` archive of that bundle. Pass
+read-only Docker named-volume archives when a local helper image is available,
+checksums, receipts, and a deterministic `.tar` archive of that bundle.
+Successful complete export bundles satisfy `ship backup status`. Pass
 `--include-postgres` on both export plan and create to run the allowlisted
 read-only `pg_dump` path. If local `zstd` is available, export create also
 writes the planned `.tar.zst` archive. Production traffic mutation remains

@@ -300,6 +300,54 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual("created", receipt["compressed_archive"]["status"])
         self.assertTrue(str(archive_path).endswith(".tar.zst"))
 
+    def test_export_create_archives_docker_named_volume_without_local_source(self) -> None:
+        with self._skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                runtime_root = root / "runtime"
+                manifest_path = root / "named-volume.ophelia.yml"
+                manifest_path.write_text(_portable_manifest_with_named_volume())
+                manifest = load_manifest(manifest_path)
+                app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+                (app_root / "env").write_text("API_TOKEN=filled\n")
+                commands: list[list[str]] = []
+
+                def fake_run(command, *args, **kwargs):
+                    commands.append(command)
+                    if command[:2] == ["git", "rev-parse"]:
+                        return subprocess.CompletedProcess(command, 0, stdout="fixture-sha\n", stderr="")
+                    if command[:3] == ["docker", "volume", "inspect"]:
+                        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                    if command[:3] == ["docker", "image", "inspect"]:
+                        return subprocess.CompletedProcess(command, 0 if command[-1] == "caddy:2-alpine" else 1, stdout="", stderr="")
+                    if command[:3] == ["docker", "run", "--rm"]:
+                        backup_mount = next(item for item in command if isinstance(item, str) and item.endswith(":/backup"))
+                        target_name = Path(str(command[command.index("-cf") + 1])).name
+                        Path(backup_mount.removesuffix(":/backup"), target_name).write_bytes(b"tar")
+                        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                    if command and str(command[0]).endswith("zstd"):
+                        archive_path = Path(command[command.index("-o") + 1])
+                        archive_path.write_bytes(b"zstd")
+                        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+                with mock.patch("ophelia.portability.subprocess.run", side_effect=fake_run):
+                    plan = export_plan("named-volume-app", "staging", runtime_root, manifest_path, root)
+                    receipt = export_create(
+                        "named-volume-app",
+                        "staging",
+                        runtime_root,
+                        manifest_path,
+                        str(plan["confirmation_token"]),
+                        root,
+                    )
+
+        self.assertEqual("succeeded", receipt["status"])
+        archives = {item["name"]: item for item in receipt["data_archives"]}
+        self.assertEqual("archived", archives["runtime-data"]["status"])
+        self.assertEqual("docker-volume", archives["runtime-data"]["source_type"])
+        self.assertIn(["docker", "volume", "inspect", "named-volume-app-staging-runtime-data"], commands)
+
     def test_export_create_can_run_opt_in_postgres_dump_without_leaking_url(self) -> None:
         with self._skip_docker_status():
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -1282,6 +1330,65 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual("metadata-only", report["validation"]["status"])
         self.assertEqual("20260620T120000Z-fixture", report["latest_backup"]["backup_id"])
 
+    def test_backup_status_counts_complete_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "demo-service.ophelia.yml"
+            manifest_path.write_text(_portable_manifest())
+            bundle = runtime_root / "apps" / "demo-service" / "export-bundles" / "demo-service.production.export.20260623T120000Z"
+            receipt_dir = bundle / "receipts"
+            receipt_dir.mkdir(parents=True)
+            (bundle / "manifest.json").write_text("{}\n")
+            (receipt_dir / "export-create.json").write_text(
+                json.dumps(
+                    {
+                        "operation": "app.export.create",
+                        "operation_id": "app-export-create.fixture",
+                        "status": "succeeded",
+                        "completed_at": _iso(datetime.now(timezone.utc) - timedelta(minutes=5)),
+                        "runtime_files_copied": [{"path": "runtime/manifest.lock.json"}],
+                        "data_archives": [{"name": "uploads", "status": "archived"}],
+                        "postgres_exports": [],
+                        "compressed_archive": {"status": "created"},
+                    }
+                )
+                + "\n"
+            )
+
+            report = backup_status_report("demo-service", "production", runtime_root, manifest_path)
+
+        self.assertEqual("fresh", report["freshness"]["status"])
+        self.assertEqual([], report["blockers"])
+        self.assertEqual("app.export.create", report["latest_backup"]["source"])
+        self.assertEqual(1, report["latest_backup"]["coverage"]["data_archives"])
+
+    def test_backup_status_ignores_incomplete_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "demo-service.ophelia.yml"
+            manifest_path.write_text(_portable_manifest())
+            bundle = runtime_root / "apps" / "demo-service" / "export-bundles" / "demo-service.production.export.20260623T120000Z"
+            receipt_dir = bundle / "receipts"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / "export-create.json").write_text(
+                json.dumps(
+                    {
+                        "operation": "app.export.create",
+                        "status": "succeeded",
+                        "completed_at": _iso(datetime.now(timezone.utc) - timedelta(minutes=5)),
+                        "data_archives": [{"name": "uploads", "status": "source_unresolved"}],
+                    }
+                )
+                + "\n"
+            )
+
+            report = backup_status_report("demo-service", "production", runtime_root, manifest_path)
+
+        self.assertEqual("missing", report["freshness"]["status"])
+        self.assertEqual(0, report["backup_count"])
+
     def test_readiness_aggregates_score_without_printing_env_values(self) -> None:
         with self._skip_docker_status():
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -1743,6 +1850,41 @@ data:
 verify:
   - name: health
     url: https://demo-service.example.net/health
+""".strip() + "\n"
+
+
+def _portable_manifest_with_named_volume() -> str:
+    return """
+version: 1
+app: named-volume-app
+environment: staging
+kind: service
+image: ghcr.io/example/named-volume-app@sha256:cccccccc
+pack:
+  portability: standard
+  owner: personal
+required_env:
+  - API_TOKEN
+services:
+  web:
+    port: 3000
+routes:
+  - domain: named-volume-app.example.net
+    service: web
+data:
+  volumes:
+    - name: runtime-data
+      mount: /app/data
+      class: standard
+      export: tar-zstd
+      import: tar-zstd
+  backups:
+    required: true
+    restore_drill_required: false
+    offsite_required: false
+verify:
+  - name: health
+    url: https://named-volume-app.example.net/health
 """.strip() + "\n"
 
 

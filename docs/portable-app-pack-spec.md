@@ -114,7 +114,10 @@ For single-service manifests, Ophelia mounts the volume into that service. For
 multi-service manifests, set `data.volumes[].service` so the runtime target is
 unambiguous. When `source` is omitted, Ophelia renders an app/environment-scoped
 Docker named volume; when `source` is present, it is rendered as the host or
-Compose-relative source path.
+Compose-relative source path. Export create archives declared host sources
+directly. For app-owned Docker named volumes, export create uses a local helper
+image to mount the volume read-only and write the archive into the export
+bundle without printing data.
 
 ## Field Reference
 
@@ -243,7 +246,9 @@ demo-service.production.export.<timestamp>.tar.zst
 
 Export bundles should not include raw secret values unless the command is
 explicitly configured to create a sealed operator-only recovery artifact. The
-default should be secret refs and redacted env shape.
+default should be secret refs and redacted env shape. `ship backup status`
+treats successful, complete export bundles as fresh backup evidence; incomplete
+data exports do not satisfy the backup freshness gate.
 
 ## Commands
 
