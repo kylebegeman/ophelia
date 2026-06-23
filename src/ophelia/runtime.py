@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -77,52 +78,114 @@ def materialize_bundle(manifest: Manifest, manifest_path: Path, output_dir: Path
 def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_dir: Path) -> None:
     manifest_dir = manifest_path.parent
 
-    for index, source in enumerate(manifest.env_files):
+    for source, target, required in _bundle_support_file_map(manifest):
+        resolved = _support_path_candidate(manifest_dir, source)
+        if not resolved.exists() and not required:
+            continue
         _copy_support_path(
-            _resolve_support_path(manifest_dir, source),
-            output_dir / bundle_env_file_path(source, index=index),
+            resolved,
+            output_dir / target,
             allowed_root=manifest_dir,
         )
 
-    for service in manifest.services.values():
-        for index, source in enumerate(service.env_files):
-            _copy_support_path(
-                _resolve_support_path(manifest_dir, source),
-                output_dir / bundle_env_file_path(source, service_name=service.name, index=index),
-                allowed_root=manifest_dir,
-            )
-        for index, mount in enumerate(service.mounts):
-            if mount.bind:
-                continue
-            _copy_support_path(
-                _resolve_support_path(manifest_dir, mount.source),
-                output_dir / bundle_mount_path(service.name, mount.source, index),
-                allowed_root=manifest_dir,
-            )
+
+def bundle_support_paths(manifest: Manifest, *, required_only: bool = False) -> set[Path]:
+    return {target for _, target, required in _bundle_support_file_map(manifest) if required or not required_only}
 
 
-def bundle_support_paths(manifest: Manifest) -> set[Path]:
-    paths: set[Path] = set()
+def _bundle_support_file_map(manifest: Manifest) -> List[tuple[str, Path, bool]]:
+    files: List[tuple[str, Path, bool]] = []
+    seen_targets: set[Path] = set()
+
+    def add(source: str, target: Path, *, required: bool) -> None:
+        if target in seen_targets:
+            return
+        seen_targets.add(target)
+        files.append((source, target, required))
+
     for index, source in enumerate(manifest.env_files):
-        paths.add(Path(bundle_env_file_path(source, index=index)))
+        add(source, Path(bundle_env_file_path(source, index=index)), required=True)
+
     for service in manifest.services.values():
         for index, source in enumerate(service.env_files):
-            paths.add(Path(bundle_env_file_path(source, service_name=service.name, index=index)))
+            add(source, Path(bundle_env_file_path(source, service_name=service.name, index=index)), required=True)
         for index, mount in enumerate(service.mounts):
             if not mount.bind:
-                paths.add(Path(bundle_mount_path(service.name, mount.source, index)))
+                add(mount.source, Path(bundle_mount_path(service.name, mount.source, index)), required=True)
+
+    for source in _manifest_relative_hook_paths(manifest):
+        add(source, Path(source), required=True)
+    for source in _manifest_relative_data_command_paths(manifest):
+        add(source, Path(source), required=False)
+
+    return files
+
+
+def _manifest_relative_hook_paths(manifest: Manifest) -> List[str]:
+    paths: List[str] = []
+    for source in (
+        manifest.hooks.pre_export,
+        manifest.hooks.freeze,
+        manifest.hooks.unfreeze,
+        manifest.hooks.post_import,
+        manifest.hooks.post_cutover,
+    ):
+        if source and _is_relative_support_path(source):
+            paths.append(source)
     return paths
+
+
+def _manifest_relative_data_command_paths(manifest: Manifest) -> List[str]:
+    paths: List[str] = []
+    for service in (manifest.data.postgres, manifest.data.redis):
+        if service is None:
+            continue
+        for config in (service.export, service.import_config, service.verify):
+            path = _command_support_path(config.get("command") if isinstance(config, dict) else None)
+            if path:
+                paths.append(path)
+
+    for volume in manifest.data.volumes:
+        for config in (volume.export, volume.import_config, volume.verify):
+            path = _command_support_path(config.get("command") if isinstance(config, dict) else None)
+            if path:
+                paths.append(path)
+
+    return paths
+
+
+def _command_support_path(command: object) -> str | None:
+    if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    candidate = parts[0]
+    return candidate if _is_relative_support_path(candidate) else None
+
+
+def _is_relative_support_path(source: str) -> bool:
+    if not source or source.startswith("-"):
+        return False
+    path = Path(source)
+    if path.is_absolute():
+        return False
+    return "/" in source or source.startswith(".")
 
 
 def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Path:
     app_root = runtime_root / "apps" / manifest.app
     bundle = render_bundle(manifest)
     support_paths = bundle_support_paths(manifest)
+    required_support_paths = bundle_support_paths(manifest, required_only=True)
     write_bundle(bundle, app_root)
     remove_stale_generated_files(app_root, bundle)
     if manifest_path.suffix != ".json":
         sync_bundle_support_files(manifest, manifest_path, app_root)
-    copy_staged_support_files(app_root, support_paths, app_root)
+    copy_staged_support_files(app_root, support_paths, app_root, required_paths=required_support_paths)
     remove_stale_support_files(
         app_root,
         preserve_paths=support_paths | active_support_paths(runtime_root, manifest.app),
@@ -165,7 +228,7 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     releases_root.mkdir(parents=True, exist_ok=True)
     release_bundle_root = app_root / "release-bundles" / release_id
     write_bundle(bundle, release_bundle_root)
-    copy_staged_support_files(app_root, support_paths, release_bundle_root)
+    copy_staged_support_files(app_root, support_paths, release_bundle_root, required_paths=required_support_paths)
     (releases_root / f"{release_id}.json").write_text(
         json.dumps(release, indent=2, sort_keys=True) + "\n"
     )
@@ -187,11 +250,20 @@ def remove_stale_generated_files(app_root: Path, desired_bundle: Dict[Path, str]
     return removed
 
 
-def copy_staged_support_files(source_root: Path, support_paths: set[Path], output_dir: Path) -> None:
+def copy_staged_support_files(
+    source_root: Path,
+    support_paths: set[Path],
+    output_dir: Path,
+    *,
+    required_paths: set[Path] | None = None,
+) -> None:
+    required_paths = required_paths or set()
     for relative_path in sorted(support_paths):
         source = source_root / relative_path
         if not source.exists():
-            raise FileNotFoundError(f"Support file missing from staged bundle: {source}")
+            if relative_path in required_paths:
+                raise FileNotFoundError(f"Support file missing from staged bundle: {source}")
+            continue
         _copy_support_path(source, output_dir / relative_path, allowed_root=source_root)
 
 
@@ -935,6 +1007,10 @@ def _run_apply_phase(
 def _resolve_support_path(manifest_dir: Path, source: str) -> Path:
     raw = Path(source).expanduser()
     return raw if raw.is_absolute() else (manifest_dir / raw)
+
+
+def _support_path_candidate(manifest_dir: Path, source: str) -> Path:
+    return _resolve_support_path(manifest_dir, source)
 
 
 def _copy_support_path(source: Path, destination: Path, *, allowed_root: Path) -> None:

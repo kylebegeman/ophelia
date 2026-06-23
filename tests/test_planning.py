@@ -119,6 +119,12 @@ verify:
             env_dir = root / "env"
             env_dir.mkdir()
             (env_dir / "shared.env").write_text("FEATURE_FLAG=true\n")
+            checks_dir = root / "ophelia" / "checks"
+            hooks_dir = root / "ophelia" / "hooks"
+            checks_dir.mkdir(parents=True)
+            hooks_dir.mkdir(parents=True)
+            (checks_dir / "data-verify.sh").write_text("#!/usr/bin/env sh\nexit 0\n")
+            (hooks_dir / "pre-export.sh").write_text("#!/usr/bin/env sh\nexit 0\n")
 
             manifest_path = root / "app.ophelia.yml"
             manifest_path.write_text(
@@ -135,17 +141,33 @@ services:
 routes:
   - domain: support-test.example.com
     service: web
+data:
+  volumes:
+    - name: runtime-data
+      mount: /app/data
+      export: tar-zstd
+      import: tar-zstd
+      verify:
+        command: ophelia/checks/data-verify.sh
+hooks:
+  pre_export: ophelia/hooks/pre-export.sh
 """.strip()
                 + "\n"
             )
             app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
             staged_env = app_root / "env.d" / "01-shared.env"
+            staged_check = app_root / "ophelia" / "checks" / "data-verify.sh"
+            staged_hook = app_root / "ophelia" / "hooks" / "pre-export.sh"
             self.assertEqual("FEATURE_FLAG=true\n", staged_env.read_text())
+            self.assertEqual("#!/usr/bin/env sh\nexit 0\n", staged_check.read_text())
+            self.assertEqual("#!/usr/bin/env sh\nexit 0\n", staged_hook.read_text())
 
             lock_path = app_root / "manifest.lock.json"
             deploy_bundle(load_manifest(lock_path), lock_path, runtime_root)
 
             self.assertEqual("FEATURE_FLAG=true\n", staged_env.read_text())
+            self.assertEqual("#!/usr/bin/env sh\nexit 0\n", staged_check.read_text())
+            self.assertEqual("#!/usr/bin/env sh\nexit 0\n", staged_hook.read_text())
 
     def test_support_file_cleanup_preserves_active_until_apply(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

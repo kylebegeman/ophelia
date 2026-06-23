@@ -61,3 +61,4 @@
 | [0057](0057-private-ui-public-surface-wording.md) | 2026-06-23 | landed | Private UI public-surface wording | docs, operator-console, open-source |
 | [0058](0058-required-env-contract.md) | 2026-06-23 | landed | Required env contract | manifest, runtime, env, migrations, docs, tests |
 | [0059](0059-volume-verify-hook-contract.md) | 2026-06-23 | landed | Volume verify hook contract | backup, restore, verification, data, redaction, tests |
+| [0060](0060-deploy-support-file-sync.md) | 2026-06-23 | landed | Deploy support file sync | deploy, runtime, hooks, data, tests |
