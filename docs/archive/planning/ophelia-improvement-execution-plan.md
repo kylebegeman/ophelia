@@ -66,7 +66,7 @@ needs a narrow host capability read model.
 - Hook execution must be allowlisted, bounded, and recorded as artifacts.
 - Keep existing manifests backwards compatible.
 - Add or update a change record for every logical implementation commit. See
-  [Ophelia Change Records](changelog/README.md).
+  [Ophelia Change Records](../../changelog/README.md).
 
 ## Existing References
 
@@ -74,12 +74,12 @@ Read these before implementation:
 
 - [README](../README.md)
 - [Ophelia Next Architecture](ophelia-next-architecture.md)
-- [Portable App Pack Spec](portable-app-pack-spec.md)
+- [Portable App Pack Spec](../../portable-app-pack-spec.md)
 - [Selected Portability Feature Roadmap](selected-portability-feature-roadmap.md)
-- [Preflight and Safety](preflight-and-safety.md)
-- [Releases and Rollback](releases-and-rollback.md)
-- [Job / Action API Notes](job-action-api.md)
-- [Operator Handoff Note](lumen-vps-ophelia-2-handoff.md)
+- [Preflight and Safety](../../preflight-and-safety.md)
+- [Releases and Rollback](../../releases-and-rollback.md)
+- [Job / Action API Notes](../../job-action-api.md)
+- [Operator Handoff Note](../handoffs/lumen-vps-ophelia-2-handoff.md)
 - Lumen change-log precedent:
   `/path/to/lumen/docs/changelog/README.md`
 - Lumen change-log template precedent:
@@ -382,8 +382,8 @@ Test expectations:
 
 Update:
 
-- [Job / Action API Notes](job-action-api.md)
-- [Operator Handoff Note](lumen-vps-ophelia-2-handoff.md)
+- [Job / Action API Notes](../../job-action-api.md)
+- [Operator Handoff Note](../handoffs/lumen-vps-ophelia-2-handoff.md)
 
 Add a change record.
 
@@ -1266,7 +1266,7 @@ Tests:
 
 Docs:
 
-- Update [Job / Action API Notes](job-action-api.md).
+- Update [Job / Action API Notes](../../job-action-api.md).
 - Add Lumen consumption examples to the handoff docs.
 
 ## Phase 10: App Factory And Default GitHub Release/Deploy Model

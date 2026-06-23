@@ -54,7 +54,7 @@ card rendering, and approval flows without changing the underlying safety model.
 **Roadmap phase:** Phase 1
 
 **Implementation status:** Landed in changelog record
-[`0019`](changelog/0019-phase-1-operator-readability-and-discovery.md).
+[`0019`](../../changelog/0019-phase-1-operator-readability-and-discovery.md).
 
 ### F-002: Local Setup And Runtime Health Need One Diagnostic Entry Point
 
@@ -74,7 +74,7 @@ and agents a reliable first step when something feels wrong.
 **Roadmap phase:** Phase 1
 
 **Implementation status:** Landed in changelog record
-[`0019`](changelog/0019-phase-1-operator-readability-and-discovery.md).
+[`0019`](../../changelog/0019-phase-1-operator-readability-and-discovery.md).
 
 ### F-003: Workflow Execution Needs A Safe Preview Between Plan And Run
 
@@ -93,7 +93,7 @@ foundation for a later full workflow orchestrator.
 **Roadmap phase:** Phase 2
 
 **Implementation status:** Landed in changelog record
-[`0020`](changelog/0020-phase-2-operation-aliases-and-workflow-preview.md).
+[`0020`](../../changelog/0020-phase-2-operation-aliases-and-workflow-preview.md).
 
 ### F-004: Receipt And Plan References Are Too Manual
 
@@ -112,7 +112,7 @@ resolution in receipts.
 **Roadmap phase:** Phase 2
 
 **Implementation status:** Landed in changelog record
-[`0020`](changelog/0020-phase-2-operation-aliases-and-workflow-preview.md).
+[`0020`](../../changelog/0020-phase-2-operation-aliases-and-workflow-preview.md).
 
 ### F-005: The Command Catalog Needs Examples For Humans And Agents
 
@@ -130,7 +130,7 @@ operator learning cost.
 **Roadmap phase:** Phase 1
 
 **Implementation status:** Landed in changelog record
-[`0019`](changelog/0019-phase-1-operator-readability-and-discovery.md).
+[`0019`](../../changelog/0019-phase-1-operator-readability-and-discovery.md).
 
 ### F-006: Lumen Needs A Real Operator Console Over Ophelia Contracts
 
@@ -149,7 +149,7 @@ cohesive operator experience while keeping execution deterministic in Ophelia.
 **Roadmap phase:** Phase 8
 
 **Implementation status:** Landed in
-[`0028`](changelog/0028-phase-8-lumen-console-mvp.md). Ophelia now exposes
+[`0028`](../../changelog/0028-phase-8-lumen-console-mvp.md). Ophelia now exposes
 `ship lumen console-data` and `GET /lumen/console-data`, a read-only console
 payload with overview cards, app rows, approval queue metadata, workflow
 summaries, plugin inventory, quick actions, source metadata, and fixture smoke
@@ -173,7 +173,7 @@ movement, incident response, and agent-executable runbooks.
 **Roadmap phase:** Phase 4
 
 **Implementation status:** Landed in
-[`0022`](changelog/0022-phase-4-resumable-workflow-orchestrator.md). The local
+[`0022`](../../changelog/0022-phase-4-resumable-workflow-orchestrator.md). The local
 orchestrator now persists workflow state, supports preview/run/pause/resume/cancel,
 stores per-node status and receipts, and confirmation-gates mutating nodes.
 Live GitHub, secrets, and production provider value integration remains a
@@ -196,7 +196,7 @@ the ability to react to GitHub events.
 **Roadmap phase:** Phase 5
 
 **Implementation status:** Landed in
-[`0023`](changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
+[`0023`](../../changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
 GitHub provisioning now selects a provider contract (`auto`, `gh`, or
 `github-app`), exposes GitHub App configuration readiness without reading key
 values, keeps `gh` as the fallback apply path, and lets local GitHub observation
@@ -219,7 +219,7 @@ risks in VPS platforms.
 **Roadmap phase:** Phase 3
 
 **Implementation status:** Phase 3 foundation landed in changelog
-[`0021`](changelog/0021-phase-3-state-service-and-drift-engine.md). `ship drift`
+[`0021`](../../changelog/0021-phase-3-state-service-and-drift-engine.md). `ship drift`
 now emits bounded snapshots, severity-sorted findings, owners, remediation
 commands, and plan candidates. Local comparisons cover rendered runtime files,
 release metadata, env shape, state index freshness, backup/restore evidence,
@@ -245,7 +245,7 @@ historical analytics, and long-term maintainability.
 **Roadmap phase:** Phase 3
 
 **Implementation status:** Phase 3 foundation landed in changelog
-[`0021`](changelog/0021-phase-3-state-service-and-drift-engine.md). The state DB
+[`0021`](../../changelog/0021-phase-3-state-service-and-drift-engine.md). The state DB
 schema is now versioned with refresh metadata and freshness checks. Operators
 can run `ship state refresh` to rebuild the local index, `ship state summary` to
 read app aggregates from SQLite without a scan, and Lumen/API consumers can use
@@ -269,7 +269,7 @@ invariant.
 **Roadmap phase:** Phase 5
 
 **Implementation status:** Landed in
-[`0023`](changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
+[`0023`](../../changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
 `ship secrets providers` reports key names, provider locations, presence
 booleans, freshness metadata, and blockers across local runtime env, GitHub
 environment observations, and SOPS file refs. It never emits values.
@@ -290,7 +290,7 @@ optimization, and future automated movement.
 **Roadmap phase:** Phase 6
 
 **Implementation status:** Landed in
-[`0024`](changelog/0024-phase-6-host-inventory-and-placement-planning.md).
+[`0024`](../../changelog/0024-phase-6-host-inventory-and-placement-planning.md).
 `ship host inventory`, `ship host readiness`, and `ship app placement` now
 provide read-only host records, readiness checks, placement requirements, and
 recommendations. The `move-app` workflow consumes placement before export
@@ -314,7 +314,7 @@ integrations grow without destabilizing core safety contracts.
 **Roadmap phase:** Phase 7
 
 **Implementation status:** Landed in
-[`0027`](changelog/0027-phase-7-plugin-contracts.md). Ophelia now supports
+[`0027`](../../changelog/0027-phase-7-plugin-contracts.md). Ophelia now supports
 metadata-only plugin manifests, trusted-directory discovery, validation,
 `ship plugins list|catalog|validate`, `/plugins`, Lumen capability exposure,
 and fixture plugin coverage. Runtime plugin execution remains deferred.
@@ -354,25 +354,25 @@ Fastest visible wins:
 
 ## Supporting Test Infrastructure
 
-The committed [Fixture App Suite](fixture-app-suite.md) supports the roadmap by
+The committed [Fixture App Suite](../../fixture-app-suite.md) supports the roadmap by
 providing deterministic multi-app inputs for readiness, live-readiness,
 placement, drift, backup, restore, provider, secret-provider, plugin, Lumen
 console, and production-hardening behavior. It does not change the selected
 product scope, but it lowers implementation risk by making mixed operational
 states reproducible without production data.
 
-The [Production Hardening Report](production-hardening.md) adds a read-only
+The [Production Hardening Report](../../production-hardening.md) adds a read-only
 go/no-go aggregate over live readiness, Lumen console data, plugin validation,
 workflow availability, state status, command catalog safety, and fixture drills.
 It is the current bridge between fixture-backed contract work and future
 authenticated live provider probes or production migration rehearsals.
 
-[Live Drill Profiles](live-drill-profiles.md) add named, reusable expected-state
+[Live Drill Profiles](../../live-drill-profiles.md) add named, reusable expected-state
 scenarios on top of the fixture suite and hardening report. They are the
 preferred way to keep dummy micro-app states, focused app drills, and later
 staging/prod profile baselines reproducible.
 
-[Live Hydration Reports](live-hydration.md) add the next live-testing step:
+[Live Hydration Reports](../../live-hydration.md) add the next live-testing step:
 one-app evidence gaps for runtime paths, env-key presence, secret-name
 observations, release metadata, host capabilities, and drift review. They keep
 the live path practical by turning a broad no-go baseline into ordered,

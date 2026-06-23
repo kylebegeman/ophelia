@@ -160,7 +160,7 @@ It includes:
 - release and rollback metadata
 - target host requirements
 
-See [Portable App Pack Spec](portable-app-pack-spec.md).
+See [Portable App Pack Spec](../../portable-app-pack-spec.md).
 
 ### Runtime Bundle
 

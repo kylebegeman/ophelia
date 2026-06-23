@@ -124,7 +124,7 @@ rebuilt:
 ## Phase 1: Operator Readability And Discoverability
 
 **Status:** Landed in changelog record
-[`0019`](changelog/0019-phase-1-operator-readability-and-discovery.md).
+[`0019`](../../changelog/0019-phase-1-operator-readability-and-discovery.md).
 
 **Goal:** Make existing plans and commands easier to understand before adding
 larger orchestration.
@@ -173,7 +173,7 @@ provider validation.
 ## Phase 2: Operation Reference Ergonomics And Workflow Preview
 
 **Status:** Landed in changelog record
-[`0020`](changelog/0020-phase-2-operation-aliases-and-workflow-preview.md).
+[`0020`](../../changelog/0020-phase-2-operation-aliases-and-workflow-preview.md).
 
 **Goal:** Make operation continuation safer and less copy/paste heavy.
 
@@ -213,7 +213,7 @@ provider validation.
 ## Phase 3: Durable State Service And Drift Engine
 
 **Status:** Landed in changelog record
-[`0021`](changelog/0021-phase-3-state-service-and-drift-engine.md).
+[`0021`](../../changelog/0021-phase-3-state-service-and-drift-engine.md).
 
 **Goal:** Promote state and drift from ad hoc scans into durable, queryable
 product signals.
@@ -260,7 +260,7 @@ traffic status, GitHub provisioning contracts, observability schedule runs.
 
 ## Phase 4: Full Workflow Orchestrator
 
-Status: landed in [`0022`](changelog/0022-phase-4-resumable-workflow-orchestrator.md).
+Status: landed in [`0022`](../../changelog/0022-phase-4-resumable-workflow-orchestrator.md).
 
 **Goal:** Turn workflow graphs into resumable, receipt-backed operations.
 
@@ -304,7 +304,7 @@ provider value integration remains in Phase 5 and later provider phases.
 
 ## Phase 5: GitHub App And Secrets Integrations
 
-Status: landed in [`0023`](changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
+Status: landed in [`0023`](../../changelog/0023-phase-5-github-app-and-secret-provider-contracts.md).
 
 **Goal:** Move external integrations from local CLI assumptions to first-class,
 redacted provider contracts.
@@ -378,7 +378,7 @@ observability schedule, readiness reports.
 **Milestone commit:** `feat: add host inventory and placement planning`
 
 **Implementation status:** Landed in
-[`0024`](changelog/0024-phase-6-host-inventory-and-placement-planning.md).
+[`0024`](../../changelog/0024-phase-6-host-inventory-and-placement-planning.md).
 Phase 6 adds read-only host inventory and readiness reports, app placement
 planning and scoring, move-app workflow integration, Lumen surfaces, default
 local host metadata, and durable operator documentation. Placement remains a
@@ -443,7 +443,7 @@ Phase 9 production hardening report, or production mutation rehearsals.
 ## Phase 7: Contracted Plugin System
 
 **Status:** Landed in changelog record
-[`0027`](changelog/0027-phase-7-plugin-contracts.md).
+[`0027`](../../changelog/0027-phase-7-plugin-contracts.md).
 
 **Goal:** Keep Ophelia extensible without turning core modules into integration
 sprawl.
@@ -489,7 +489,7 @@ or sandbox plugin code. Runtime plugin execution remains later hardening work.
 ## Phase 8: Lumen Operator Console
 
 **Status:** Landed in changelog record
-[`0028`](changelog/0028-phase-8-lumen-console-mvp.md).
+[`0028`](../../changelog/0028-phase-8-lumen-console-mvp.md).
 
 **Goal:** Build the operator cockpit on top of Ophelia contracts.
 
@@ -538,7 +538,7 @@ contracts.
 ## Phase 9: Production Hardening And Migration
 
 **Status:** Landed in changelog record
-[`0029`](changelog/0029-phase-9-production-hardening-report.md).
+[`0029`](../../changelog/0029-phase-9-production-hardening-report.md).
 
 **Goal:** Make the new systems production-ready and migrate existing workflows
 onto them.
@@ -573,7 +573,7 @@ operator approval.
 ## Phase 10: Fixture-Backed Live Drill Profiles
 
 **Status:** Landed in changelog record
-[`0030`](changelog/0030-live-drill-profiles.md).
+[`0030`](../../changelog/0030-live-drill-profiles.md).
 
 **Goal:** Turn ad hoc fixture and live-readiness commands into reusable named
 drill profiles that can later point at real staging/prod roots.
@@ -609,7 +609,7 @@ operator-reviewed baselines and opt-in probes still come later.
 ## Phase 11: Read-Only Live Test Baseline
 
 **Status:** Landed in changelog record
-[`0031`](changelog/0031-live-test-baseline-and-secret-metadata.md).
+[`0031`](../../changelog/0031-live-test-baseline-and-secret-metadata.md).
 
 **Goal:** Start real live testing with file-based, non-mutating baselines before
 running HTTP, Docker, authenticated provider, or mutation probes.
@@ -645,7 +645,7 @@ operator-reviewed.
 ## Phase 12: Focused Live Baseline Hydration
 
 **Status:** Landed in changelog record
-[`0032`](changelog/0032-live-baseline-hydration-report.md).
+[`0032`](../../changelog/0032-live-baseline-hydration-report.md).
 
 **Goal:** Convert the first broad live no-go result into focused, one-app,
 read-only evidence steps before enabling any probes.
@@ -683,7 +683,7 @@ execute workflows. It identifies the exact evidence to collect first.
 ## Phase 13: Live Evidence Scaffold Templates
 
 **Status:** Landed in changelog record
-[`0033`](changelog/0033-live-evidence-scaffold-templates.md).
+[`0033`](../../changelog/0033-live-evidence-scaffold-templates.md).
 
 **Goal:** Make the first live evidence collection step repeatable and safe
 before touching consumed runtime files or enabling probes.
@@ -721,7 +721,7 @@ production probes.
 ## Phase 14: Hydration Evidence Validation
 
 **Status:** Landed in changelog record
-[`0034`](changelog/0034-hydration-evidence-validation.md).
+[`0034`](../../changelog/0034-hydration-evidence-validation.md).
 
 **Goal:** Let operators and agents check a scaffold/evidence directory before
 copying any evidence into consumed runtime paths.
@@ -754,7 +754,7 @@ workflow artifacts. It does not run probes.
 ## Phase 15: No-Probe Live Probe Gate
 
 **Status:** Landed in changelog record
-[`0035`](changelog/0035-no-probe-live-gate.md).
+[`0035`](../../changelog/0035-no-probe-live-gate.md).
 
 **Goal:** Add a final file-based go/no-go report before any opt-in HTTP or
 Docker probes are run.
@@ -787,7 +787,7 @@ execution, or production mutation.
 ## Phase 16: Live Evidence Promotion Plan
 
 **Status:** Landed in changelog record
-[`0036`](changelog/0036-live-evidence-promotion-plan.md).
+[`0036`](../../changelog/0036-live-evidence-promotion-plan.md).
 
 **Goal:** Give operators a concrete handoff artifact between reviewed evidence
 kits and manual runtime/provider/host updates without adding an automated apply
@@ -826,7 +826,7 @@ confirmed apply command.
 ## Phase 17: Reviewed Hydration Fixture Evidence
 
 **Status:** Landed in changelog record
-[`0037`](changelog/0037-reviewed-hydration-fixture-evidence.md).
+[`0037`](../../changelog/0037-reviewed-hydration-fixture-evidence.md).
 
 **Goal:** Make the reviewed-evidence path reproducible before collecting live
 runtime values.
@@ -866,7 +866,7 @@ or mutate production. It is a synthetic fixture rehearsal only.
 ## Phase 18: Legacy Console Staging Live Snapshot Attempt
 
 **Status:** Landed in changelog record
-[`0038`](changelog/0038-legacy-console-staging-live-snapshot-attempt.md).
+[`0038`](../../changelog/0038-legacy-console-staging-live-snapshot-attempt.md).
 
 **Goal:** Start the real Legacy Console staging hydration path while preserving the
 secret and no-probe safety boundary.
@@ -907,7 +907,7 @@ evidence outside Git.
 ## Phase 19: Legacy Console Staging Partial Live Evidence
 
 **Status:** Landed in changelog record
-[`0039`](changelog/0039-legacy-console-staging-partial-live-evidence.md).
+[`0039`](../../changelog/0039-legacy-console-staging-partial-live-evidence.md).
 
 **Goal:** Move the Legacy Console staging baseline forward using only evidence that can
 be verified without reading or inventing secret values.
@@ -947,7 +947,7 @@ from truthful live sources.
 ## Phase 20: Source Of Truth And Fixture-First Validation
 
 **Status:** Landed in changelog record
-[`0040`](changelog/0040-source-of-truth-and-fixture-first-validation.md).
+[`0040`](../../changelog/0040-source-of-truth-and-fixture-first-validation.md).
 
 **Goal:** Keep Ophelia contract-first. Active implementation, docs, tests, and
 examples should use synthetic fixtures until a retained-product migration or
@@ -955,7 +955,7 @@ production deployment phase is explicitly approved.
 
 **Work items:**
 
-- Add [Ophelia Source Of Truth](ophelia-source-of-truth.md).
+- Add [Ophelia Source Of Truth](../../ophelia-source-of-truth.md).
 - Remove uncommitted Legacy Console-specific deploy/env setup work from this phase.
 - Remove Legacy Console-specific hydration Make shortcuts from the active test surface.
 - Update command catalog and hydration descriptor examples to use fixture
@@ -989,7 +989,7 @@ deployment work belongs in a later approved phase.
 ## Phase 21: App Adoption Plan Contract
 
 **Status:** Landed in changelog record
-[`0041`](changelog/0041-app-adoption-plan.md).
+[`0041`](../../changelog/0041-app-adoption-plan.md).
 
 **Goal:** Give future apps and explicitly retained products a read-only
 adoption entrypoint that checks repo contract readiness against Ophelia before
@@ -1004,8 +1004,8 @@ live hydration, provider setup, or deployment work begins.
 - Emit ordered next commands for `pack init`, `pack validate`, `pack explain`,
   later readiness, and later runbook generation.
 - Add command catalog metadata and examples so agents can discover the command.
-- Document the adoption boundary in [App Adoption Planning](app-adoption.md)
-  and [Ophelia Source Of Truth](ophelia-source-of-truth.md).
+- Document the adoption boundary in [App Adoption Planning](../../app-adoption.md)
+  and [Ophelia Source Of Truth](../../ophelia-source-of-truth.md).
 - Cover missing-manifest, valid-repo, CLI JSON, and catalog behavior with
   focused tests.
 
@@ -1032,7 +1032,7 @@ remain later explicit migration or deployment phases.
 ## Phase 22: Future-App Adoption Fixture Repos
 
 **Status:** Landed in changelog record
-[`0042`](changelog/0042-adoption-fixture-repos.md).
+[`0042`](../../changelog/0042-adoption-fixture-repos.md).
 
 **Goal:** Keep adoption behavior fixture-backed with committed app-repo shapes
 that represent future Ophelia-first products instead of old live deployments.
@@ -1045,8 +1045,8 @@ that represent future Ophelia-first products instead of old live deployments.
   root, runbook, agent notes, hooks, and data check.
 - Add `make validate-adoption-fixtures`.
 - Add focused tests that run `adoption_plan` over every adoption fixture repo.
-- Document adoption fixtures in README, [App Adoption Planning](app-adoption.md),
-  and [Ophelia Source Of Truth](ophelia-source-of-truth.md).
+- Document adoption fixtures in README, [App Adoption Planning](../../app-adoption.md),
+  and [Ophelia Source Of Truth](../../ophelia-source-of-truth.md).
 
 **Dependencies:** Phase 21 app adoption planner.
 
@@ -1067,7 +1067,7 @@ fixtures and validation.
 ## Phase 23: Pack Command Metadata Redaction
 
 **Status:** Landed in changelog record
-[`0043`](changelog/0043-pack-command-metadata-redaction.md).
+[`0043`](../../changelog/0043-pack-command-metadata-redaction.md).
 
 **Goal:** Preserve the no-secret-output invariant for pack and adoption
 surfaces that summarize manifest data-contract command strings.
@@ -1081,8 +1081,8 @@ surfaces that summarize manifest data-contract command strings.
 - Redact adoption-embedded pack validation payloads before emission.
 - Add regression coverage for `pack_validation_report`, `export_plan`, and
   `adoption_plan` with secret-looking command literals and credential URLs.
-- Document the redaction guarantee in [Portable App Pack Spec](portable-app-pack-spec.md)
-  and [App Adoption Planning](app-adoption.md).
+- Document the redaction guarantee in [Portable App Pack Spec](../../portable-app-pack-spec.md)
+  and [App Adoption Planning](../../app-adoption.md).
 
 **Dependencies:** Central redaction helpers and Phase 21 adoption planning.
 
@@ -1102,7 +1102,7 @@ execute them. It only changes emitted metadata redaction.
 ## Phase 24: Pack Scaffold Executable Scripts
 
 **Status:** Landed in changelog record
-[`0044`](changelog/0044-pack-scaffold-executable-scripts.md).
+[`0044`](../../changelog/0044-pack-scaffold-executable-scripts.md).
 
 **Goal:** Make generated pack hook/check scaffolds runnable by default and let
 adoption planning catch fixture or app repos where required scripts are present
@@ -1118,8 +1118,8 @@ but not executable.
 - Warn from adoption planning when present hook/check scripts are not
   executable.
 - Mark committed adoption fixture scripts executable and add regression tests.
-- Document script mode expectations in [Portable App Pack Spec](portable-app-pack-spec.md)
-  and [App Adoption Planning](app-adoption.md).
+- Document script mode expectations in [Portable App Pack Spec](../../portable-app-pack-spec.md)
+  and [App Adoption Planning](../../app-adoption.md).
 
 **Dependencies:** Phase 21 adoption planning and pack init scaffolding.
 
@@ -1137,7 +1137,7 @@ validates file mode metadata.
 ## Phase 25: Manifest Bootstrap For App Repos
 
 **Status:** Landed in changelog record
-[`0045`](changelog/0045-manifest-bootstrap-for-app-repos.md).
+[`0045`](../../changelog/0045-manifest-bootstrap-for-app-repos.md).
 
 **Goal:** Make the future-app bootstrap path complete: a repo with no
 `.ophelia.yml` can now get a valid service or static manifest from the same

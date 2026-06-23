@@ -17,13 +17,18 @@ provides sanitized live material for an approved migration or deployment phase.
 ## Read In This Order
 
 1. [Repository README](../../README.md)
-2. [Platform Handbook](../platform-handbook.md)
-3. [Architecture](../architecture.md)
-4. [Manifest Spec](../manifest-spec.md)
-5. [Preflight And Safety](../preflight-and-safety.md)
-6. [Fixture App Suite](../fixture-app-suite.md)
-7. [Job And Action API](../job-action-api.md)
-8. [Open Source Readiness](../open-source-readiness.md)
+2. [Documentation Index](../README.md)
+3. [Roadmap](../ROADMAP.md)
+4. [Platform Handbook](../platform-handbook.md)
+5. [Architecture](../architecture.md)
+6. [Manifest Spec](../manifest-spec.md)
+7. [Preflight And Safety](../preflight-and-safety.md)
+8. [Fixture App Suite](../fixture-app-suite.md)
+9. [Job And Action API](../job-action-api.md)
+10. [Open Source Readiness](../open-source-readiness.md)
+
+For existing checkouts or app repositories, use the copyable
+[0.3.0 Upgrade Prompt](UPGRADE_TO_0_3_0_PROMPT.md).
 
 ## Stable Discovery Commands
 
@@ -72,6 +77,7 @@ make production-hardening-fixtures
 | Inspect command contracts | `./cli/ship commands catalog --json` |
 | Validate fixture behavior | `make validate-fixtures` |
 | Check public release hygiene | `make open-source-audit-strict` |
+| Upgrade an existing checkout | `docs/llm/UPGRADE_TO_0_3_0_PROMPT.md` |
 | Plan app adoption | `./cli/ship app adoption plan <app> --repo-path <path> --json` |
 | Review readiness | `./cli/ship live-readiness run ... --json` |
 | Prepare live evidence | `./cli/ship live-hydration report ... --json` |

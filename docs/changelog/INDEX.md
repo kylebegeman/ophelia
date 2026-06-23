@@ -57,3 +57,4 @@
 | [0053](0053-release-gate-polish.md) | 2026-06-22 | landed | Release gate polish | open-source, ci, packaging, docs, tests |
 | [0054](0054-doc-link-check.md) | 2026-06-22 | landed | Doc link check | docs, open-source, tests |
 | [0055](0055-github-private-030.md) | 2026-06-22 | landed | GitHub private 0.3.0 metadata | release, packaging, open-source, docs, tests |
+| [0056](0056-docs-overhaul-and-upgrade-guide.md) | 2026-06-23 | landed | Docs overhaul and 0.3.0 upgrade guide | docs, release, llm, open-source |
