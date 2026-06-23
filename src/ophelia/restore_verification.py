@@ -514,13 +514,24 @@ def _restore_rehearsal_command(manifest: Optional[Manifest], rehearsal_target: O
 
 
 def _data_verify_hook(manifest: Optional[Manifest]) -> Optional[str]:
-    if manifest is None or manifest.data.postgres is None:
+    if manifest is None:
         return None
-    verify = manifest.data.postgres.verify or {}
-    if isinstance(verify, dict):
-        command = verify.get("command")
-        return redact_command_string(str(command)) if command else None
-    return None
+    commands: List[str] = []
+    if manifest.data.postgres is not None:
+        verify = manifest.data.postgres.verify or {}
+        if isinstance(verify, dict):
+            command = verify.get("command")
+            if command:
+                commands.append(str(command))
+    for volume in manifest.data.volumes:
+        verify = volume.verify or {}
+        if isinstance(verify, dict):
+            command = verify.get("command")
+            if command:
+                commands.append(str(command))
+    if not commands:
+        return None
+    return " && ".join(redact_command_string(command) for command in commands)
 
 
 def _backup_digest(backup_path: Path) -> Optional[str]:

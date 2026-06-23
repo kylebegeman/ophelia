@@ -88,6 +88,21 @@ class RestoreVerificationTests(unittest.TestCase):
         self.assertIn("<redacted>", commands["restore_rehearsal"])
         self.assertIn("<redacted>", commands["app_verify_hook"])
 
+    def test_volume_verify_hook_is_recorded_without_secret_literals(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "volume-app.ophelia.yml"
+            manifest_path.write_text(_volume_manifest())
+            _write_backup(runtime_root, "volume-app", with_checksums=True)
+
+            plan = backup_verify_plan("volume-app", "production", runtime_root, manifest_path=manifest_path)
+
+        commands = {item["name"]: item["command"] for item in plan["verification_commands"] if "command" in item}
+        self.assertIn("ophelia/checks/data-verify.sh", commands["app_verify_hook"])
+        self.assertIn("<redacted>", commands["app_verify_hook"])
+        self.assertNotIn("sk-live-secret", json.dumps(plan))
+
     # ------------------------------------------------------------------ #
     # apply is token-gated, isolated, and never deletes
     # ------------------------------------------------------------------ #
@@ -495,6 +510,43 @@ data:
 verify:
   - name: health
     url: https://standard-app.example.com/health
+""".strip() + "\n"
+
+
+def _volume_manifest() -> str:
+    return """
+version: 1
+app: volume-app
+environment: production
+kind: service
+image: ghcr.io/example/volume-app@sha256:cccccccc
+pack:
+  portability: critical
+  owner: personal
+host_requirements:
+  min_disk_free: 1b
+services:
+  web:
+    port: 3000
+routes:
+  - domain: volume-app.example.net
+    service: web
+data:
+  volumes:
+    - name: runtime-data
+      mount: /app/data
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+      verify:
+        command: ophelia/checks/data-verify.sh --api-token sk-live-secret
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+verify:
+  - name: health
+    url: https://volume-app.example.net/health
 """.strip() + "\n"
 
 
