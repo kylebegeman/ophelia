@@ -1,0 +1,4 @@
+OPHELIA_APP=fixture-redis-worker
+WORKER_TOKEN=fixture-worker-token-value
+WORKER_MODE=queue
+REDIS_URL=redis://:fixture-redis-password@redis:6379/1
