@@ -32,6 +32,23 @@ class DriftTests(unittest.TestCase):
             self.assertEqual("info", report["severity"])
             self.assertEqual([], report["rendered"]["changed_files"])
 
+    def test_runtime_injected_env_absence_does_not_report_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_manifest())
+            manifest = load_manifest(manifest_path)
+            app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+            (app_root / "env").write_text("")
+            refresh_state(runtime_root, root)
+
+            report = manifest_drift(manifest, manifest_path, runtime_root)
+
+            codes = {item["code"] for item in report["findings"]}
+            self.assertNotIn("env_key_missing", codes)
+            self.assertEqual([], report["env"]["missing_keys"])
+
     def test_modified_runtime_file_reports_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

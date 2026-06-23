@@ -14,6 +14,7 @@ from .portability import _backup_records, _restore_drill_receipts, traffic_statu
 from .receipt_index import receipt_timeline
 from .runtime import bundle_hash, render_bundle
 from .state_db import state_status, state_summary
+from .templates import RUNTIME_INJECTED_ENV_KEYS
 
 DRIFT_REPORT_KIND = "ophelia.drift_report"
 DRIFT_SUMMARY_KIND = "ophelia.drift_summary"
@@ -801,7 +802,11 @@ def _release_metadata(manifest: Manifest, manifest_path: Path, runtime_root: Pat
 
 
 def _env_status(env_example_path: Path, env_path: Path) -> Dict[str, object]:
-    required = _env_keys(env_example_path)
+    required = {
+        key: value
+        for key, value in _env_keys(env_example_path).items()
+        if key not in RUNTIME_INJECTED_ENV_KEYS or _is_placeholder(value)
+    }
     actual = _env_keys(env_path)
     placeholder = sorted(key for key, value in actual.items() if _is_placeholder(value))
     return {

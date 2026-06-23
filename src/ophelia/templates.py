@@ -11,6 +11,9 @@ from .config import TEMPLATES_DIR
 from .manifest import CatchAllEdgeConfig, DataVolumeConfig, Manifest, RouteConfig, ServiceConfig
 
 
+RUNTIME_INJECTED_ENV_KEYS = frozenset({"OPHELIA_APP", "OPHELIA_SERVICE", "PORT"})
+
+
 def render_compose(manifest: Manifest) -> Optional[str]:
     if manifest.kind in {"static", "tunnel", "redirect"}:
         return None

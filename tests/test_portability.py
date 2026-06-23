@@ -1244,8 +1244,12 @@ class PortabilityTests(unittest.TestCase):
             report = env_shape_diff_report("demo-service", "production", runtime_root, manifest_path)
 
         statuses = {item["key"]: item["status"] for item in report["entries"]}
+        entries = {item["key"]: item for item in report["entries"]}
         self.assertEqual("present", statuses["DATABASE_URL"])
         self.assertEqual("extra", statuses["EXTRA_SECRET"])
+        self.assertEqual("optional_missing", statuses["OPHELIA_APP"])
+        self.assertFalse(entries["OPHELIA_APP"]["required"])
+        self.assertNotIn("OPHELIA_APP", json.dumps(report["blockers"]))
         self.assertTrue(report["values_redacted"])
         self.assertNotIn("postgres://user:password", json.dumps(report))
         self.assertIn("schema_version", report)

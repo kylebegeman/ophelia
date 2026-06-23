@@ -317,6 +317,9 @@ When `addons.postgres: true`, `ship deploy --apply` provisions a dedicated
 database and role in the shared Postgres container and writes `DATABASE_URL`
 into the app runtime env file. `addons.redis: true` writes `REDIS_URL` against
 the shared Redis instance and assigns the next free logical Redis database.
+Ophelia-injected runtime metadata such as `OPHELIA_APP`, `OPHELIA_SERVICE`, and
+`PORT` is rendered into Compose directly and is not required in retained app
+runtime env files unless the manifest explicitly declares it in `required_env`.
 
 Portable pack and readiness commands are read-only by default:
 

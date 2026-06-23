@@ -44,7 +44,7 @@ from .redaction import (
     redacted_compose_text,
 )
 from .runtime import active_release, active_release_id, image_references, latest_release_id
-from .templates import compose_network_summary, render_env_example
+from .templates import RUNTIME_INJECTED_ENV_KEYS, compose_network_summary, render_env_example
 from .verify import verification_checks
 
 
@@ -1007,9 +1007,10 @@ def env_shape_diff_report(
         else:
             required_by = desired_entry["required_by"]
             sources = desired_entry["sources"]
+            required = bool(desired_entry.get("required", True))
             if not runtime_present:
-                status = "missing"
-            elif _is_placeholder(runtime[key]):
+                status = "missing" if required else "optional_missing"
+            elif required and _is_placeholder(runtime[key]):
                 status = "placeholder"
             else:
                 status = "present"
@@ -1018,7 +1019,7 @@ def env_shape_diff_report(
                 "key": key,
                 "status": status,
                 "runtime_present": runtime_present,
-                "required": desired_entry is not None,
+                "required": bool(desired_entry.get("required", True)) if desired_entry is not None else False,
                 "required_by": required_by,
                 "sources": sources,
                 "value_redacted": True,
@@ -4093,12 +4094,15 @@ def _safe_artifact_slug(value: str) -> str:
 def _desired_env_entries(manifest: Manifest) -> Dict[str, Dict[str, object]]:
     entries: Dict[str, Dict[str, object]] = {}
 
-    def add(key: str, source: str, required_by: str) -> None:
-        current = entries.setdefault(key, {"key": key, "sources": [], "required_by": []})
+    def add(key: str, source: str, required_by: str, *, required: bool = True) -> None:
+        if required_by == "runtime" and key in RUNTIME_INJECTED_ENV_KEYS:
+            required = False
+        current = entries.setdefault(key, {"key": key, "sources": [], "required_by": [], "required": False})
         if source not in current["sources"]:
             current["sources"].append(source)
         if required_by not in current["required_by"]:
             current["required_by"].append(required_by)
+        current["required"] = bool(current["required"] or required)
 
     for raw_line in render_env_example(manifest).splitlines():
         line = raw_line.strip()
