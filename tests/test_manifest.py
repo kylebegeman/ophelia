@@ -91,6 +91,8 @@ app: portable
 environment: production
 kind: service
 image: ghcr.io/example/portable@sha256:aaaaaaaa
+required_env:
+  - PORTABLE_API_TOKEN
 pack:
   portability: critical
   owner: personal
@@ -147,6 +149,75 @@ verify:
         self.assertEqual("pg_restore", lock["data"]["postgres"]["import"]["command"])
         self.assertEqual("critical", lock["data"]["volumes"][0]["class"])
         self.assertEqual("ophelia/hooks/freeze.sh", lock["hooks"]["freeze"])
+        self.assertEqual(["PORTABLE_API_TOKEN"], lock["required_env"])
+
+    def test_required_env_renders_template_without_compose_override(self) -> None:
+        manifest = """
+version: 1
+app: required-env-app
+kind: service
+image: ghcr.io/example/required-env-app:latest
+required_env:
+  - REQUIRED_SECRET
+env:
+  NODE_ENV: production
+services:
+  web:
+    port: 3000
+routes:
+  - domain: required-env.example.com
+    service: web
+"""
+        loaded = self._load(manifest)
+        bundle = render_bundle(loaded)
+        compose = render_compose(loaded) or ""
+
+        self.assertIn("REQUIRED_SECRET=replace-me", bundle[Path("env.example")])
+        self.assertIn('NODE_ENV: "production"', compose)
+        self.assertNotIn("REQUIRED_SECRET:", compose)
+
+    def test_required_env_does_not_duplicate_generated_env_template_keys(self) -> None:
+        manifest = """
+version: 1
+app: required-env-postgres
+kind: service
+image: ghcr.io/example/required-env-postgres:latest
+addons:
+  postgres: true
+required_env:
+  - DATABASE_URL
+  - REQUIRED_SECRET
+services:
+  web:
+    port: 3000
+routes:
+  - domain: required-env-postgres.example.com
+    service: web
+"""
+        loaded = self._load(manifest)
+        env_example = render_bundle(loaded)[Path("env.example")]
+
+        self.assertEqual(1, env_example.count("DATABASE_URL="))
+        self.assertIn("DATABASE_URL=postgres://replace-me:replace-me@postgres:5432/replace-me", env_example)
+        self.assertIn("REQUIRED_SECRET=replace-me", env_example)
+
+    def test_required_env_rejects_invalid_key_name(self) -> None:
+        manifest = """
+version: 1
+app: invalid-required-env
+kind: service
+image: ghcr.io/example/invalid-required-env:latest
+required_env:
+  - 1BAD
+services:
+  web:
+    port: 3000
+routes:
+  - domain: invalid-required-env.example.com
+    service: web
+"""
+        with self.assertRaisesRegex(ManifestError, "required_env"):
+            self._load(manifest)
 
     def test_rejects_unknown_networking_mode(self) -> None:
         manifest = """

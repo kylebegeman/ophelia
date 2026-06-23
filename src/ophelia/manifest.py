@@ -232,6 +232,7 @@ class Manifest:
     addons: Addons = field(default_factory=Addons)
     resources: Resources = field(default_factory=Resources)
     env: Dict[str, str] = field(default_factory=dict)
+    required_env: List[str] = field(default_factory=list)
     env_files: List[str] = field(default_factory=list)
     edge: EdgeConfig = field(default_factory=EdgeConfig)
     static_root: Optional[str] = None
@@ -283,6 +284,7 @@ def load_manifest(path: Path) -> Manifest:
     image = _optional_str(raw.get("image"), "image")
 
     env = _mapping_as_str_dict(raw.get("env", {}), "env")
+    required_env = _string_list(raw.get("required_env", []), "required_env")
     env_files = _string_list(raw.get("env_files", []), "env_files")
     addons = _parse_addons(raw.get("addons", {}))
     resources = _parse_resources(raw.get("resources", {}))
@@ -311,6 +313,7 @@ def load_manifest(path: Path) -> Manifest:
         addons=addons,
         resources=resources,
         env=env,
+        required_env=required_env,
         env_files=env_files,
         edge=edge,
         static_root=_optional_str(raw.get("static_root"), "static_root"),
@@ -950,6 +953,8 @@ def _validate_manifest(manifest: Manifest) -> None:
     if manifest.profile not in {None, "console"}:
         raise ManifestError("`profile` must be omitted or set to `console`.")
 
+    _validate_env_key_names(manifest)
+
     if manifest.kind in {"service", "multi-service"}:
         if not manifest.services:
             raise ManifestError("Service-based apps require at least one service.")
@@ -1126,6 +1131,29 @@ def _validate_host_ports(manifest: Manifest) -> None:
                 f"Services `{owner}` and `{service_name}` both request host_port {service.host_port}."
             )
         host_ports[service.host_port] = service_name
+
+
+def _validate_env_key_names(manifest: Manifest) -> None:
+    for field_name, keys in (
+        ("env", manifest.env.keys()),
+        ("required_env", manifest.required_env),
+    ):
+        for key in keys:
+            if not _is_env_key_name(key):
+                raise ManifestError(f"`{field_name}` contains invalid env key `{key}`.")
+    for service_name, service in manifest.services.items():
+        for key in service.env:
+            if not _is_env_key_name(key):
+                raise ManifestError(f"`services.{service_name}.env` contains invalid env key `{key}`.")
+
+
+def _is_env_key_name(value: str) -> bool:
+    if not value:
+        return False
+    first = value[0]
+    if not (first == "_" or first.isalpha()):
+        return False
+    return all(char == "_" or char.isalnum() for char in value)
 
 
 def _validate_source_paths(manifest: Manifest, manifest_dir: Path) -> None:

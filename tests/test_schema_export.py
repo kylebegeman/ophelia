@@ -65,6 +65,8 @@ class SchemaExportTests(unittest.TestCase):
             props["kind"]["enum"],
             ["service", "multi-service", "static", "tunnel", "redirect"],
         )
+        self.assertEqual(props["required_env"]["type"], "array")
+        self.assertEqual(props["required_env"]["items"]["type"], "string")
         self.assertEqual(props["environment"]["enum"], ["dev", "staging", "production"])
         self.assertEqual(props["redirect_status"]["type"], "integer")
         redirect_condition = manifest_json_schema()["allOf"][0]

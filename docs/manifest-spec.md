@@ -15,6 +15,8 @@ Each app repo should eventually include an `.ophelia.yml` file.
 - `addons`: shared service requirements
 - `resources`: runtime limits
 - `env`: app-wide environment variables
+- `required_env`: env key names that must exist in the runtime `env` file but
+  must not be rendered as inline Compose environment overrides
 - `env_files`: manifest-relative env fragments copied into the runtime bundle
 - `edge`: optional public-edge features that need Caddy support beyond explicit host routes
 - `static_root`: filesystem root for static apps
@@ -270,6 +272,9 @@ resources:
 
 env:
   NODE_ENV: production
+
+required_env:
+  - API_TOKEN
 
 verify:
   - name: health

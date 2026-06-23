@@ -34,6 +34,42 @@ class PlanningTests(unittest.TestCase):
             self.assertIn("SECRET_TOKEN", {item["key"] for item in plan["env_requirements"]})
             self.assertNotIn("super-secret-value", json.dumps(plan))
 
+    def test_deploy_plan_reports_required_env_without_compose_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: required-env-plan
+kind: service
+image: ghcr.io/example/required-env-plan:latest
+required_env:
+  - REQUIRED_API_TOKEN
+env:
+  NODE_ENV: production
+services:
+  web:
+    port: 3000
+routes:
+  - domain: required-env-plan.example.com
+    service: web
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            plan = deploy_plan(manifest, manifest_path, runtime_root)
+            bundle = plan["env_requirements"]
+
+            required = {item["key"]: item for item in bundle}
+            self.assertTrue(required["REQUIRED_API_TOKEN"]["required_for_apply"])
+            self.assertTrue(required["REQUIRED_API_TOKEN"]["placeholder"])
+            self.assertFalse(required["NODE_ENV"]["required_for_apply"])
+            compose_diff = json.dumps(plan)
+            self.assertNotIn("REQUIRED_API_TOKEN:", compose_diff)
+
     def test_bundle_diff_is_clean_after_deploy(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

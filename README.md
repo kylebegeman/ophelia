@@ -5,7 +5,7 @@
 **A fixture-first deployment control plane for VPS apps, safe operations, and agent-readable workflows.**
 
 [![CI](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.3.0-2563EB)
+![Version](https://img.shields.io/badge/version-0.3.1-2563EB)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
@@ -49,7 +49,7 @@ made.
 
 | Item | Status |
 | --- | --- |
-| Current version | `0.3.0` |
+| Current version | `0.3.1` |
 | Stability | Pre-1.0, core contracts are active but still evolving deliberately. |
 | Distribution | GitHub only. No PyPI release path is configured. |
 | Visibility | Private until the public release decision is made. |
@@ -114,7 +114,7 @@ PY
 Expected output:
 
 ```text
-0.3.0
+0.3.1
 Repository, https://github.com/mrbagels/ophelia
 Issues, https://github.com/mrbagels/ophelia/issues
 ```

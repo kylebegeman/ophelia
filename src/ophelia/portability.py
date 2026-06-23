@@ -4108,6 +4108,8 @@ def _desired_env_entries(manifest: Manifest) -> Dict[str, Dict[str, object]]:
         add(key, "env.example", _env_required_by(manifest, key))
     for key in manifest.env:
         add(key, "manifest.env", "manifest.env")
+    for key in manifest.required_env:
+        add(key, "manifest.required_env", "manifest.required_env")
     for service in manifest.services.values():
         for key in service.env:
             add(key, f"services.{service.name}.env", f"service:{service.name}")
@@ -4163,6 +4165,8 @@ def _env_required_by(manifest: Manifest, key: str) -> str:
         return "data.redis" if manifest.data.redis else "addons.redis"
     if key in manifest.env:
         return "manifest.env"
+    if key in manifest.required_env:
+        return "manifest.required_env"
     if key.startswith("OPHELIA_CONSOLE_"):
         return "console"
     return "runtime"

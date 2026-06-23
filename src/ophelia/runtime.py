@@ -253,6 +253,13 @@ def apply_local_bundle(
                 mark_phase("addon_provision", "ok")
 
         mark_phase("env_validation", "running")
+        missing_required_keys = missing_required_env_keys(manifest, app_root / "env")
+        if missing_required_keys:
+            joined = ", ".join(missing_required_keys)
+            raise ApplyPhaseError(
+                "env_validation",
+                f"Refusing to apply with missing required env keys in {app_root / 'env'}: {joined}",
+            )
         placeholder_keys = placeholder_env_keys(app_root / "env")
         if placeholder_keys:
             joined = ", ".join(placeholder_keys)
@@ -805,6 +812,23 @@ def placeholder_env_keys(path: Path) -> List[str]:
         if _is_placeholder_value(value):
             keys.append(key)
     return sorted(keys)
+
+
+def missing_required_env_keys(manifest: Manifest, path: Path) -> List[str]:
+    values = _load_env_file(path)
+    return sorted(key for key in _required_placeholder_env_keys(manifest) if key not in values)
+
+
+def _required_placeholder_env_keys(manifest: Manifest) -> List[str]:
+    keys: List[str] = []
+    for raw_line in render_env_example(manifest).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if _is_placeholder_value(value):
+            keys.append(key)
+    return sorted(set(keys))
 
 
 def _utc_now() -> str:

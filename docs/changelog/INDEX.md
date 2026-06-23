@@ -59,3 +59,4 @@
 | [0055](0055-github-private-030.md) | 2026-06-22 | landed | GitHub private 0.3.0 metadata | release, packaging, open-source, docs, tests |
 | [0056](0056-docs-overhaul-and-upgrade-guide.md) | 2026-06-23 | landed | Docs overhaul and 0.3.0 upgrade guide | docs, release, llm, open-source |
 | [0057](0057-private-ui-public-surface-wording.md) | 2026-06-23 | landed | Private UI public-surface wording | docs, operator-console, open-source |
+| [0058](0058-required-env-contract.md) | 2026-06-23 | landed | Required env contract | manifest, runtime, env, migrations, docs, tests |

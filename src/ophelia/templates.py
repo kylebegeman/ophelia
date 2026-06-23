@@ -76,40 +76,48 @@ def render_env_example(manifest: Manifest) -> str:
         f"# Generated env template for {manifest.app}",
         f"OPHELIA_APP={manifest.app}",
     ]
+    emitted_keys = {"OPHELIA_APP"}
+
+    def append_env(key: str, value: str) -> None:
+        if key in emitted_keys:
+            return
+        lines.append(f"{key}={value}")
+        emitted_keys.add(key)
 
     for key, value in sorted(manifest.env.items()):
-        lines.append(f"{key}={value}")
+        append_env(key, value)
 
     if manifest.addons.postgres:
-        lines.append("DATABASE_URL=postgres://replace-me:replace-me@postgres:5432/replace-me")
+        append_env("DATABASE_URL", "postgres://replace-me:replace-me@postgres:5432/replace-me")
 
     if manifest.addons.redis:
-        lines.append("REDIS_URL=redis://default:replace-me@redis:6379/0")
+        append_env("REDIS_URL", "redis://default:replace-me@redis:6379/0")
 
     service_secret_keys = _collect_service_env_keys(manifest)
     for key in service_secret_keys:
-        if key not in manifest.env:
-            lines.append(f"{key}=replace-me")
+        append_env(key, "replace-me")
 
     for key in caddy_env_keys(manifest):
-        if key not in manifest.env and key not in service_secret_keys:
-            lines.append(f"{key}=replace-me")
+        append_env(key, "replace-me")
 
     if manifest.profile == "console" and manifest.console is not None:
         lines.extend(
             [
                 "",
                 "# Console profile defaults",
-                f"OPHELIA_CONSOLE_SURFACE={manifest.console.surface}",
-                "OPHELIA_CONSOLE_SETUP_TOKEN=replace-me",
-                "OPHELIA_CONSOLE_MFA_ENCRYPTION_KEY=replace-me",
-                "OPHELIA_CONSOLE_CREDENTIAL_ENCRYPTION_KEY=replace-me",
             ]
         )
+        append_env("OPHELIA_CONSOLE_SURFACE", manifest.console.surface)
+        append_env("OPHELIA_CONSOLE_SETUP_TOKEN", "replace-me")
+        append_env("OPHELIA_CONSOLE_MFA_ENCRYPTION_KEY", "replace-me")
+        append_env("OPHELIA_CONSOLE_CREDENTIAL_ENCRYPTION_KEY", "replace-me")
         if manifest.console.console_asset_path:
-            lines.append(f"OPHELIA_CONSOLE_ASSET_PATH={manifest.console.console_asset_path}")
+            append_env("OPHELIA_CONSOLE_ASSET_PATH", manifest.console.console_asset_path)
         if manifest.console.admin_domain:
             lines.append(f"# Dedicated console admin host routed by Ophelia: {manifest.console.admin_domain}")
+
+    for key in sorted(manifest.required_env):
+        append_env(key, "replace-me")
 
     return "\n".join(lines) + "\n"
 

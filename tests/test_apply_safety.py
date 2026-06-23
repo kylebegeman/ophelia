@@ -109,6 +109,42 @@ class ApplySafetyTests(unittest.TestCase):
             self.assertEqual("failed", release["apply"]["status"])
             self.assertEqual("env_validation", release["apply"]["phase"])
 
+    def test_apply_rejects_missing_required_env_keys_before_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "static.ophelia.yml"
+            static_root = root / "static"
+            static_root.mkdir()
+            manifest_path.write_text(_static_manifest(static_root, environment="staging", required_env=True))
+            runtime_root = root / "runtime"
+            app_root = runtime_root / "apps" / "safe-static"
+            app_root.mkdir(parents=True)
+            (app_root / "env").write_text("OPHELIA_APP=safe-static\n")
+            repo = Path(__file__).resolve().parents[1]
+
+            result = subprocess.run(
+                [
+                    str(repo / "cli" / "ship"),
+                    "deploy",
+                    str(manifest_path),
+                    "--runtime-root",
+                    str(runtime_root),
+                    "--ophelia-root",
+                    str(root),
+                    "--apply",
+                ],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("missing required env keys", result.stdout)
+            self.assertIn("API_TOKEN", result.stdout)
+            release = json.loads((runtime_root / "apps" / "safe-static" / "release.json").read_text())
+            self.assertFalse(release["applied"])
+            self.assertEqual("failed", release["apply"]["status"])
+            self.assertEqual("env_validation", release["apply"]["phase"])
+
     def test_shared_caddy_reload_uses_selected_runtime_root(self) -> None:
         from ophelia.manifest import load_manifest
         from ophelia.runtime import apply_local_bundle
@@ -212,14 +248,21 @@ routes:
             self.assertFalse((runtime_root / "apps" / "edge-two" / "active_release.json").exists())
 
 
-def _static_manifest(static_root: Path, environment: str, placeholder: bool = False) -> str:
+def _static_manifest(
+    static_root: Path,
+    environment: str,
+    placeholder: bool = False,
+    required_env: bool = False,
+) -> str:
     env = "env:\n  API_TOKEN: replace-me\n" if placeholder else ""
+    required = "required_env:\n  - API_TOKEN\n" if required_env else ""
     return f"""
 version: 1
 app: safe-static
 environment: {environment}
 kind: static
 static_root: {static_root}
+{required}
 {env}
 routes:
   - domain: safe-static.example.com
