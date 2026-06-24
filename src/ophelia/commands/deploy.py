@@ -106,6 +106,26 @@ def run(args: Namespace) -> int:
         return 1
 
     if args.plan:
+        if args.host:
+            try:
+                result = stage_remote_bundle(
+                    manifest=manifest,
+                    manifest_path=args.manifest,
+                    host=args.host,
+                    ssh_port=args.ssh_port,
+                    remote_runtime_root=args.remote_runtime_root,
+                    remote_ophelia_root=args.remote_ophelia_root,
+                    apply=False,
+                    plan=True,
+                    json_output=args.json,
+                )
+            except RemoteError as exc:
+                print(f"Remote deploy plan failed: {exc}")
+                return 1
+            if result:
+                print(result)
+            return 0
+
         plan = deploy_plan(manifest, args.manifest, args.runtime_root, artifacts_dir=args.artifacts_dir)
         if args.json:
             print(json.dumps(plan, indent=2, sort_keys=True))
@@ -144,17 +164,29 @@ def run(args: Namespace) -> int:
                 print("  none")
         return 0
 
-    plan = deploy_plan(manifest, args.manifest, args.runtime_root)
-    if args.apply and plan["confirmation_required"]:
-        expected = deploy_confirmation_token(plan)
-        if args.confirm != expected:
-            print(
-                "Production apply requires confirmation token "
-                f"{expected}. Run `ship deploy {args.manifest} --plan` first."
-            )
+    if args.host:
+        if args.apply and manifest.environment == "production" and not args.confirm:
+            try:
+                result = stage_remote_bundle(
+                    manifest=manifest,
+                    manifest_path=args.manifest,
+                    host=args.host,
+                    ssh_port=args.ssh_port,
+                    remote_runtime_root=args.remote_runtime_root,
+                    remote_ophelia_root=args.remote_ophelia_root,
+                    apply=False,
+                    plan=True,
+                    json_output=False,
+                )
+            except RemoteError as exc:
+                print(f"Remote deploy plan failed: {exc}")
+                return 1
+            if result:
+                print(result)
+            print("Remote production apply requires the confirmation token from the remote plan above.")
+            print("Re-run the same command with `--confirm <token>` after reviewing that plan.")
             return 1
 
-    if args.host:
         try:
             result = stage_remote_bundle(
                 manifest=manifest,
@@ -164,6 +196,7 @@ def run(args: Namespace) -> int:
                 remote_runtime_root=args.remote_runtime_root,
                 remote_ophelia_root=args.remote_ophelia_root,
                 apply=args.apply,
+                confirm=args.confirm,
                 verify=args.verify,
                 verify_attempts=args.verify_attempts,
                 verify_interval=args.verify_interval,
@@ -179,6 +212,16 @@ def run(args: Namespace) -> int:
         if result:
             print(result)
         return 0
+
+    plan = deploy_plan(manifest, args.manifest, args.runtime_root)
+    if args.apply and plan["confirmation_required"]:
+        expected = deploy_confirmation_token(plan)
+        if args.confirm != expected:
+            print(
+                "Production apply requires confirmation token "
+                f"{expected}. Run `ship deploy {args.manifest} --plan` first."
+            )
+            return 1
 
     if args.apply:
         try:

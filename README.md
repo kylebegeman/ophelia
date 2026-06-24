@@ -163,6 +163,23 @@ Or stage and apply over SSH:
   --apply
 ```
 
+For production over SSH, generate the plan on the remote host and use that
+remote token for apply:
+
+```bash
+./cli/ship deploy ../demo-static/.ophelia.yml \
+  --host deploy@example-host \
+  --remote-runtime-root ~/ophelia-runtime \
+  --remote-ophelia-root ~/ophelia \
+  --plan --json
+
+./cli/ship deploy ../demo-static/.ophelia.yml \
+  --host deploy@example-host \
+  --remote-runtime-root ~/ophelia-runtime \
+  --remote-ophelia-root ~/ophelia \
+  --apply --confirm <remote-token>
+```
+
 Minimal static manifest:
 
 ```yaml
@@ -262,6 +279,14 @@ Production apply requires the confirmation token from the matching plan:
 ```bash
 ./cli/ship deploy ../demo-service/.ophelia.yml --plan --json
 ./cli/ship deploy ../demo-service/.ophelia.yml --apply --confirm <token> --verify
+```
+
+Remote production applies use the same rule, but the matching plan must be run
+with `--host` so the token is calculated from the staged remote runtime bundle:
+
+```bash
+./cli/ship deploy ../demo-service/.ophelia.yml --host deploy@example-host --plan --json
+./cli/ship deploy ../demo-service/.ophelia.yml --host deploy@example-host --apply --confirm <remote-token> --verify
 ```
 
 ## Standard Workflow

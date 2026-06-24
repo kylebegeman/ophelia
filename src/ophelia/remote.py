@@ -5,7 +5,7 @@ import shlex
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 from .manifest import Manifest
 from .runtime import materialize_bundle
@@ -46,6 +46,10 @@ def stage_remote_bundle(
     verify_interval: float | None = None,
     verify_timeout: float | None = None,
     verify_failure_mode: str | None = None,
+    *,
+    plan: bool = False,
+    json_output: bool = False,
+    confirm: str | None = None,
 ) -> str:
     remote_runtime_root = _rsync_path(remote_runtime_root)
     with tempfile.TemporaryDirectory(prefix=f"ophelia-{manifest.app}-") as temp_dir:
@@ -59,6 +63,9 @@ def stage_remote_bundle(
         remote_runtime_root=remote_runtime_root,
         remote_ophelia_root=remote_ophelia_root,
         apply=apply,
+        plan=plan,
+        json_output=json_output,
+        confirm=confirm,
         verify=verify,
         verify_attempts=verify_attempts,
         verify_interval=verify_interval,
@@ -114,31 +121,28 @@ def _build_remote_stage_script(
     verify_interval: float | None = None,
     verify_timeout: float | None = None,
     verify_failure_mode: str | None = None,
+    *,
+    plan: bool = False,
+    json_output: bool = False,
+    confirm: str | None = None,
 ) -> str:
+    if apply and plan:
+        raise ValueError("remote deploy script cannot both plan and apply")
     app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
-    caddy_target = f"{_shell_ref(remote_runtime_root)}/caddy/sites.d/{manifest.app}.caddy"
-    caddy_global_target = f"{_shell_ref(remote_runtime_root)}/caddy/global.d/{manifest.app}.caddy"
-    release = {
-        "app": manifest.app,
-        "kind": manifest.kind,
-        "source_manifest": str(manifest_path.resolve()),
-        "runtime_path": f"{remote_runtime_root}/apps/{manifest.app}",
-        "deployed_at": _utc_now(),
-        "mode": "applied" if apply else "staged",
-    }
 
     lines: List[str] = [
         "set -euo pipefail",
         f"APP_ROOT={app_root}",
-        f"CADDY_TARGET={caddy_target}",
-        f"CADDY_GLOBAL_TARGET={caddy_global_target}",
         f"REMOTE_RUNTIME_ROOT={_shell_ref(remote_runtime_root)}",
         f"REMOTE_OPHELIA_ROOT={_shell_ref(remote_ophelia_root)}",
     ]
 
-    if apply:
+    if plan:
+        lines.extend(_build_plan_lines(json_output=json_output))
+    elif apply:
         lines.extend(
             _build_apply_lines(
+                confirm=confirm,
                 verify=verify,
                 verify_attempts=verify_attempts,
                 verify_interval=verify_interval,
@@ -147,39 +151,34 @@ def _build_remote_stage_script(
             )
         )
     else:
-        lines.extend(
-            [
-                'mkdir -p "$APP_ROOT/caddy"',
-                'mkdir -p "$(dirname "$CADDY_TARGET")"',
-                'mkdir -p "$(dirname "$CADDY_GLOBAL_TARGET")"',
-                'if [ ! -f "$APP_ROOT/env" ] && [ -f "$APP_ROOT/env.example" ]; then cp "$APP_ROOT/env.example" "$APP_ROOT/env"; fi',
-                f'cat > "$APP_ROOT/release.json" <<\'EOF_RELEASE\'\n{json.dumps(release, indent=2, sort_keys=True)}\nEOF_RELEASE',
-                f'cp "$APP_ROOT/caddy/{manifest.app}.caddy" "$CADDY_TARGET"',
-                f'if [ -f "$APP_ROOT/caddy/global.d/{manifest.app}.caddy" ]; then cp "$APP_ROOT/caddy/global.d/{manifest.app}.caddy" "$CADDY_GLOBAL_TARGET"; else rm -f "$CADDY_GLOBAL_TARGET"; fi',
-                'echo "Staged runtime bundle and Caddy snippet."',
-            ]
-        )
+        lines.extend(_build_stage_lines(manifest, manifest_path, remote_runtime_root))
 
     return "\n".join(lines)
 
 
+def _build_plan_lines(json_output: bool = False) -> List[str]:
+    command = _remote_deploy_command()
+    command.append("--plan")
+    if json_output:
+        command.append("--json")
+    return [
+        'cd "$REMOTE_OPHELIA_ROOT"',
+        " ".join(command),
+    ]
+
+
 def _build_apply_lines(
+    confirm: str | None = None,
     verify: bool = False,
     verify_attempts: int | None = None,
     verify_interval: float | None = None,
     verify_timeout: float | None = None,
     verify_failure_mode: str | None = None,
 ) -> List[str]:
-    command = [
-        "./cli/ship",
-        "deploy",
-        '"$APP_ROOT/manifest.lock.json"',
-        "--runtime-root",
-        '"$REMOTE_RUNTIME_ROOT"',
-        "--ophelia-root",
-        '"$REMOTE_OPHELIA_ROOT"',
-        "--apply",
-    ]
+    command = _remote_deploy_command()
+    command.append("--apply")
+    if confirm:
+        command.extend(["--confirm", shlex.quote(confirm)])
     if verify:
         command.append("--verify")
         if verify_attempts is not None:
@@ -193,6 +192,41 @@ def _build_apply_lines(
     return [
         'cd "$REMOTE_OPHELIA_ROOT"',
         " ".join(command),
+    ]
+
+
+def _build_stage_lines(manifest: Manifest, manifest_path: Path, remote_runtime_root: str) -> List[str]:
+    release = {
+        "app": manifest.app,
+        "kind": manifest.kind,
+        "source_manifest": str(manifest_path.resolve()),
+        "runtime_path": f"{remote_runtime_root}/apps/{manifest.app}",
+        "deployed_at": _utc_now(),
+        "mode": "staged",
+    }
+    return [
+        'mkdir -p "$APP_ROOT/caddy"',
+        f'CADDY_TARGET="$REMOTE_RUNTIME_ROOT/caddy/sites.d/{manifest.app}.caddy"',
+        f'CADDY_GLOBAL_TARGET="$REMOTE_RUNTIME_ROOT/caddy/global.d/{manifest.app}.caddy"',
+        'mkdir -p "$(dirname "$CADDY_TARGET")"',
+        'mkdir -p "$(dirname "$CADDY_GLOBAL_TARGET")"',
+        'if [ ! -f "$APP_ROOT/env" ] && [ -f "$APP_ROOT/env.example" ]; then cp "$APP_ROOT/env.example" "$APP_ROOT/env"; fi',
+        f'cat > "$APP_ROOT/release.json" <<\'EOF_RELEASE\'\n{json.dumps(release, indent=2, sort_keys=True)}\nEOF_RELEASE',
+        f'cp "$APP_ROOT/caddy/{manifest.app}.caddy" "$CADDY_TARGET"',
+        f'if [ -f "$APP_ROOT/caddy/global.d/{manifest.app}.caddy" ]; then cp "$APP_ROOT/caddy/global.d/{manifest.app}.caddy" "$CADDY_GLOBAL_TARGET"; else rm -f "$CADDY_GLOBAL_TARGET"; fi',
+        'echo "Staged runtime bundle and Caddy snippet."',
+    ]
+
+
+def _remote_deploy_command() -> List[str]:
+    return [
+        "./cli/ship",
+        "deploy",
+        '"$APP_ROOT/manifest.lock.json"',
+        "--runtime-root",
+        '"$REMOTE_RUNTIME_ROOT"',
+        "--ophelia-root",
+        '"$REMOTE_OPHELIA_ROOT"',
     ]
 
 
@@ -250,4 +284,4 @@ def _shell_ref(path: str) -> str:
         return "$HOME"
     if path.startswith("~/"):
         return "$HOME/" + path[2:]
-    return path
+    return shlex.quote(path)

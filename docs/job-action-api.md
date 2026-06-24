@@ -49,7 +49,9 @@ Operator consoles and local agents can call these read-only commands today:
 
 Mutating commands require confirmation tokens from their matching plans:
 
-- `ship deploy --apply --confirm <token>` for production manifests
+- `ship deploy --apply --confirm <token>` for production manifests. Remote
+  production applies must use a token from `ship deploy --host ... --plan`,
+  not a local plan token.
 - `ship rollback apply ... --confirm <token>`
 - `ship backup create ... --confirm <token>`
 - `ship restore apply ... --confirm <token>`

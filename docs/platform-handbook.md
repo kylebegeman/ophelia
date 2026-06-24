@@ -48,9 +48,15 @@ Representative commands:
 ```bash
 ./cli/ship deploy path/to/.ophelia.yml --plan --json
 ./cli/ship deploy path/to/.ophelia.yml --apply --confirm <token>
+./cli/ship deploy path/to/.ophelia.yml --host deploy@example-host --plan --json
+./cli/ship deploy path/to/.ophelia.yml --host deploy@example-host --apply --confirm <remote-token>
 ./cli/ship app traffic plan demo-app --from source-host --to target-host --target-origin demo-target.example.net --environment staging --json
 ./cli/ship app traffic apply demo-app --from source-host --to target-host --target-origin demo-target.example.net --environment staging --confirm <token> --json
 ```
+
+Remote deploy confirmation tokens are host-specific. Always produce them with
+the same `--host`, `--remote-runtime-root`, and `--remote-ophelia-root` values
+that will be used for the remote apply.
 
 ## Runtime Layout
 

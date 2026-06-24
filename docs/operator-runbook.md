@@ -36,6 +36,17 @@ Deploy production:
 ./cli/ship deploy "$MANIFEST" --apply --confirm <token>
 ```
 
+Deploy production over SSH:
+
+```bash
+./cli/ship deploy "$MANIFEST" --host deploy@example-host --plan --json
+./cli/ship deploy "$MANIFEST" --host deploy@example-host --apply --confirm <remote-token>
+```
+
+Remote production tokens must come from the remote plan. Ophelia stages the
+bundle on the target host before planning so static asset paths, generated
+bundle state, and runtime diffs match the remote apply.
+
 Product-specific deploy wrappers belong in separately approved adoption or
 migration docs. The generic `ship` flow is the Ophelia contract.
 
