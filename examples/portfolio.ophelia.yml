@@ -1,0 +1,8 @@
+version: 1
+app: portfolio
+kind: static
+static_root: /opt/ophelia-runtime/static/portfolio
+
+routes:
+  - domain: portfolio.example.net
+  - domain: www.portfolio.example.net
