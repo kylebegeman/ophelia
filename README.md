@@ -7,7 +7,7 @@
 **A fixture-first deployment control plane for VPS apps, static sites, safe operations, and agent-readable workflows.**
 
 [![CI](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.3.11-2563EB)
+![Version](https://img.shields.io/badge/version-0.3.12-2563EB)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
@@ -62,7 +62,7 @@ public launch decision is made.
 
 | Item | Status |
 | --- | --- |
-| Current version | `0.3.11` |
+| Current version | `0.3.12` |
 | Stability | Pre-1.0. Core contracts are active, but JSON and CLI surfaces may still evolve deliberately. |
 | Distribution | GitHub only. No PyPI release path is configured. |
 | Runtime state | Kept outside the source checkout, usually under `~/ophelia-runtime` or a configured runtime root. |
@@ -112,7 +112,7 @@ PY
 Expected output:
 
 ```text
-0.3.11
+0.3.12
 Repository, https://github.com/mrbagels/ophelia
 Issues, https://github.com/mrbagels/ophelia/issues
 ```
