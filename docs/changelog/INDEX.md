@@ -70,3 +70,4 @@
 | [0066](0066-saas-onboarding-contracts.md) | 2026-06-24 | landed | SaaS onboarding contracts | verification, manifest, lifecycle, backup, fresh-install, readiness, adoption, docs, tests |
 | [0067](0067-saas-onboarding-bug-bash.md) | 2026-06-24 | landed | SaaS onboarding bug bash | verification, fresh-install, schema, redaction, release, tests |
 | [0068](0068-data-volume-source-rendering.md) | 2026-06-24 | landed | Data volume source rendering | compose, data-volumes, docs, tests |
+| [0069](0069-first-class-static-sites-and-readme-polish.md) | 2026-06-24 | landed | First-class static sites and README polish | static-sites, deploy, runtime, planning, app-factory, docs, release |

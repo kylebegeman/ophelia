@@ -215,6 +215,116 @@ hooks:
         self.assertEqual("demo-service", payload["app"])
         self.assertIn("changed_files", payload)
 
+    def test_relative_static_root_syncs_assets_and_plan_tracks_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            public = root / "public"
+            public.mkdir()
+            (public / "index.html").write_text("<h1>Hello</h1>\n")
+            manifest_path = root / "static.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: static-sync
+environment: staging
+kind: static
+static_root: public
+routes:
+  - domain: static-sync.example.com
+verify:
+  - name: homepage
+    url: https://static-sync.example.com/
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            plan = deploy_plan(manifest, manifest_path, runtime_root)
+            deploy_bundle(manifest, manifest_path, runtime_root)
+            current = runtime_root / "static" / "static-sync" / "current"
+            self.assertFalse(current.exists())
+            app_root = apply_local_bundle(manifest, manifest_path, runtime_root, root)
+            clean_plan = deploy_plan(manifest, manifest_path, runtime_root)
+
+            self.assertTrue(plan["static_assets"]["managed"])
+            self.assertEqual("sync", plan["static_assets"]["change"])
+            self.assertIn("static-assets", {item["target"] for item in plan["changes"]})
+            self.assertEqual("<h1>Hello</h1>\n", (current / "index.html").read_text())
+            release = json.loads((app_root / "release.json").read_text())
+            self.assertEqual(1, release["static_assets"]["file_count"])
+            self.assertEqual("synced", release["static_assets"]["change"])
+            bundle_path = Path(release["bundle_path"])
+            self.assertEqual("<h1>Hello</h1>\n", (bundle_path / "public" / "index.html").read_text())
+            self.assertEqual("none", clean_plan["static_assets"]["change"])
+
+    def test_static_asset_digest_changes_confirmation_token(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            public = root / "dist"
+            public.mkdir()
+            index = public / "index.html"
+            index.write_text("one\n")
+            manifest_path = root / "static.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: static-prod
+environment: production
+kind: static
+static_root: dist
+routes:
+  - domain: static-prod.example.com
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            token_one = deploy_plan(manifest, manifest_path, runtime_root)["confirmation_token"]
+            index.write_text("two\n")
+            token_two = deploy_plan(manifest, manifest_path, runtime_root)["confirmation_token"]
+
+            self.assertNotEqual(token_one, token_two)
+
+    def test_static_deploy_from_release_bundle_lock_uses_bundled_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            public = root / "public"
+            public.mkdir()
+            index = public / "index.html"
+            index.write_text("one\n")
+            manifest_path = root / "static.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: static-lock
+environment: staging
+kind: static
+static_root: public
+routes:
+  - domain: static-lock.example.com
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            app_root = apply_local_bundle(manifest, manifest_path, runtime_root, root)
+            first_release = json.loads((app_root / "release.json").read_text())
+            first_lock = Path(first_release["bundle_path"]) / "manifest.lock.json"
+
+            index.write_text("two\n")
+            apply_local_bundle(manifest, manifest_path, runtime_root, root)
+            current = runtime_root / "static" / "static-lock" / "current"
+            self.assertEqual("two\n", (current / "index.html").read_text())
+
+            apply_local_bundle(load_manifest(first_lock), first_lock, runtime_root, root)
+            restored_release = json.loads((app_root / "release.json").read_text())
+            restored_bundle = Path(restored_release["bundle_path"])
+            self.assertEqual("one\n", (current / "index.html").read_text())
+            self.assertEqual("one\n", (restored_bundle / "public" / "index.html").read_text())
+
 
 def _manifest(secret_value: str) -> str:
     return f"""

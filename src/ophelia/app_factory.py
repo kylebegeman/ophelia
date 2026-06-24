@@ -190,6 +190,8 @@ _WORKFLOW_FILES: List[str] = [
 def _generated_paths(template: Template) -> List[str]:
     paths = list(_BASE_GENERATED_FILES)
     paths.extend(_WORKFLOW_FILES)
+    if template.is_static:
+        paths.append("public/index.html")
     for extra in template.extra_files:
         if extra not in paths:
             paths.append(extra)
@@ -286,7 +288,7 @@ def _manifest_text(
 
     if template.is_static:
         lines.append("")
-        lines.append(f"static_root: {Path(runtime_root).expanduser() / 'static' / app}")
+        lines.append("static_root: public")
         lines.append("")
         lines.append("routes:")
         lines.append(f"  - domain: {_domain_for(app)}")
@@ -668,11 +670,29 @@ def _generated_contents(
         ".github/dependabot.yml": _dependabot_yml(),
         ".github/labeler.yml": _labeler_yml(),
     }
+    if template.is_static:
+        contents["public/index.html"] = _static_index_html(app)
     if "ophelia/hooks/pre-export.sh" in template.extra_files:
         contents["ophelia/hooks/pre-export.sh"] = _pre_export_sh(app)
     if "ophelia/checks/data-verify.sh" in template.extra_files:
         contents["ophelia/checks/data-verify.sh"] = _data_verify_sh(app)
     return contents
+
+
+def _static_index_html(app: str) -> str:
+    return (
+        "<!doctype html>\n"
+        "<html lang=\"en\">\n"
+        "  <head>\n"
+        "    <meta charset=\"utf-8\">\n"
+        "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        f"    <title>{app}</title>\n"
+        "  </head>\n"
+        "  <body>\n"
+        f"    <main><h1>{app}</h1></main>\n"
+        "  </body>\n"
+        "</html>\n"
+    )
 
 
 _FILE_DESCRIPTIONS: Dict[str, str] = {

@@ -3,7 +3,7 @@
   "kind": "ophelia.llm_manifest",
   "project": "ophelia",
   "status": "pre-1.0",
-  "summary": "Fixture-first VPS deployment control plane with manifest validation, runtime rendering, safety-gated operations, receipts, and agent-readable JSON contracts.",
+  "summary": "Fixture-first VPS deployment control plane with manifest validation, static-site publishing, runtime rendering, safety-gated operations, receipts, and agent-readable JSON contracts.",
   "primary_commands": [
     "./cli/ship self-test --json",
     "./cli/ship commands catalog --json",
@@ -37,7 +37,7 @@
     {
       "label": "Roadmap",
       "path": "../ROADMAP.md",
-      "purpose": "Current 0.3.0 status, next work, adoption flow, and deferred decisions."
+      "purpose": "Current 0.3.x status, next work, adoption flow, and deferred decisions."
     },
     {
       "label": "0.3.0 upgrade prompt",

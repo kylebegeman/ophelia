@@ -1,11 +1,15 @@
 # Ophelia Roadmap
 
-Status: current after the 0.3.0 release cut
+Status: current after the 0.3.11 patch release
 
 Ophelia 0.3.0 completes the fixture-first foundation: manifest contracts,
 runtime rendering, safety-gated operations, receipts, readiness, synthetic app
 fixtures, app adoption planning, live evidence scaffolds, public governance, and
 strict release hygiene.
+
+The 0.3.x patch line keeps that foundation stable while tightening real
+operator workflows. Current patches include first-class static-site publishing
+from relative `static_root` directories into immutable runtime static releases.
 
 This roadmap replaces the older long-form implementation plans now stored in
 [Archive](archive/README.md). Use the archive for historical context only.
@@ -17,7 +21,7 @@ reference doc for the feature being changed.
 | Area | Status |
 | --- | --- |
 | Manifest and schema contract | Landed for service, multi-service, static, tunnel, redirect, routes, checks, dependencies, backups, and metadata. |
-| Runtime rendering | Landed for Compose, Caddy snippets, env fragments, lock files, releases, and rollback support. |
+| Runtime rendering | Landed for Compose, Caddy snippets, env fragments, lock files, static asset releases, releases, and rollback support. |
 | Safety model | Landed with dry-run plans, confirmation tokens, redacted receipts, command-string scrubbing, and policy checks. |
 | Operation contracts | Landed with command catalog, action registry, plan envelopes, operation IDs, receipts, state indexing, and local API surfaces. |
 | App factory and adoption | Landed with per-template scaffolds, overwrite guards, manifest bootstrap, adoption fixtures, and redacted metadata. |

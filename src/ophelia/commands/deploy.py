@@ -124,6 +124,14 @@ def run(args: Namespace) -> int:
             print("Generated files:")
             for path in plan["generated_files"]:
                 print(f"  - {path}")
+            static_assets = plan.get("static_assets") or {}
+            if static_assets.get("mode") and static_assets.get("mode") != "none":
+                print("Static assets:")
+                print(f"  mode: {static_assets.get('mode')}")
+                print(f"  source: {static_assets.get('source')}")
+                print(f"  serving root: {static_assets.get('serving_root')}")
+                if static_assets.get("managed"):
+                    print(f"  change: {static_assets.get('change')}")
             print("Changed files:")
             for item in plan["changed_files"]:
                 print(f"  - {item['path']} ({item['change']})")

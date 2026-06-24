@@ -19,7 +19,9 @@ Each app repo should eventually include an `.ophelia.yml` file.
   must not be rendered as inline Compose environment overrides
 - `env_files`: manifest-relative env fragments copied into the runtime bundle
 - `edge`: optional public-edge features that need Caddy support beyond explicit host routes
-- `static_root`: filesystem root for static apps
+- `static_root`: static asset root for static apps. Relative paths are synced
+  from the app repo into the Ophelia runtime during deploy. Absolute paths are
+  treated as externally managed serving roots for backward compatibility.
 - `tunnel_target`: default upstream for tunnel apps
 - `redirect_to`: destination for redirect apps
 - `redirect_status`: redirect status for redirect apps
@@ -373,7 +375,7 @@ Portable pack and readiness commands are read-only by default:
 `--write` is passed, and refuses to overwrite existing files without `--force`.
 With `--include-manifest`, it also previews or writes `.ophelia.yml`; service
 manifests require `--domain` and `--image`, and static manifests require
-`--domain`.
+`--domain` and write a repo-local static root (`public/` by default).
 `ship app export create` is confirmation-gated. By default it writes metadata,
 redacted runtime files, local static/volume archives for declared local sources,
 read-only Docker named-volume archives when a local helper image is available,
@@ -669,11 +671,22 @@ version: 1
 app: portfolio
 environment: production
 kind: static
-static_root: /opt/ophelia-runtime/static/portfolio
+static_root: public
 
 routes:
   - domain: portfolio.example.net
 ```
+
+For relative `static_root` values, Ophelia treats the path as app-owned build
+output. `ship deploy --plan` reports the source digest and whether assets need
+syncing. `ship deploy --apply` copies the directory into
+`<runtime-root>/static/<app>/releases/<release-id>` and updates
+`<runtime-root>/static/<app>/current` for Caddy. The generated Caddy snippet
+serves `{$OPHELIA_STATIC_ROOT}/<app>/current`, where the shared Caddy runtime
+sets `OPHELIA_STATIC_ROOT` to the configured static runtime root.
+
+Absolute `static_root` values still render as literal Caddy roots. Use that mode
+only when another process owns publishing that directory.
 
 ## Example: tunnel
 

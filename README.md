@@ -1,64 +1,77 @@
 <div align="center">
 
+<img src="docs/assets/persephone.svg" alt="Persephone illustration" width="150" />
+
 # Ophelia
 
-**A fixture-first deployment control plane for VPS apps, safe operations, and agent-readable workflows.**
+**A fixture-first deployment control plane for VPS apps, static sites, safe operations, and agent-readable workflows.**
 
 [![CI](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.3.10-2563EB)
+![Version](https://img.shields.io/badge/version-0.3.11-2563EB)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
 ![Distribution](https://img.shields.io/badge/distribution-GitHub%20only-111827)
+![Static](https://img.shields.io/badge/static%20sites-first--class-059669)
 ![Safety](https://img.shields.io/badge/safety-dry--run%20first-16A34A)
 ![Agents](https://img.shields.io/badge/agents-JSON%20contracts-7C3AED)
 ![DCO](https://img.shields.io/badge/contributions-DCO-2563EB)
 
-[Get Started](#quick-start) · [Upgrade To 0.3.0](#upgrade-to-030) · [Docs](docs/README.md) · [Roadmap](docs/ROADMAP.md) · [License](#license)
+[Quick Start](#quick-start) · [Static Sites](#deploy-a-static-site) · [Service Apps](#deploy-a-service-app) · [Docs](docs/README.md) · [Roadmap](docs/ROADMAP.md) · [License](#license)
 
 </div>
 
 Ophelia turns application manifests into validated runtime bundles, dry-run
 plans, confirmation-gated applies, redacted receipts, readiness reports, and
-schema-versioned JSON surfaces. It is designed for operators and agents that
-need to manage many VPS-hosted apps without hand-editing Compose files, Caddy
-snippets, release notes, and deployment state.
+schema-versioned JSON surfaces. It is built for operators and agents that need
+to manage VPS-hosted apps without hand-editing Compose files, Caddy snippets,
+release records, backup metadata, and deployment state.
 
-Application repositories declare their runtime contract in `.ophelia.yml`.
-Ophelia validates that contract, renders the runtime files, checks safety
-policy, records what happened, and exposes machine-readable command surfaces
-for automation, private operator UIs, and downstream agents.
+Each app declares its runtime contract in `.ophelia.yml`. Ophelia validates that
+contract, renders the runtime files, checks safety policy, records what
+happened, and exposes predictable command and JSON surfaces for automation.
 
-The current repository target is `https://github.com/mrbagels/ophelia`. The
-project is GitHub-only and remains private until the public launch decision is
-made.
+The current repository target is `https://github.com/mrbagels/ophelia`.
+Distribution is GitHub-only, and the repository can remain private until a
+public launch decision is made.
 
-## What Ophelia Gives You
+## What You Can Run
 
-| Area | What it does |
+| App type | Ophelia support |
 | --- | --- |
-| Manifest contract | Validates service, multi-service, static, tunnel, redirect, route, backup, dependency, and verification fields. |
-| Runtime rendering | Produces Docker Compose, Caddy snippets, env fragments, lock files, release metadata, and rollback bundles. |
-| Safety gates | Uses dry-run plans, confirmation tokens, redacted receipts, policy checks, and strict command-string redaction. |
-| Readiness | Scores app movement, host placement, backup freshness, restore drills, conflicts, secrets, image evidence, and live observations. |
-| Fixture-first testing | Ships synthetic apps and reviewed evidence fixtures so behavior can be tested without private products or live secrets. |
-| Agent contracts | Provides command catalogs, JSON schemas, operation envelopes, receipts, state queries, and LLM entrypoint docs. |
-| Release hygiene | Includes Apache-2.0 licensing, DCO contribution rules, CI, docs checks, and a zero-warning open-source audit. |
+| Static sites | First-class `kind: static` manifests, repo-local build roots, immutable static releases, Caddy serving, and no Docker image requirement. |
+| Single services | One container behind the shared Caddy edge with release metadata and health checks. |
+| Multi-service apps | Multiple Compose services with shared or per-app internal networks. |
+| Stateful apps | Postgres, Redis, named volumes, host-path volumes, export contracts, restore rehearsals, and backup readiness. |
+| Redirects and tunnels | Caddy-rendered redirect and tunnel routes for migration or edge compatibility. |
+| Non-live apps | Explicit lifecycle fields, fresh-install planning, safe volume reset gates, and data verifier execution. |
+
+## Why Ophelia Exists
+
+| Area | What it gives you |
+| --- | --- |
+| Manifest contract | One app-owned declaration for services, routes, lifecycle, data, backups, readiness, and verification. |
+| Runtime rendering | Deterministic Docker Compose, Caddy snippets, env templates, lock files, release metadata, and rollback bundles. |
+| Safety gates | Dry-run plans, production confirmation tokens, redacted receipts, policy checks, and command-string secret scrubbing. |
+| Static publishing | Apply publishes relative `static_root` directories into `<runtime-root>/static/<app>/releases/<release-id>` and serves through `current`. |
+| Readiness | App movement scoring, host placement checks, restore drill evidence, conflict warnings, secret metadata, and live observations. |
+| Agent contracts | Command catalog, action registry, JSON schemas, operation envelopes, receipts, state queries, and LLM entrypoint docs. |
+| Fixture-first QA | Synthetic apps, reviewed evidence fixtures, and live-readiness harnesses that test behavior without private products or real secrets. |
 
 ## Project Status
 
 | Item | Status |
 | --- | --- |
-| Current version | `0.3.10` |
-| Stability | Pre-1.0, core contracts are active but still evolving deliberately. |
+| Current version | `0.3.11` |
+| Stability | Pre-1.0. Core contracts are active, but JSON and CLI surfaces may still evolve deliberately. |
 | Distribution | GitHub only. No PyPI release path is configured. |
-| Visibility | Private until the public release decision is made. |
 | Runtime state | Kept outside the source checkout, usually under `~/ophelia-runtime` or a configured runtime root. |
 | Public data model | Synthetic examples, fixture apps, `example.com` domains, redacted reports, and schema examples only. |
+| License | Apache License 2.0 with DCO sign-off for contributions. |
 
 Real host registries, production env files, provider credentials, reviewed live
-evidence, and product-specific migration notes belong outside this repository
-unless they have been deliberately sanitized into reusable fixtures.
+evidence, and product-specific migration notes should stay outside this
+repository unless they have been deliberately sanitized into reusable fixtures.
 
 ## Quick Start
 
@@ -75,29 +88,14 @@ python3 -m venv .venv
 ./cli/ship schema manifest --json
 ./cli/ship validate examples/service-app.ophelia.yml
 ./cli/ship render examples/service-app.ophelia.yml --output-dir ./build/demo-service
-make validate-fixtures
 ```
 
-After editable install, the console script is available too:
+After editable install, the console scripts are available too:
 
 ```bash
 ship self-test
+ophelia self-test
 ship validate examples/service-app.ophelia.yml
-```
-
-## Upgrade To 0.3.0
-
-Use [Ophelia 0.3.0 Upgrade Prompt](docs/llm/UPGRADE_TO_0_3_0_PROMPT.md) when
-handing the upgrade to an agent or another engineer. The short manual path is:
-
-```bash
-git fetch origin
-git checkout next
-git pull --ff-only
-python3 -m venv .venv
-.venv/bin/python -m ensurepip --upgrade
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -e ".[test]"
 ```
 
 Confirm installed metadata:
@@ -114,35 +112,241 @@ PY
 Expected output:
 
 ```text
-0.3.10
+0.3.11
 Repository, https://github.com/mrbagels/ophelia
 Issues, https://github.com/mrbagels/ophelia/issues
 ```
 
-Then run the release gate:
+## Deploy A Static Site
+
+Static sites are the simplest first-class deploy path. They do not need Docker
+images. Ophelia stages a repo-local asset directory and publishes it into the
+runtime static release tree.
+
+Create a static app scaffold:
 
 ```bash
-make validate-examples
-make validate-manifests
-make validate-fixtures
-make validate-adoption-fixtures
-make validate-fixture-plugins
-make render-examples
-make render-manifests
-make test
-make compile
-make docs-check
-make open-source-audit-strict
+./cli/ship pack init \
+  --app demo-static \
+  --environment staging \
+  --directory ../demo-static \
+  --include-manifest \
+  --kind static \
+  --domain demo-static.example.com \
+  --write
 ```
 
-## Try The Fixture Suite
+Build or copy your static output into `../demo-static/public/`, then validate
+and plan:
 
-The fixture suite is the fastest way to understand Ophelia without touching a
+```bash
+./cli/ship validate ../demo-static/.ophelia.yml
+./cli/ship deploy ../demo-static/.ophelia.yml --plan --runtime-root ~/ophelia-runtime
+```
+
+Apply locally on the host:
+
+```bash
+./cli/ship deploy ../demo-static/.ophelia.yml \
+  --apply \
+  --runtime-root ~/ophelia-runtime
+```
+
+Or stage and apply over SSH:
+
+```bash
+./cli/ship deploy ../demo-static/.ophelia.yml \
+  --host deploy@example-host \
+  --ssh-port 22022 \
+  --remote-runtime-root ~/ophelia-runtime \
+  --remote-ophelia-root ~/ophelia \
+  --apply
+```
+
+Minimal static manifest:
+
+```yaml
+version: 1
+app: demo-static
+environment: staging
+kind: static
+static_root: public
+
+routes:
+  - domain: demo-static.example.com
+
+verify:
+  - name: homepage
+    url: https://demo-static.example.com/
+    expect_status: 200
+```
+
+How the static path works:
+
+| Step | Behavior |
+| --- | --- |
+| Plan | Reports source path, source digest, serving root, and whether assets need syncing. |
+| Stage | Copies the relative `static_root` into the manifest lock bundle for local render, remote deploy, and rollback evidence. |
+| Apply | Copies assets into `<runtime-root>/static/<app>/releases/<release-id>` and updates `<runtime-root>/static/<app>/current`. |
+| Serve | Caddy serves `{$OPHELIA_STATIC_ROOT}/<app>/current`. The shared Caddy runtime sets `OPHELIA_STATIC_ROOT`. |
+| Compatibility | Absolute `static_root` values are still supported as externally managed Caddy roots. |
+
+## Deploy A Service App
+
+Create a service scaffold:
+
+```bash
+./cli/ship app create plan \
+  --app demo-service \
+  --template docker-web \
+  --environment staging \
+  --owner personal \
+  --json
+```
+
+Scaffold app-pack support directly into an existing repository:
+
+```bash
+./cli/ship pack init \
+  --app demo-service \
+  --environment staging \
+  --directory ../demo-service \
+  --include-manifest \
+  --kind service \
+  --domain demo-service.example.com \
+  --image ghcr.io/example/demo-service:latest \
+  --write
+```
+
+Minimal service manifest:
+
+```yaml
+version: 1
+app: demo-service
+environment: staging
+kind: service
+image: ghcr.io/example/demo-service:latest
+
+services:
+  web:
+    port: 8080
+    healthcheck:
+      path: /health
+
+routes:
+  - domain: demo-service.example.com
+    service: web
+
+verify:
+  - name: ophelia-health
+    service: app
+    path: /ophelia/health
+    method: GET
+    expect_status: 200
+    json_assertions:
+      - $.kind == "product.runtime.health"
+      - $.ok == true
+```
+
+Deploy flow:
+
+```bash
+./cli/ship validate ../demo-service/.ophelia.yml
+./cli/ship explain ../demo-service/.ophelia.yml --json
+./cli/ship deploy ../demo-service/.ophelia.yml --plan --json
+./cli/ship deploy ../demo-service/.ophelia.yml --apply --verify
+```
+
+Production apply requires the confirmation token from the matching plan:
+
+```bash
+./cli/ship deploy ../demo-service/.ophelia.yml --plan --json
+./cli/ship deploy ../demo-service/.ophelia.yml --apply --confirm <token> --verify
+```
+
+## Standard Workflow
+
+| Workflow | Commands |
+| --- | --- |
+| Validate a manifest | `ship validate <manifest>` and `ship explain <manifest> --json` |
+| Preview runtime changes | `ship deploy <manifest> --plan` and `ship diff <manifest>` |
+| Apply a release | `ship deploy <manifest> --apply --verify` |
+| Inspect runtime | `ship status`, `ship doctor`, `ship releases <app>`, `ship release show <app> active` |
+| Verify after apply | `ship verify <manifest>` or `ship verify <app>` |
+| Roll back | `ship rollback plan <app> <release-id>` then `ship rollback apply <app> <release-id> --confirm <token>` |
+| Back up and rehearse | `ship backup plan <app>`, `ship backup create <app> --confirm <token>`, `ship backup rehearse <artifact> --manifest <manifest>` |
+| Adopt an existing repo | `ship app adoption plan <app> --repo-path <repo> --environment <env> --json` |
+| Check readiness | `ship app readiness <app> --manifest <manifest> --json` and `ship live-readiness run --json` |
+| Discover contracts | `ship commands catalog --json`, `ship actions --json`, `ship schema manifest --json` |
+
+## Runtime Layout
+
+Ophelia writes runtime state outside the source checkout:
+
+```text
+<runtime-root>/
+  apps/<app>/
+    compose.yml
+    env
+    env.example
+    manifest.lock.json
+    release.json
+    active_release.json
+    releases/<release-id>.json
+    release-bundles/<release-id>/
+  caddy/
+    env
+    global.d/
+    sites.d/
+  receipts/
+  state/
+  static/<app>/
+    current -> releases/<release-id>
+    releases/<release-id>/
+```
+
+Source checkouts keep manifests and app-owned support files. Runtime roots keep
+generated state, env files, receipts, backups, release bundles, and static
+release artifacts.
+
+## Manifest Essentials
+
+| Section | Purpose |
+| --- | --- |
+| `kind` | Chooses service, multi-service, static, tunnel, or redirect behavior. |
+| `services` | Defines container ports, images, commands, env, mounts, and health checks. |
+| `routes` | Defines Caddy host routing and service targets. |
+| `static_root` | Defines static-site source or serving root. Relative paths are managed by Ophelia. |
+| `required_env` | Names env keys that must exist in runtime env files without rendering inline secret values. |
+| `data` | Defines databases, volumes, object storage, backups, restore rehearsals, and data verifiers. |
+| `lifecycle` | Declares live status, reset permissions, and production apply policy. |
+| `verify` | Defines public URL checks, internal service checks, command checks, and JSON assertions. |
+| `pack` | Adds portability, ownership, and movement metadata for adoption and inventory. |
+
+Full reference: [Manifest Spec](docs/manifest-spec.md).
+
+## Safety Model
+
+Ophelia's default posture is conservative:
+
+- Read-only inspection comes before mutation.
+- Deploys and high-risk operations produce dry-run plans.
+- Production apply, rollback, restore, traffic movement, backup creation, and
+  mutating workflow nodes require confirmation tokens.
+- Receipts, reports, command strings, state payloads, and JSON output are
+  redacted before storage or display.
+- Apps reference env var names and provider identifiers, not secret values.
+- Public examples use synthetic fixtures and `example.com` domains.
+
+## Fixture Suite
+
+The fixture suite is the fastest way to understand behavior without touching a
 real host:
 
 ```bash
 make validate-fixtures
 make validate-adoption-fixtures
+make validate-fixture-plugins
 make live-readiness-fixtures
 make live-drills-fixtures
 make live-hydration-reviewed-fixture
@@ -161,185 +365,52 @@ Useful JSON smoke command:
   --json
 ```
 
-Some fixtures are intentionally incomplete or blocked. That is how the readiness
-gate is tested.
+Some fixtures are intentionally incomplete or blocked. That is how readiness
+and remediation behavior are tested.
 
-## Create Or Adopt An App
+## Agent And LLM Surfaces
 
-Preview app-pack scaffolding:
-
-```bash
-./cli/ship pack init \
-  --app demo-service \
-  --environment staging \
-  --directory ../demo-service \
-  --include-manifest \
-  --kind service \
-  --domain demo-service.example.com \
-  --image ghcr.io/example/demo-service:latest \
-  --json
-```
-
-Plan adoption for an existing app repository without mutating it:
-
-```bash
-./cli/ship app adoption plan demo-service \
-  --repo-path ../demo-service \
-  --environment staging \
-  --json
-```
-
-Validate, explain, and plan deployment from a manifest:
-
-```bash
-./cli/ship validate examples/service-app.ophelia.yml
-./cli/ship explain examples/service-app.ophelia.yml --json
-./cli/ship deploy examples/service-app.ophelia.yml --plan --json
-```
-
-Production apply requires the confirmation token from the matching plan:
-
-```bash
-./cli/ship deploy examples/service-app.ophelia.yml \
-  --apply \
-  --confirm <token>
-```
-
-## Manifest Shape
-
-Minimal service manifest:
-
-```yaml
-version: 1
-app: demo-service
-environment: staging
-kind: service
-image: ghcr.io/example/demo-service:latest
-services:
-  web:
-    port: 8080
-routes:
-  - domain: demo-service.example.com
-    service: web
-data:
-  backups:
-    required: true
-    restore_drill_required: true
-    offsite_required: true
-    offsite:
-      provider: restic
-      target: s3://ophelia-fixture-backups/demo-service
-      retention_days: 30
-      encryption_required: true
-      restore_rehearsal_cadence_days: 30
-      last_rehearsal_ref: restore-drills/latest.json
-lifecycle:
-  live: false
-  data_can_be_reset: true
-  production_apply_allowed: false
-verify:
-  - name: ophelia-health
-    service: app
-    path: /ophelia/health
-    method: GET
-    expect_status: 200
-    json_assertions:
-      - $.kind == "product.runtime.health"
-      - $.ok == true
-  - name: ophelia-release
-    service: app
-    path: /ophelia/release
-    method: GET
-    expect_status: 200
-    json_assertions:
-      - $.kind == "product.runtime.release"
-```
-
-Full field reference: [Manifest Spec](docs/manifest-spec.md).
-
-## Safety Model
-
-Ophelia's default posture is conservative:
-
-- Prefer read-only commands for inspection, readiness, hardening, and provider
-  discovery.
-- Produce dry-run plans before material mutations.
-- Require confirmation tokens for production deploys, rollback, restore,
-  traffic movement, export creation, and workflow mutating nodes.
-- Redact receipts, reports, command strings, and stored state before output.
-- Reference env var names and provider identifiers, not secret values.
-- Keep public examples synthetic and use `example.com` domains.
-
-## Command Map
-
-| Command group | Purpose |
-| --- | --- |
-| `validate`, `explain`, `schema` | Manifest validation and contract discovery. |
-| `render`, `deploy`, `diff`, `rollback` | Runtime bundle planning and controlled apply flows. |
-| `pack`, `app adoption`, `app readiness`, `app fresh-install` | App portability, manifest bootstrap, migration readiness, non-live reset workflows, and adoption checks. |
-| `backup`, `restore`, `backup rehearse`, `restore-drills` | Backup planning, artifact rehearsal, restore previews, and drill receipts. |
-| `host`, `live-readiness`, `live-drills`, `live-hydration` | Host readiness, app readiness, evidence scaffolds, and reviewed live observations. |
-| `workflow`, `operations`, `receipts`, `state` | Agent-executable operation graphs, receipts, and local state indexing. |
-| `providers`, `secrets`, `policy`, `hardening` | Provider readiness, secret references, safety policy, and production go/no-go checks. |
-| `plugins`, operator-console API, `api` | Plugin metadata, read-only operator-console payloads, and local API integration. |
-| `open-source` | Public-release hygiene scanning. |
-
-Machine-readable discovery:
+Ophelia is designed to be operated by humans and downstream agents:
 
 ```bash
 ./cli/ship commands catalog --json
-./cli/ship schema manifest --json
 ./cli/ship actions --json
-./cli/ship open-source audit --json
+./cli/ship schema manifest --json
+./cli/ship workflow list --json
+./cli/ship receipts list --json
+./cli/ship state query receipts --json
 ```
 
-## Repository Layout
-
-```text
-ophelia/
-  cli/                    # Local entrypoints for ship and ophelia
-  config/                 # Public example configs and policy defaults
-  docs/                   # Architecture, operations, roadmap, changelog, LLM docs
-  examples/               # Public manifest examples
-  fixtures/               # Synthetic apps, runtime state, providers, plugins
-  manifests/              # Public demo platform-owned manifests
-  platform/               # Shared host scripts, Caddy, Compose, static fixtures
-  src/ophelia/            # Python control plane
-  templates/              # Render templates for Compose and Caddy
-  tests/                  # Unit and contract tests
-```
-
-Runtime state belongs outside the source checkout. Env files, backups, provider
-evidence, pulled images, generated bundles, and production registries should not
-be committed.
-
-## Documentation
-
-Start with [Documentation](docs/README.md). Key references:
-
-- [Platform Handbook](docs/platform-handbook.md)
-- [Architecture](docs/architecture.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Manifest Spec](docs/manifest-spec.md)
-- [Preflight And Safety](docs/preflight-and-safety.md)
-- [Operator Runbook](docs/operator-runbook.md)
-- [Fixture App Suite](docs/fixture-app-suite.md)
-- [Live Readiness Lane](docs/live-readiness-lane.md)
-- [Live Hydration](docs/live-hydration.md)
-- [Production Hardening](docs/production-hardening.md)
-- [Operator Console Adapter](docs/operator-console-adapter.md)
-- [Open Source Readiness](docs/open-source-readiness.md)
-- [Change Records](docs/changelog/README.md)
-
-Agent and LLM entrypoints:
+Agent entrypoints:
 
 - [LLM Start Here](docs/llm/START_HERE.md)
 - [LLM Manifest](docs/llm/manifest.json)
 - [0.3.0 Upgrade Prompt](docs/llm/UPGRADE_TO_0_3_0_PROMPT.md)
 
-## Development Gate
+## Documentation Map
 
-Run the full gate before merging release, contract, or docs-navigation changes:
+Start with [Documentation](docs/README.md). Common destinations:
+
+| Need | Doc |
+| --- | --- |
+| Platform model | [Platform Handbook](docs/platform-handbook.md) |
+| Architecture | [Architecture](docs/architecture.md) |
+| Manifest fields | [Manifest Spec](docs/manifest-spec.md) |
+| Portable app packs | [Portable App Pack Spec](docs/portable-app-pack-spec.md) |
+| Operator flow | [Operator Runbook](docs/operator-runbook.md) |
+| Release history | [Releases And Rollback](docs/releases-and-rollback.md) |
+| Safety gates | [Preflight And Safety](docs/preflight-and-safety.md) |
+| Existing app adoption | [App Adoption](docs/app-adoption.md) |
+| Fixture apps | [Fixture App Suite](docs/fixture-app-suite.md) |
+| Live readiness | [Live Readiness Lane](docs/live-readiness-lane.md) |
+| Production hardening | [Production Hardening](docs/production-hardening.md) |
+| Public-release hygiene | [Open Source Readiness](docs/open-source-readiness.md) |
+| Change records | [Change Records](docs/changelog/README.md) |
+
+## Release Gate
+
+Run the full gate before merging release, contract, runtime, or docs-navigation
+changes:
 
 ```bash
 make validate-examples

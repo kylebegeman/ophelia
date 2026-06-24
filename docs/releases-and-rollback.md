@@ -8,6 +8,13 @@ Every `ship deploy` writes:
 - `apps/<app>/release-bundles/<release-id>/` with generated Caddy, Compose,
   env template, manifest lock, env fragments, and bundled artifacts
 
+Managed static-site apply also writes:
+
+- `static/<app>/releases/<release-id>/` when a managed static-site release is
+  applied from a manifest with a relative `static_root`
+- `static/<app>/current` as the active static-site symlink after managed static
+  apply succeeds
+
 Release records include manifest hash, rendered bundle hash, git SHA when
 available, image references, image digests when present in the image reference,
 runtime path, environment, source, deployed actor, apply result, verification
@@ -43,8 +50,9 @@ Commands:
 
 Rollback is file-level today. It restores allowlisted generated files from the
 target release bundle, updates the active release pointer, and refreshes shared
-Caddy snippets. It never deletes env files, volumes, backups, or static assets.
-Each apply writes a rollback report under `apps/<app>/rollback-reports/`.
+Caddy snippets. It never deletes env files, volumes, backups, or historical
+static asset releases. Each apply writes a rollback report under
+`apps/<app>/rollback-reports/`.
 
 Support files under `env.d/` and `artifacts/` are now active-release aware.
 Staged deploys preserve files required by the active release. Once a new release

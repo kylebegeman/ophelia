@@ -10,7 +10,7 @@ from .manifest import Manifest
 from .operation_schema import attach_digest, diff_artifact, operation_id
 from .policy import policy_check_entry
 from .redaction import redact_url, redacted_compose_text
-from .runtime import active_release, bundle_hash, image_digests, image_references, render_bundle
+from .runtime import active_release, bundle_hash, image_digests, image_references, render_bundle, static_asset_plan
 from .verify import verification_checks
 
 
@@ -22,6 +22,7 @@ def deploy_plan(
 ) -> Dict[str, object]:
     bundle = _render_bundle_for_runtime(manifest, runtime_root)
     diff = bundle_diff(manifest, runtime_root)
+    static_assets = static_asset_plan(manifest, manifest_path, runtime_root)
     env_requirements = _env_requirements(bundle.get(Path("env.example"), ""))
     checks = verification_checks(manifest)
     verify_policy = manifest.verify_policy
@@ -37,7 +38,7 @@ def deploy_plan(
         }
         for route in manifest.routes
     ]
-    risk_notes = _risk_notes(manifest, env_requirements, diff)
+    risk_notes = _risk_notes(manifest, env_requirements, diff, static_assets)
 
     plan = {
         "app": manifest.app,
@@ -57,6 +58,7 @@ def deploy_plan(
             "redis": manifest.addons.redis,
         },
         "generated_files": [str(path) for path in sorted(bundle)],
+        "static_assets": static_assets,
         "changed_files": diff["changed_files"],
         "removed_files": diff["removed_files"],
         "caddy_changes": diff["caddy_changes"],
@@ -77,9 +79,9 @@ def deploy_plan(
             "failure_mode": verify_policy.failure_mode,
         },
         "risk_notes": risk_notes,
-        "changes": _deploy_changes(diff),
+        "changes": _deploy_changes(diff, static_assets),
         "artifacts": [],
-        "summary": _summary(manifest, images, diff, env_requirements, checks),
+        "summary": _summary(manifest, images, diff, env_requirements, checks, static_assets),
     }
     plan["confirmation_required"] = plan["environment"] == "production"
     plan["confirmation_token"] = deploy_confirmation_token(plan) if plan["confirmation_required"] else None
@@ -128,7 +130,7 @@ def _classify_target(path: str) -> str:
     return "other"
 
 
-def _deploy_changes(diff: Dict[str, object]) -> List[Dict[str, object]]:
+def _deploy_changes(diff: Dict[str, object], static_assets: Dict[str, object]) -> List[Dict[str, object]]:
     """Structured, redaction-safe before/after summaries from ``bundle_diff``.
 
     Only paths and change types are surfaced, never file content, so the list is
@@ -144,7 +146,25 @@ def _deploy_changes(diff: Dict[str, object]) -> List[Dict[str, object]]:
                 "target": _classify_target(path),
             }
         )
+    if static_assets_change := _static_asset_change(diff.get("app"), static_assets):
+        changes.append(static_assets_change)
     return changes
+
+
+def _static_asset_change(app: object, static_assets: Dict[str, object]) -> Dict[str, object] | None:
+    if not static_assets.get("managed"):
+        return None
+    change = str(static_assets.get("change") or "")
+    if change == "none":
+        return None
+    return {
+        "path": f"static/{app}/current",
+        "change": change,
+        "target": "static-assets",
+        "source": static_assets.get("source"),
+        "source_exists": static_assets.get("source_exists"),
+        "source_digest": static_assets.get("source_digest"),
+    }
 
 
 def _write_compose_diff_artifact(
@@ -264,6 +284,7 @@ def deploy_confirmation_token(plan: Dict[str, object]) -> str:
         "rendered_bundle_hash": plan.get("rendered_bundle_hash"),
         "changed_files": plan.get("changed_files"),
         "removed_files": plan.get("removed_files"),
+        "static_assets": plan.get("static_assets"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:20]
@@ -305,6 +326,7 @@ def _risk_notes(
     manifest: Manifest,
     env_requirements: List[Dict[str, object]],
     diff: Dict[str, object],
+    static_assets: Dict[str, object],
 ) -> List[str]:
     notes: List[str] = []
     if any(item["required_for_apply"] for item in env_requirements):
@@ -315,6 +337,10 @@ def _risk_notes(
         notes.append("Deploy may depend on shared Redis availability.")
     if diff["removed_files"]:
         notes.append("Desired bundle omits previously generated files; apply will not delete runtime secrets.")
+    if static_assets.get("managed") and not static_assets.get("source_exists"):
+        notes.append("Static asset source is missing; apply will fail until the source directory exists.")
+    if static_assets.get("managed") and static_assets.get("source_exists") and not static_assets.get("source_is_dir"):
+        notes.append("Static asset source is not a directory; apply requires a directory root.")
     if not verification_checks(manifest):
         notes.append("No verification checks are configured or inferred.")
     return notes
@@ -326,14 +352,18 @@ def _summary(
     diff: Dict[str, object],
     env_requirements: List[Dict[str, object]],
     checks: object,
+    static_assets: Dict[str, object],
 ) -> str:
     secret_count = sum(1 for item in env_requirements if item["required_for_apply"])
     environment = getattr(manifest, "environment", None)
+    static_detail = ""
+    if static_assets.get("managed"):
+        static_detail = f", static assets {static_assets.get('change')}"
     return (
         f"This deploy updates {manifest.app}"
         f"{' ' + environment if environment else ''} "
         f"with {len(images)} image reference(s), {len(diff['caddy_changes'])} Caddy change(s), "
-        f"{secret_count} placeholder env key(s), and {len(checks)} verification check(s)."
+        f"{secret_count} placeholder env key(s), {len(checks)} verification check(s){static_detail}."
     )
 
 

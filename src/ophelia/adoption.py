@@ -309,6 +309,7 @@ def _app_owned_contract(repo_root: Path, manifest: Manifest) -> Dict[str, Any]:
         script: any(script in command for command in command_texts)
         for script in STANDARD_PACKAGE_SCRIPTS
     }
+    data_verifier_declared = _data_verifier_declared(manifest, command_texts)
     endpoint_presence = {
         path: path in internal_paths
         for path in STANDARD_APP_ENDPOINTS
@@ -320,7 +321,7 @@ def _app_owned_contract(repo_root: Path, manifest: Manifest) -> Dict[str, Any]:
     runtime_checks = {
         "health": endpoint_presence["/ophelia/health"] or manifest_commands["ophelia:health"],
         "release": endpoint_presence["/ophelia/release"] or manifest_commands["ophelia:release"],
-        "data_verify": manifest_commands["ophelia:data:verify"],
+        "data_verify": manifest_commands["ophelia:data:verify"] or data_verifier_declared,
     }
     missing: List[str] = []
     for name, present in runtime_checks.items():
@@ -333,10 +334,29 @@ def _app_owned_contract(repo_root: Path, manifest: Manifest) -> Dict[str, Any]:
         "standard_endpoints": endpoint_presence,
         "standard_scripts": script_presence,
         "manifest_commands": manifest_commands,
+        "manifest_data_verifier": data_verifier_declared,
         "runtime_checks": runtime_checks,
         "package_json_present": (repo_root / "package.json").exists(),
         "missing": missing,
     }
+
+
+def _data_verifier_declared(manifest: Manifest, command_texts: List[str]) -> bool:
+    data = getattr(manifest, "data", None)
+    postgres = getattr(data, "postgres", None) if data is not None else None
+    postgres_verify = getattr(postgres, "verify", None) if postgres is not None else None
+    if postgres_verify is not None and getattr(postgres_verify, "command", None):
+        return True
+
+    for command in command_texts:
+        tokens = shlex.split(command)
+        if "ophelia:data:verify" in tokens:
+            return True
+        if "data-verify" in tokens or "data:verify" in tokens:
+            return True
+        if any(token.endswith("data-verify.sh") for token in tokens):
+            return True
+    return False
 
 
 def _package_scripts(repo_root: Path) -> Dict[str, str]:

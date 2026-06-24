@@ -17,7 +17,7 @@ reference docs below.
 | --- | --- |
 | [Platform Handbook](platform-handbook.md) | Public operating model, runtime boundaries, and fixture-first workflow. |
 | [Architecture](architecture.md) | Ownership boundaries, runtime shape, deployment model, and API surfaces. |
-| [Roadmap](ROADMAP.md) | Current 0.3.0 status, next tasks, and deferred decisions. |
+| [Roadmap](ROADMAP.md) | Current 0.3.x status, next tasks, and deferred decisions. |
 | [LLM Start Here](llm/START_HERE.md) | Agent routing, safe command discovery, and data boundaries. |
 | [0.3.0 Upgrade Prompt](llm/UPGRADE_TO_0_3_0_PROMPT.md) | Copyable prompt for upgrading existing Ophelia checkouts and app repositories. |
 
@@ -37,7 +37,7 @@ reference docs below.
 | --- | --- |
 | [Manifest Spec](manifest-spec.md) | `.ophelia.yml` fields, validation rules, and examples. |
 | [App Adoption Planning](app-adoption.md) | Planning existing app migrations into the Ophelia contract. |
-| [Portable App Pack Spec](portable-app-pack-spec.md) | App-pack scaffolding, scripts, redaction, and manifest bootstrap behavior. |
+| [Portable App Pack Spec](portable-app-pack-spec.md) | App-pack scaffolding, scripts, static-site bootstrap, redaction, and manifest behavior. |
 | [Stateful App Migration Runbook](stateful-app-migration-runbook.md) | Backup, restore, and cutover workflow for stateful apps. |
 | [Host Contract](host-contract.md) | VPS host expectations, runtime roots, networking, and generated files. |
 | [Host Inventory And Placement](host-inventory-and-placement.md) | Host inventory schema and placement planning behavior. |

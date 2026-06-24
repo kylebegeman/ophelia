@@ -26,7 +26,14 @@ DEFAULT_BACKOFF = 1.2
 MAX_INTERVAL = 30.0
 APP_OWNED_PATHS = frozenset({"/ophelia/health", "/ophelia/release"})
 APP_OWNED_COMMAND_MARKERS = frozenset(
-    {"ophelia:health", "ophelia:data:verify", "ophelia:release"}
+    {
+        "ophelia:health",
+        "ophelia:data:verify",
+        "ophelia:release",
+        "ophelia-cli",
+        "data-verify",
+        "data:verify",
+    }
 )
 
 

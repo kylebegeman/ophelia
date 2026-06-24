@@ -22,6 +22,8 @@ from .templates import (
     render_caddy,
     render_compose,
     render_env_example,
+    static_caddy_root,
+    static_runtime_app_name,
 )
 
 
@@ -73,6 +75,7 @@ def write_bundle(bundle: Dict[Path, str], output_dir: Path) -> None:
 def materialize_bundle(manifest: Manifest, manifest_path: Path, output_dir: Path) -> None:
     write_bundle(render_bundle(manifest), output_dir)
     sync_bundle_support_files(manifest, manifest_path, output_dir)
+    sync_bundle_static_source(manifest, manifest_path, output_dir)
 
 
 def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_dir: Path) -> None:
@@ -91,6 +94,36 @@ def sync_bundle_support_files(manifest: Manifest, manifest_path: Path, output_di
 
 def bundle_support_paths(manifest: Manifest, *, required_only: bool = False) -> set[Path]:
     return {target for _, target, required in _bundle_support_file_map(manifest) if required or not required_only}
+
+
+def sync_bundle_static_source(manifest: Manifest, manifest_path: Path, output_dir: Path) -> None:
+    relative_path = static_source_bundle_path(manifest)
+    if relative_path is None:
+        return
+
+    manifest_dir = manifest_path.parent.resolve(strict=False)
+    source = (manifest_dir / relative_path).resolve(strict=False)
+    if not source.exists():
+        raise FileNotFoundError(f"Static asset source not found: {source}")
+    if not source.is_dir():
+        raise NotADirectoryError(f"Static asset source must be a directory: {source}")
+    _copy_static_source_tree(source, output_dir / relative_path, allowed_root=manifest_dir)
+
+
+def copy_staged_static_source(manifest: Manifest, source_root: Path, output_dir: Path) -> None:
+    relative_path = static_source_bundle_path(manifest)
+    if relative_path is None:
+        return
+    _copy_static_source_tree(source_root / relative_path, output_dir / relative_path, allowed_root=source_root)
+
+
+def static_source_bundle_path(manifest: Manifest) -> Path | None:
+    if manifest.kind != "static" or not manifest.static_root:
+        return None
+    path = Path(manifest.static_root)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    return path
 
 
 def _bundle_support_file_map(manifest: Manifest) -> List[tuple[str, Path, bool]]:
@@ -210,7 +243,11 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     remove_stale_generated_files(app_root, bundle)
     if manifest_path.suffix != ".json":
         sync_bundle_support_files(manifest, manifest_path, app_root)
+        sync_bundle_static_source(manifest, manifest_path, app_root)
+    else:
+        copy_staged_static_source(manifest, manifest_path.parent, app_root)
     copy_staged_support_files(app_root, support_paths, app_root, required_paths=required_support_paths)
+    copy_staged_static_source(manifest, app_root, app_root)
     remove_stale_support_files(
         app_root,
         preserve_paths=support_paths | active_support_paths(runtime_root, manifest.app),
@@ -220,6 +257,8 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     env_example_path = app_root / "env.example"
     if not env_path.exists():
         env_path.write_text(env_example_path.read_text())
+
+    static_assets = static_asset_plan(manifest, manifest_path, runtime_root)
 
     release = {
         "app": manifest.app,
@@ -236,6 +275,7 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
         "images": image_references(manifest),
         "image_digests": image_digests(manifest),
         "runtime_env": release_metadata,
+        "static_assets": static_assets,
         "generated_files": [str(path) for path in sorted(bundle)],
         "bundle_path": str((app_root / "release-bundles" / release_id).resolve()),
         "runtime_path": str(app_root.resolve()),
@@ -252,11 +292,125 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     release_bundle_root = app_root / "release-bundles" / release_id
     write_bundle(bundle, release_bundle_root)
     copy_staged_support_files(app_root, support_paths, release_bundle_root, required_paths=required_support_paths)
+    copy_staged_static_source(manifest, app_root, release_bundle_root)
     (releases_root / f"{release_id}.json").write_text(
         json.dumps(release, indent=2, sort_keys=True) + "\n"
     )
     (app_root / "release.json").write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
     return app_root
+
+
+def static_asset_plan(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> Dict[str, object]:
+    if manifest.kind != "static" or not manifest.static_root:
+        return {"managed": False, "mode": "none"}
+    if Path(manifest.static_root).is_absolute():
+        root = Path(manifest.static_root)
+        return {
+            "managed": False,
+            "mode": "external",
+            "serving_root": str(root),
+            "source": str(root),
+            "source_exists": root.exists(),
+        }
+
+    return _static_asset_plan_for_source(
+        manifest,
+        (manifest_path.parent / manifest.static_root).resolve(strict=False),
+        runtime_root,
+    )
+
+
+def _static_asset_plan_for_source(manifest: Manifest, source: Path, runtime_root: Path) -> Dict[str, object]:
+    current = static_runtime_root(runtime_root, manifest) / "current"
+    source_digest = _directory_digest(source) if source.exists() and source.is_dir() else None
+    current_digest = _directory_digest(current) if current.exists() and current.is_dir() else None
+    return {
+        "managed": True,
+        "mode": "sync",
+        "source": str(source),
+        "source_exists": source.exists(),
+        "source_is_dir": source.is_dir(),
+        "source_digest": source_digest,
+        "serving_root": static_caddy_root(manifest),
+        "runtime_current": str(current),
+        "current_exists": current.exists(),
+        "current_digest": current_digest,
+        "change": "none" if source_digest is not None and source_digest == current_digest else "sync",
+    }
+
+
+def publish_static_assets(
+    manifest: Manifest,
+    source_root: Path,
+    runtime_root: Path,
+    release_id: str,
+) -> Dict[str, object]:
+    relative_path = static_source_bundle_path(manifest)
+    if relative_path is None:
+        manifest_path = source_root / "manifest.lock.json"
+        return static_asset_plan(manifest, manifest_path, runtime_root)
+
+    source = (source_root / relative_path).resolve(strict=False)
+    plan = _static_asset_plan_for_source(manifest, source, runtime_root)
+    if not source.exists():
+        raise FileNotFoundError(f"Static asset source not found: {source}")
+    if not source.is_dir():
+        raise NotADirectoryError(f"Static asset source must be a directory: {source}")
+
+    allowed_root = source_root.resolve(strict=False)
+    assert_no_external_symlinks(source, allowed_root)
+    root = static_runtime_root(runtime_root, manifest)
+    release_root = root / "releases" / release_id
+    if release_root.exists():
+        shutil.rmtree(release_root)
+    shutil.copytree(source, release_root, symlinks=True)
+
+    current = root / "current"
+    tmp_current = root / f".current.{release_id}.tmp"
+    if tmp_current.exists() or tmp_current.is_symlink():
+        if tmp_current.is_dir() and not tmp_current.is_symlink():
+            shutil.rmtree(tmp_current)
+        else:
+            tmp_current.unlink()
+    tmp_current.symlink_to(Path("releases") / release_id, target_is_directory=True)
+    if current.exists() and not current.is_symlink():
+        shutil.rmtree(current)
+    tmp_current.replace(current)
+
+    return {
+        **plan,
+        "release_root": str(release_root),
+        "runtime_current": str(current),
+        "source_digest": _directory_digest(source),
+        "release_digest": _directory_digest(release_root),
+        "file_count": _directory_file_count(release_root),
+        "change": "synced",
+    }
+
+
+def static_runtime_root(runtime_root: Path, manifest: Manifest) -> Path:
+    return runtime_root / "static" / static_runtime_app_name(manifest)
+
+
+def _directory_digest(path: Path) -> str | None:
+    if not path.exists() or not path.is_dir():
+        return None
+    import hashlib
+
+    digest = hashlib.sha256()
+    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        relative = child.relative_to(path)
+        digest.update(str(relative).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(child.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _directory_file_count(path: Path) -> int:
+    if not path.exists() or not path.is_dir():
+        return 0
+    return sum(1 for item in path.rglob("*") if item.is_file())
 
 
 def remove_stale_generated_files(app_root: Path, desired_bundle: Dict[Path, str]) -> List[Path]:
@@ -495,6 +649,11 @@ def apply_local_bundle(
                     )
                     mark_phase("caddy_reload", "ok")
 
+        if static_source_bundle_path(manifest) is not None:
+            mark_phase("static_assets_publish", "running")
+            publish_staged_static_assets(manifest, runtime_root, app_root)
+            mark_phase("static_assets_publish", "ok")
+
         update_current_release_apply(
             runtime_root,
             manifest.app,
@@ -533,6 +692,22 @@ def ensure_compose_networks(manifest: Manifest) -> None:
                 "network_prepare",
                 capture_output=True,
             )
+
+
+def publish_staged_static_assets(manifest: Manifest, runtime_root: Path, app_root: Path) -> Dict[str, object]:
+    release = _load_release_json_or_raise(app_root / "release.json", f"{manifest.app}/current")
+    release_id = release.get("release_id")
+    if not isinstance(release_id, str) or not release_id:
+        raise ApplyPhaseError("static_assets_publish", "Release record is missing release_id.")
+    bundle_path = release.get("bundle_path")
+    bundle_root = (
+        Path(str(bundle_path))
+        if isinstance(bundle_path, str) and bundle_path
+        else app_root / "release-bundles" / release_id
+    )
+    static_assets = publish_static_assets(manifest, bundle_root, runtime_root, release_id)
+    _update_current_release(runtime_root, manifest.app, {"static_assets": static_assets})
+    return static_assets
 
 
 def sync_caddy_env(manifest: Manifest, app_root: Path, runtime_root: Path) -> bool:
@@ -1105,6 +1280,27 @@ def _copy_support_path(source: Path, destination: Path, *, allowed_root: Path) -
         shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
         return
     shutil.copy2(source, destination, follow_symlinks=False)
+
+
+def _copy_static_source_tree(source: Path, destination: Path, *, allowed_root: Path) -> None:
+    resolved_source = source.resolve(strict=False)
+    resolved_destination = destination.resolve(strict=False)
+    if resolved_source == resolved_destination:
+        return
+    if resolved_source in resolved_destination.parents:
+        raise ValueError(f"Refusing to copy static assets into their own source tree: {destination}")
+    assert_no_external_symlinks(source, allowed_root)
+    if not source.exists():
+        raise FileNotFoundError(f"Static asset source not found: {source}")
+    if not source.is_dir():
+        raise NotADirectoryError(f"Static asset source must be a directory: {source}")
+    if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination, symlinks=True)
 
 
 def _preserves_support_path(relative_path: Path, preserve_paths: set[Path]) -> bool:

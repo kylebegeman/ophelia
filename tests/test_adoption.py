@@ -140,6 +140,37 @@ class AdoptionPlanTests(unittest.TestCase):
         check = next(item for item in plan["checks"] if item["name"] == "app_owned_runtime_contract")
         self.assertTrue(check["ok"])
 
+    def test_app_owned_contract_recognizes_manifest_data_verifier_without_npm_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "demo-app"
+            repo.mkdir()
+            (repo / ".ophelia.yml").write_text(
+                _manifest_with_compiled_data_verify_check("demo-app", "staging")
+            )
+            (repo / "package.json").write_text(
+                json.dumps(
+                    {
+                        "scripts": {
+                            "ophelia:health": "tsx scripts/ophelia-health.ts",
+                            "ophelia:data:verify": "tsx scripts/ophelia-data-verify.ts",
+                            "ophelia:release": "tsx scripts/ophelia-release.ts",
+                        }
+                    }
+                )
+            )
+
+            plan = adoption_plan(
+                "demo-app",
+                "staging",
+                repo_path=repo,
+                runtime_root=Path(temp_dir) / "runtime",
+            )
+
+        contract = plan["app_owned_contract"]
+        self.assertEqual([], contract["missing"])
+        self.assertTrue(contract["manifest_data_verifier"])
+        self.assertTrue(contract["runtime_checks"]["data_verify"])
+
     def test_cli_json_and_catalog_descriptor_are_available(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir) / "demo-app"
@@ -280,6 +311,27 @@ verify:
       - npm
       - run
       - ophelia:data:verify
+"""
+
+
+def _manifest_with_compiled_data_verify_check(app: str, environment: str) -> str:
+    return _manifest(app, environment) + """\
+verify:
+  - service: app
+    path: /ophelia/health
+    method: GET
+    expect_status: 200
+  - service: app
+    path: /ophelia/release
+    method: GET
+    expect_status: 200
+  - type: command
+    service: web
+    command:
+      - node
+      - dist/ophelia-cli.cjs
+      - data-verify
+      - --json
 """
 
 

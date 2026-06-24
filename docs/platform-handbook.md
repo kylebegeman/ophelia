@@ -66,11 +66,15 @@ Expected runtime shape:
     sites.d/
   receipts/
   state/
+  static/<app>/
+    current -> releases/<release-id>
+    releases/<release-id>/
 ```
 
-Static content can live under `<runtime-root>/static` or another configured
-path. Caddy validation and Compose use `OPHELIA_STATIC_ROOT` when an additional
-static mount is needed.
+Relative `static_root` values are copied into `<runtime-root>/static/<app>/`
+release directories and served through the `current` symlink. Absolute
+`static_root` values remain externally managed roots. Caddy validation and
+Compose use `OPHELIA_STATIC_ROOT` when an additional static mount is needed.
 
 ## Provider Boundaries
 

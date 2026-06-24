@@ -73,6 +73,14 @@ class TemplateDiscoveryTests(unittest.TestCase):
         policy = report["release_label_policy"]
         self.assertIn("release:patch", policy["valid_labels"])
 
+    def test_static_template_declares_repo_local_asset_root(self) -> None:
+        report = af.templates_explain("static-site")
+        self.assertIn("public/index.html", report["files"])
+        plan = af.create_plan("demo-app", "static-site")
+        manifest = plan["manifest_preview"]["text"]
+        self.assertIn("static_root: public", manifest)
+        self.assertNotIn("ophelia-runtime/static", manifest)
+
 
 class CreatePlanTests(unittest.TestCase):
     def test_create_plan_writes_nothing(self) -> None:
@@ -357,7 +365,8 @@ class CreateApplyTests(unittest.TestCase):
             )
             self.assertEqual("succeeded", forced["status"])
             self.assertNotEqual("user-owned", manifest.read_text())
-            self.assertIn(str(runtime_root / "static" / "demo-app"), manifest.read_text())
+            self.assertIn("static_root: public", manifest.read_text())
+            self.assertTrue((target / "public" / "index.html").exists())
 
 
 class WorkflowAndSecretTests(unittest.TestCase):

@@ -77,6 +77,17 @@ def render_caddy(manifest: Manifest) -> str:
     return template.replace("{{SITES_BLOCK}}", sites_block.rstrip()) + "\n"
 
 
+def static_runtime_app_name(manifest: Manifest) -> str:
+    return _safe_docker_name(manifest.app)
+
+
+def static_caddy_root(manifest: Manifest) -> str:
+    root = manifest.static_root or ""
+    if Path(root).is_absolute():
+        return root
+    return f"{{$OPHELIA_STATIC_ROOT}}/{static_runtime_app_name(manifest)}/current"
+
+
 def render_caddy_global(manifest: Manifest) -> Optional[str]:
     if manifest.edge.on_demand_tls is None:
         return None
@@ -411,7 +422,7 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
     if manifest.kind == "static":
         lines.extend(
             [
-                f"    root * {manifest.static_root}",
+                f"    root * {static_caddy_root(manifest)}",
                 "    file_server",
                 "}",
             ]

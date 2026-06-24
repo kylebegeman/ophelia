@@ -305,6 +305,12 @@ manifests require `--domain` and `--image`; static manifests require
 same preview, `--write`, and `--force` overwrite policy applies to the manifest
 and static placeholder files.
 
+Static manifests created by `pack init` use a relative `static_root`. During
+deploy, Ophelia stages that directory with the manifest lock, publishes it into
+`<runtime-root>/static/<app>/releases/<release-id>`, and points
+`<runtime-root>/static/<app>/current` at the active release. This makes static
+sites usable without Docker images while keeping immutable release evidence.
+
 `pack validate --json` and `pack explain --json` redact data-contract command
 metadata before output. Secret-shaped flags, key/value arguments, and
 credential URLs are masked while preserving enough command shape for review.
