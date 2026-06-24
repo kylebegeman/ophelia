@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNTIME_ROOT="${1:-$HOME/ophelia-runtime}"
-SHARED_DIR="$REPO_ROOT/platform/shared"
+SHARED_DIR="${OPHELIA_SHARED_DIR:-$REPO_ROOT/platform/shared}"
 SHARED_ENV="$SHARED_DIR/.env"
 
 mkdir -p "$RUNTIME_ROOT/apps" "$RUNTIME_ROOT/backups" "$RUNTIME_ROOT/cache" "$RUNTIME_ROOT/static"
@@ -22,6 +22,7 @@ import secrets
 path = Path(os.environ["SHARED_ENV"])
 runtime_root = os.environ["RUNTIME_ROOT"]
 values = {}
+order = []
 
 if path.exists():
     for raw_line in path.read_text().splitlines():
@@ -29,6 +30,8 @@ if path.exists():
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
+        if key not in values:
+            order.append(key)
         values[key] = value
 
 def secret(key: str) -> str:
@@ -37,15 +40,19 @@ def secret(key: str) -> str:
         return current
     return secrets.token_urlsafe(32)
 
-values = {
+defaults = {
     "OPHELIA_RUNTIME_ROOT": values.get("OPHELIA_RUNTIME_ROOT") or runtime_root,
     "OPHELIA_HTTP_PORT": values.get("OPHELIA_HTTP_PORT") or "80",
     "OPHELIA_HTTPS_PORT": values.get("OPHELIA_HTTPS_PORT") or "443",
     "POSTGRES_PASSWORD": secret("POSTGRES_PASSWORD"),
     "REDIS_PASSWORD": secret("REDIS_PASSWORD"),
 }
+for key, value in defaults.items():
+    if key not in values:
+        order.append(key)
+    values[key] = value
 
-path.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+path.write_text("".join(f"{key}={values[key]}\n" for key in order if key in values))
 path.chmod(0o600)
 PY
 

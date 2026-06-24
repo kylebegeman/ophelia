@@ -102,19 +102,19 @@ def sync_bundle_static_source(manifest: Manifest, manifest_path: Path, output_di
         return
 
     manifest_dir = manifest_path.parent.resolve(strict=False)
-    source = (manifest_dir / relative_path).resolve(strict=False)
+    source = manifest_dir / relative_path
     if not source.exists():
         raise FileNotFoundError(f"Static asset source not found: {source}")
     if not source.is_dir():
         raise NotADirectoryError(f"Static asset source must be a directory: {source}")
-    _copy_static_source_tree(source, output_dir / relative_path, allowed_root=manifest_dir)
+    _copy_static_source_tree(source, output_dir / relative_path)
 
 
 def copy_staged_static_source(manifest: Manifest, source_root: Path, output_dir: Path) -> None:
     relative_path = static_source_bundle_path(manifest)
     if relative_path is None:
         return
-    _copy_static_source_tree(source_root / relative_path, output_dir / relative_path, allowed_root=source_root)
+    _copy_static_source_tree(source_root / relative_path, output_dir / relative_path)
 
 
 def static_source_bundle_path(manifest: Manifest) -> Path | None:
@@ -315,14 +315,15 @@ def static_asset_plan(manifest: Manifest, manifest_path: Path, runtime_root: Pat
 
     return _static_asset_plan_for_source(
         manifest,
-        (manifest_path.parent / manifest.static_root).resolve(strict=False),
+        manifest_path.parent.resolve(strict=False) / manifest.static_root,
         runtime_root,
     )
 
 
 def _static_asset_plan_for_source(manifest: Manifest, source: Path, runtime_root: Path) -> Dict[str, object]:
     current = static_runtime_root(runtime_root, manifest) / "current"
-    source_digest = _directory_digest(source) if source.exists() and source.is_dir() else None
+    symlink_issues = _static_symlink_issues(source) if source.exists() and source.is_dir() else []
+    source_digest = _directory_digest(source) if source.exists() and source.is_dir() and not symlink_issues else None
     current_digest = _directory_digest(current) if current.exists() and current.is_dir() else None
     return {
         "managed": True,
@@ -330,12 +331,19 @@ def _static_asset_plan_for_source(manifest: Manifest, source: Path, runtime_root
         "source": str(source),
         "source_exists": source.exists(),
         "source_is_dir": source.is_dir(),
+        "unsafe_symlinks": symlink_issues,
         "source_digest": source_digest,
         "serving_root": static_caddy_root(manifest),
         "runtime_current": str(current),
         "current_exists": current.exists(),
         "current_digest": current_digest,
-        "change": "none" if source_digest is not None and source_digest == current_digest else "sync",
+        "change": (
+            "blocked"
+            if symlink_issues
+            else "none"
+            if source_digest is not None and source_digest == current_digest
+            else "sync"
+        ),
     }
 
 
@@ -350,15 +358,14 @@ def publish_static_assets(
         manifest_path = source_root / "manifest.lock.json"
         return static_asset_plan(manifest, manifest_path, runtime_root)
 
-    source = (source_root / relative_path).resolve(strict=False)
-    plan = _static_asset_plan_for_source(manifest, source, runtime_root)
+    source = source_root / relative_path
     if not source.exists():
         raise FileNotFoundError(f"Static asset source not found: {source}")
     if not source.is_dir():
         raise NotADirectoryError(f"Static asset source must be a directory: {source}")
+    _assert_static_source_safe(source)
 
-    allowed_root = source_root.resolve(strict=False)
-    assert_no_external_symlinks(source, allowed_root)
+    plan = _static_asset_plan_for_source(manifest, source, runtime_root)
     root = static_runtime_root(runtime_root, manifest)
     release_root = root / "releases" / release_id
     if release_root.exists():
@@ -398,10 +405,18 @@ def _directory_digest(path: Path) -> str | None:
     import hashlib
 
     digest = hashlib.sha256()
-    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+    for child in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
         relative = child.relative_to(path)
         digest.update(str(relative).encode("utf-8"))
         digest.update(b"\0")
+        if child.is_symlink():
+            digest.update(b"symlink\0")
+            digest.update(str(child.readlink()).encode("utf-8"))
+            digest.update(b"\0")
+            continue
+        if not child.is_file():
+            continue
+        digest.update(b"file\0")
         digest.update(child.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
@@ -1282,18 +1297,18 @@ def _copy_support_path(source: Path, destination: Path, *, allowed_root: Path) -
     shutil.copy2(source, destination, follow_symlinks=False)
 
 
-def _copy_static_source_tree(source: Path, destination: Path, *, allowed_root: Path) -> None:
+def _copy_static_source_tree(source: Path, destination: Path) -> None:
     resolved_source = source.resolve(strict=False)
     resolved_destination = destination.resolve(strict=False)
     if resolved_source == resolved_destination:
         return
     if resolved_source in resolved_destination.parents:
-        raise ValueError(f"Refusing to copy static assets into their own source tree: {destination}")
-    assert_no_external_symlinks(source, allowed_root)
+        raise RuntimeError(f"Refusing to copy static assets into their own source tree: {destination}")
     if not source.exists():
         raise FileNotFoundError(f"Static asset source not found: {source}")
     if not source.is_dir():
         raise NotADirectoryError(f"Static asset source must be a directory: {source}")
+    _assert_static_source_safe(source)
     if destination.exists() or destination.is_symlink():
         if destination.is_dir() and not destination.is_symlink():
             shutil.rmtree(destination)
@@ -1301,6 +1316,51 @@ def _copy_static_source_tree(source: Path, destination: Path, *, allowed_root: P
             destination.unlink()
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination, symlinks=True)
+
+
+def _assert_static_source_safe(source: Path) -> None:
+    issues = _static_symlink_issues(source)
+    if not issues:
+        return
+    first = issues[0]
+    detail = first.get("target") or first.get("reason")
+    raise RuntimeError(f"Static asset source contains an unsafe symlink: {first['path']} -> {detail}")
+
+
+def _static_symlink_issues(source: Path) -> List[Dict[str, str]]:
+    if not source.exists() and not source.is_symlink():
+        return []
+
+    issues: List[Dict[str, str]] = []
+    root = source.resolve(strict=False)
+
+    def check(path: Path) -> None:
+        try:
+            target = path.readlink()
+        except OSError as exc:
+            issues.append({"path": str(path), "reason": str(exc)})
+            return
+        if target.is_absolute():
+            issues.append({"path": str(path), "target": str(target), "reason": "absolute symlink"})
+            return
+        target_path = path.parent / target
+        if not target_path.exists():
+            issues.append({"path": str(path), "target": str(target), "reason": "broken symlink"})
+            return
+        try:
+            path.resolve(strict=False).relative_to(root)
+        except (OSError, ValueError):
+            issues.append({"path": str(path), "target": str(target), "reason": "outside static root"})
+
+    if source.is_symlink():
+        issues.append({"path": str(source), "target": str(source.readlink()), "reason": "static root symlink"})
+        return issues
+    if not source.is_dir():
+        return issues
+    for child in source.rglob("*"):
+        if child.is_symlink():
+            check(child)
+    return issues
 
 
 def _preserves_support_path(relative_path: Path, preserve_paths: set[Path]) -> bool:

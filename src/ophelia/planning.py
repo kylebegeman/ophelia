@@ -341,6 +341,8 @@ def _risk_notes(
         notes.append("Static asset source is missing; apply will fail until the source directory exists.")
     if static_assets.get("managed") and static_assets.get("source_exists") and not static_assets.get("source_is_dir"):
         notes.append("Static asset source is not a directory; apply requires a directory root.")
+    if static_assets.get("managed") and static_assets.get("unsafe_symlinks"):
+        notes.append("Static asset source contains unsafe symlinks; apply requires symlinks to stay inside the static root.")
     if not verification_checks(manifest):
         notes.append("No verification checks are configured or inferred.")
     return notes

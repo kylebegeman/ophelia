@@ -325,6 +325,77 @@ routes:
             self.assertEqual("one\n", (current / "index.html").read_text())
             self.assertEqual("one\n", (restored_bundle / "public" / "index.html").read_text())
 
+    def test_static_plan_blocks_symlinks_outside_static_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            public = root / "public"
+            public.mkdir()
+            outside = root / "outside.txt"
+            outside.write_text("do-not-read\n")
+            link = public / "outside.txt"
+            try:
+                link.symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            manifest_path = root / "static.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: static-symlink
+environment: staging
+kind: static
+static_root: public
+routes:
+  - domain: static-symlink.example.com
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            plan = deploy_plan(manifest, manifest_path, runtime_root)
+
+            self.assertEqual("blocked", plan["static_assets"]["change"])
+            self.assertIsNone(plan["static_assets"]["source_digest"])
+            self.assertTrue(plan["static_assets"]["unsafe_symlinks"])
+            self.assertTrue(any("unsafe symlinks" in note for note in plan["risk_notes"]))
+            with self.assertRaisesRegex(RuntimeError, "unsafe symlink"):
+                deploy_bundle(manifest, manifest_path, runtime_root)
+
+    def test_static_plan_blocks_symlinked_static_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            real_public = root / "real-public"
+            real_public.mkdir()
+            (real_public / "index.html").write_text("<h1>Root link</h1>\n")
+            public = root / "public"
+            try:
+                public.symlink_to(real_public, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+            manifest_path = root / "static.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: static-root-symlink
+environment: staging
+kind: static
+static_root: public
+routes:
+  - domain: static-root-symlink.example.com
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            plan = deploy_plan(manifest, manifest_path, runtime_root)
+
+            self.assertEqual("blocked", plan["static_assets"]["change"])
+            self.assertTrue(plan["static_assets"]["unsafe_symlinks"])
+            with self.assertRaisesRegex(RuntimeError, "unsafe symlink"):
+                deploy_bundle(manifest, manifest_path, runtime_root)
+
 
 def _manifest(secret_value: str) -> str:
     return f"""
