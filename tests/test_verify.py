@@ -328,6 +328,8 @@ class VerifyTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         command = run.call_args.args[0]
         self.assertEqual("web", command[6])
+        self.assertIn("command -v node", command[9])
+        self.assertIn("command -v wget", command[9])
         result = payload["results"][0]
         self.assertEqual("internal", result["type"])
         self.assertEqual(200, result["status_code"])

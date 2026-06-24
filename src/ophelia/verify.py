@@ -461,9 +461,18 @@ def _run_internal_check(
             "error_kind": "compose_missing",
         }
     script = (
+        "url=\"http://127.0.0.1:$2$3\"; "
         "if command -v curl >/dev/null 2>&1; then "
-        "curl -sS -X \"$1\" -w '\\n%{http_code}' \"http://127.0.0.1:$2$3\"; "
-        "else echo 'curl is required for Ophelia internal service verification' >&2; exit 127; fi"
+        "curl -sS -X \"$1\" -w '\\n%{http_code}' \"$url\"; "
+        "elif command -v node >/dev/null 2>&1; then "
+        "node -e 'const http=require(\"http\");const method=process.argv[1];const port=process.argv[2];const path=process.argv[3];const req=http.request({host:\"127.0.0.1\",port:Number(port),path,method},res=>{let body=\"\";res.setEncoding(\"utf8\");res.on(\"data\",chunk=>body+=chunk);res.on(\"end\",()=>{process.stdout.write(body+\"\\n\"+res.statusCode);});});req.on(\"error\",err=>{console.error(err.message);process.exit(2);});req.end();' \"$1\" \"$2\" \"$3\"; "
+        "elif [ \"$1\" = \"GET\" ] && command -v wget >/dev/null 2>&1; then "
+        "headers=\"${TMPDIR:-/tmp}/ophelia-internal-check.$$\"; trap 'rm -f \"$headers\"' EXIT; "
+        "set +e; body=$(wget -q -S -O - \"$url\" 2>\"$headers\"); wget_rc=$?; set -e; "
+        "status=$(awk '/^  HTTP\\//{code=$2} END{print code}' \"$headers\"); "
+        "printf '%s\\n%s' \"$body\" \"${status:-0}\"; "
+        "if [ \"$wget_rc\" -ne 0 ] && [ \"${status:-0}\" = \"0\" ]; then exit \"$wget_rc\"; fi; "
+        "else echo 'curl, node, or wget (GET only) is required for Ophelia internal service verification' >&2; exit 127; fi"
     )
     try:
         result = subprocess.run(
