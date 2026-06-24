@@ -210,6 +210,47 @@ routes:
             self.assertIn(["docker", "network", "create", "ophelia-edge"], create_calls)
             self.assertIn(["docker", "network", "create", "ophelia-internal"], create_calls)
 
+    def test_apply_prepares_shared_internal_network_for_per_app_postgres(self) -> None:
+        from ophelia.manifest import load_manifest
+        from ophelia.runtime import ensure_compose_networks
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "service.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: networked-postgres-app
+environment: staging
+kind: service
+image: ghcr.io/example/networked-postgres-app:latest
+networking:
+  internal: per-app
+addons:
+  postgres: true
+services:
+  web:
+    port: 3000
+routes:
+  - domain: networked-postgres.example.com
+    service: web
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            with mock.patch("ophelia.runtime._run", return_value=None) as run, mock.patch(
+                "ophelia.runtime._run_apply_phase"
+            ) as apply_phase:
+                ensure_compose_networks(manifest)
+
+            inspect_calls = [call.args[0] for call in run.call_args_list]
+            create_calls = [call.args[0] for call in apply_phase.call_args_list]
+            self.assertIn(["docker", "network", "inspect", "ophelia-edge"], inspect_calls)
+            self.assertIn(["docker", "network", "inspect", "ophelia-internal"], inspect_calls)
+            self.assertIn(["docker", "network", "create", "ophelia-edge"], create_calls)
+            self.assertIn(["docker", "network", "create", "ophelia-internal"], create_calls)
+
     def test_apply_uses_local_image_when_private_pull_fails_but_image_exists(self) -> None:
         from ophelia.manifest import load_manifest
         from ophelia.runtime import apply_local_bundle

@@ -772,6 +772,35 @@ routes:
         self.assertIn('          - "web"', compose)
         self.assertNotIn("  ophelia-internal:\n    external: true", compose)
 
+    def test_render_compose_connects_per_app_postgres_apps_to_shared_internal_network(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: postgres-app
+environment: staging
+kind: service
+image: ghcr.io/example/postgres-app:latest
+networking:
+  internal: per-app
+addons:
+  postgres: true
+services:
+  web:
+    port: 3000
+routes:
+  - domain: postgres-app.example.com
+    service: web
+"""
+        )
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertIn("      postgres-app-staging-internal:", compose)
+        self.assertIn("      ophelia-internal:", compose)
+        self.assertIn("  postgres-app-staging-internal:", compose)
+        self.assertIn("  ophelia-internal:\n    external: true", compose)
+
     def test_lifecycle_and_internal_verify_shape_round_trip(self) -> None:
         manifest = self._load(
             """

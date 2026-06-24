@@ -229,6 +229,8 @@ def _render_service_block(
     )
     if manifest.networking.internal == "per-app":
         service_lines.append(f"          - {_quote(service.name)}")
+        if manifest.addons.postgres or manifest.addons.redis:
+            service_lines.append("      ophelia-internal:")
     return "\n".join(service_lines)
 
 
@@ -310,6 +312,13 @@ def _render_networks_block(manifest: Manifest) -> str:
                 f"      ophelia.environment: {_quote(manifest.environment or 'unknown')}",
             ]
         )
+        if manifest.addons.postgres or manifest.addons.redis:
+            lines.extend(
+                [
+                    "  ophelia-internal:",
+                    "    external: true",
+                ]
+            )
     else:
         lines.extend(
             [

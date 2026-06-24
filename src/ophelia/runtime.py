@@ -677,7 +677,7 @@ def ensure_compose_networks(manifest: Manifest) -> None:
         return
 
     required = ["ophelia-edge"]
-    if manifest.networking.internal == "shared":
+    if manifest.networking.internal == "shared" or manifest.addons.postgres or manifest.addons.redis:
         required.append("ophelia-internal")
 
     for network in required:
