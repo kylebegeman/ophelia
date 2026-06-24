@@ -581,8 +581,10 @@ the target container:
   mount.
 - `service`: target service for the mount. Omit only when the manifest has one
   service.
-- `source`: optional host path or Compose-relative path. When omitted, Ophelia
-  creates an app/environment-scoped Docker named volume.
+- `source`: optional host path or Compose-relative path. Bare relative values
+  such as `uploads` render as explicit relative bind sources such as
+  `./uploads` so Compose does not interpret them as named volumes. When omitted,
+  Ophelia creates an app/environment-scoped Docker named volume.
 - `class`: optional data class such as `critical`.
 - `export`, `import`, `verify`: portability behavior for movement and restore
   drills.

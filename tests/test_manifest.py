@@ -670,6 +670,35 @@ data:
         self.assertNotIn('"workers-app-production-worker-cache:/data/cache"', compose.split("  worker:")[0])
         self.assertIn('"workers-app-production-worker-cache:/data/cache"', compose.split("  worker:")[1])
 
+    def test_render_compose_uses_explicit_relative_bind_for_data_volume_source(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: relative-volume
+environment: staging
+kind: service
+image: ghcr.io/example/relative-volume:latest
+services:
+  web:
+    port: 3000
+routes:
+  - domain: relative-volume.example.com
+    service: web
+data:
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      source: uploads
+"""
+        )
+
+        compose = render_compose(manifest)
+
+        assert compose is not None
+        self.assertIn('"./uploads:/app/uploads"', compose)
+        self.assertNotIn('"uploads:/app/uploads"', compose)
+        self.assertNotIn("volumes:\n  uploads:", compose)
+
     def test_mounted_data_volume_requires_service_in_multi_service_manifest(self) -> None:
         manifest = """
 version: 1

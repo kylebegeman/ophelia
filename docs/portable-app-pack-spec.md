@@ -132,8 +132,9 @@ For single-service manifests, Ophelia mounts the volume into that service. For
 multi-service manifests, set `data.volumes[].service` so the runtime target is
 unambiguous. When `source` is omitted, Ophelia renders an app/environment-scoped
 Docker named volume; when `source` is present, it is rendered as the host or
-Compose-relative source path. Export create archives declared host sources
-directly. For app-owned Docker named volumes, export create uses a local helper
+Compose-relative source path. Bare relative sources such as `uploads` render as
+`./uploads` so Compose treats them as bind paths, not named volumes. Export
+create archives declared host sources directly. For app-owned Docker named volumes, export create uses a local helper
 image to mount the volume read-only and write the archive into the export
 bundle without printing data.
 

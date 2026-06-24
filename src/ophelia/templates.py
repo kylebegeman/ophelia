@@ -278,7 +278,7 @@ def _render_service_volume_lines(manifest: Manifest, service: ServiceConfig) -> 
         lines.append(f"      - {_quote(f'{bundle_source}:{mount.target}{suffix}')}")
 
     for volume in _data_volumes_for_service(manifest, service):
-        source = volume.source or _data_volume_name(manifest, volume)
+        source = _data_volume_mount_source(manifest, volume)
         lines.append(f"      - {_quote(f'{source}:{volume.mount}')}")
     return lines
 
@@ -326,6 +326,18 @@ def _render_volumes_block(manifest: Manifest) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def _data_volume_mount_source(manifest: Manifest, volume: DataVolumeConfig) -> str:
+    if volume.source:
+        return _compose_host_source(volume.source)
+    return _data_volume_name(manifest, volume)
+
+
+def _compose_host_source(source: str) -> str:
+    if source.startswith(("/", "./", "../", "~/")):
+        return source
+    return f"./{source}"
 
 
 def _data_volumes_for_service(manifest: Manifest, service: ServiceConfig) -> List[DataVolumeConfig]:
