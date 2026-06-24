@@ -73,19 +73,19 @@ data:
       provider: restic
       target: s3://ophelia-fixture-backups/demo-service
       retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/latest.json
 
 verify:
-  - name: internal-runtime-health
-    type: command
-    service: web
-    command:
-      - npm
-      - run
-      - ophelia:health
-      - --
-      - --json
-    expect_json:
-      status: ok
+  - name: ophelia-health
+    service: app
+    path: /ophelia/health
+    method: GET
+    expect_status: 200
+    json_assertions:
+      - $.kind == "product.runtime.health"
+      - $.ok == true
 
 hooks:
   pre_export: ophelia/hooks/pre-export.sh
@@ -123,6 +123,7 @@ Do not proceed to final cutover until all gates pass:
 ./cli/ship app runbook demo-service --environment production
 ./cli/ship app export plan demo-service --environment production --json
 ./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
+./cli/ship backup rehearse ./exports/demo-service.production.export.tar --manifest .ophelia.yml --environment production --json
 ./cli/ship app restore-drill plan demo-service --environment production --json
 ./cli/ship app cutover plan demo-service --from source-host --to target-host --environment production --json
 ./cli/ship app traffic plan demo-service --from source-host --to target-host --target-origin demo-service-target.example.net --environment production --json

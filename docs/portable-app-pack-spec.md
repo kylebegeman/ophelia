@@ -99,6 +99,9 @@ data:
       provider: restic
       target: s3://ophelia-fixture-backups/demo-service
       retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/latest.json
 
 hooks:
   freeze: ophelia/hooks/freeze.sh
@@ -134,15 +137,18 @@ directly. For app-owned Docker named volumes, export create uses a local helper
 image to mount the volume read-only and write the archive into the export
 bundle without printing data.
 
-Top-level `verify` supports both public HTTP checks and internal command checks.
-Use `type: command` for app-owned health or release commands that should run
-inside the app service network with `docker compose exec -T <service> ...`.
-Both HTTP and command checks can declare `expect_json` dot-path assertions for
+Top-level `verify` supports public HTTP checks, internal service checks, and
+internal command checks. Use `service: app` plus `path: /ophelia/health` for the
+standard app-owned health endpoint, or `type: command` for app-owned npm
+scripts that should run with `docker compose exec -T <service> ...`. HTTP,
+internal, and command checks can declare `expect_json` or `json_assertions` for
 stable app-owned JSON fields.
 
 When `data.backups.offsite_required: true`, declare the concrete offsite target:
-`data.backups.offsite.provider`, `target`, and `retention_days`. Pack
-validation warns with `offsite_backup_target_missing` until all three are set.
+`data.backups.offsite.provider`, `target`, `retention_days`,
+`encryption_required`, `restore_rehearsal_cadence_days`, and
+`last_rehearsal_ref`. Pack validation warns with
+`offsite_backup_target_missing` and lists missing fields until all are set.
 
 ## Field Reference
 
@@ -322,17 +328,33 @@ operation receipts.
 ```bash
 ./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
 ./cli/ship backup rehearse apply ./exports/demo-service.production.export.tar --manifest .ophelia.yml --confirm <token> --json
+./cli/ship backup rehearse ./exports/demo-service.production.export.tar --manifest .ophelia.staging.yml --environment staging --json
 ```
 
 `backup rehearse` is the app-manifest-facing rehearsal flow for a concrete
 export bundle directory, `.tar`, or `.tar.zst`. Plan is read-only. Apply is
-confirmation-gated, writes only under the app restore-drills directory, safely
-extracts archives into isolated paths, and runs declared
+confirmation-gated. The direct one-shot form plans and applies with the current
+plan token internally. Both apply paths write only under the app restore-drills
+directory, safely extract archives into isolated paths, and run declared
 `data.volumes[].verify.command` hooks against extracted volume data.
 
 Verifier commands should be read-only and deterministic. They can use `{path}`,
 `{data_path}`, or `{volume_path}` to receive the extracted volume path; if no
 placeholder is present, Ophelia appends the path as the final argument.
+
+### Fresh Install For Non-live Apps
+
+```bash
+./cli/ship app fresh-install plan demo-service --environment staging --manifest .ophelia.staging.yml --json
+./cli/ship app fresh-install apply demo-service --environment staging --manifest .ophelia.staging.yml --confirm <token> --json
+```
+
+Fresh install is destructive and only applies to declared `data.volumes`
+targets. It is allowed when the manifest has `lifecycle.live: false` and
+`lifecycle.data_can_be_reset: true`, or when the operator passes both
+`--non-live` and `--fresh-start-allowed`. Apply creates a pre-reset export by
+default, unless `--skip-pre-reset-export` is explicit, then resets declared
+host-path or Docker named volumes and runs post-reset verification.
 
 #### Readiness Report Fields
 

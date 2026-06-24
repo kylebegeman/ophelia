@@ -22,6 +22,8 @@ from ophelia.portability import (
     env_shape_diff_report,
     export_create,
     export_plan,
+    fresh_install_apply,
+    fresh_install_plan,
     import_apply,
     import_plan,
     isolation_plan,
@@ -86,6 +88,63 @@ class PortabilityTests(unittest.TestCase):
             report = pack_validation_report(manifest, manifest_path)
 
         self.assertIn("offsite_backup_target_missing", {item["code"] for item in report["warnings"]})
+        warning = next(item for item in report["warnings"] if item["code"] == "offsite_backup_target_missing")
+        self.assertIn("encryption_required", warning["message"])
+
+    def test_fresh_install_plan_and_apply_reset_non_live_host_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            data_dir = root / "uploads"
+            data_dir.mkdir()
+            (data_dir / "old.txt").write_text("old")
+            manifest_path = root / "fresh.ophelia.yml"
+            manifest_path.write_text(
+                f"""
+version: 1
+app: fresh-app
+environment: staging
+kind: service
+image: ghcr.io/example/fresh-app:latest
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
+services:
+  web:
+    port: 3000
+routes:
+  - domain: fresh.example.com
+    service: web
+data:
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      source: {data_dir}
+""".strip()
+                + "\n"
+            )
+
+            plan = fresh_install_plan(
+                "fresh-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                skip_pre_reset_export=True,
+            )
+            receipt = fresh_install_apply(
+                "fresh-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                confirm=str(plan["confirmation_token"]),
+                skip_pre_reset_export=True,
+            )
+
+        self.assertEqual([], plan["blockers"])
+        self.assertEqual("succeeded", receipt["status"])
+        self.assertFalse((data_dir / "old.txt").exists())
+        self.assertTrue(receipt["reset_evidence"][0]["ok"])
 
     def test_export_plan_is_read_only_and_redacts_env_shape(self) -> None:
         with self._skip_docker_status():
@@ -619,10 +678,15 @@ class PortabilityTests(unittest.TestCase):
                     str(backup_plan["confirmation_token"]),
                     operation_base="backup.rehearse",
                     readiness_gate=False,
+                    extra_receipt_fields={
+                        "one_shot": True,
+                        "planned_operation_id": backup_plan["operation_id"],
+                    },
                 )
                 verifier_copied = (bundle_path / "runtime" / "ophelia" / "checks" / "data-verify.sh").exists()
                 backup_receipt_path = Path(str(backup_receipt["drill_path"])) / "receipts" / "backup-rehearse-apply.json"
                 backup_receipt_file_exists = backup_receipt_path.exists()
+                backup_receipt_file = json.loads(backup_receipt_path.read_text())
 
         self.assertEqual([], plan["blockers"])
         self.assertEqual("succeeded", receipt["status"])
@@ -631,6 +695,8 @@ class PortabilityTests(unittest.TestCase):
         self.assertEqual("succeeded", backup_receipt["status"])
         self.assertTrue(verifier_copied)
         self.assertTrue(backup_receipt_file_exists)
+        self.assertTrue(backup_receipt_file["one_shot"])
+        self.assertEqual(backup_plan["operation_id"], backup_receipt_file["planned_operation_id"])
         check = next(item for item in receipt["checks"] if item.get("name") == "app_verify_hook:uploads")
         self.assertTrue(check["ok"])
         self.assertIn("exit 0", check["message"])

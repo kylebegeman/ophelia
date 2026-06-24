@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from .addons import ensure_addons
 from .config import DEFAULT_RUNTIME_ROOT
@@ -48,14 +48,14 @@ class DeploymentRecord:
 HOST_ON_DEMAND_TLS_GLOBAL = Path("caddy") / "global.d" / "ophelia-on-demand-tls.caddy"
 
 
-def render_bundle(manifest: Manifest) -> Dict[Path, str]:
+def render_bundle(manifest: Manifest, release_metadata: Dict[str, Any] | None = None) -> Dict[Path, str]:
     bundle: Dict[Path, str] = {
         Path("caddy") / f"{manifest.app}.caddy": render_caddy(manifest),
         Path("env.example"): render_env_example(manifest),
         Path("manifest.lock.json"): json.dumps(manifest.to_lock_dict(), indent=2, sort_keys=True) + "\n",
     }
 
-    compose = render_compose(manifest)
+    compose = render_compose(manifest, release_metadata=release_metadata)
     if compose is not None:
         bundle[Path("compose.yml")] = compose + "\n"
 
@@ -192,9 +192,20 @@ def _is_relative_support_path(source: str) -> bool:
 
 def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Path:
     app_root = runtime_root / "apps" / manifest.app
-    bundle = render_bundle(manifest)
     support_paths = bundle_support_paths(manifest)
     required_support_paths = bundle_support_paths(manifest, required_only=True)
+    previous_release_id = current_release_id(runtime_root, manifest.app)
+    deployed_at = _utc_now()
+    git_sha = _git_sha()
+    base_bundle = render_bundle(manifest)
+    release_id = _release_id(deployed_at, base_bundle)
+    release_metadata = _release_metadata_env(
+        manifest,
+        release_id=release_id,
+        deployed_at=deployed_at,
+        git_sha=git_sha,
+    )
+    bundle = render_bundle(manifest, release_metadata=release_metadata)
     write_bundle(bundle, app_root)
     remove_stale_generated_files(app_root, bundle)
     if manifest_path.suffix != ".json":
@@ -210,9 +221,6 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
     if not env_path.exists():
         env_path.write_text(env_example_path.read_text())
 
-    previous_release_id = current_release_id(runtime_root, manifest.app)
-    deployed_at = _utc_now()
-    release_id = _release_id(deployed_at, bundle)
     release = {
         "app": manifest.app,
         "environment": getattr(manifest, "environment", None),
@@ -224,9 +232,10 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
         "manifest_path": str(manifest_path.resolve()),
         "manifest_hash": _sha256_bytes(manifest_path.read_bytes()) if manifest_path.exists() else None,
         "rendered_bundle_hash": bundle_hash(bundle),
-        "git_sha": _git_sha(),
+        "git_sha": git_sha,
         "images": image_references(manifest),
         "image_digests": image_digests(manifest),
+        "runtime_env": release_metadata,
         "generated_files": [str(path) for path in sorted(bundle)],
         "bundle_path": str((app_root / "release-bundles" / release_id).resolve()),
         "runtime_path": str(app_root.resolve()),
@@ -321,6 +330,11 @@ def apply_local_bundle(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     ophelia_root: Path | None = None,
 ) -> Path:
+    if manifest.environment == "production" and not manifest.lifecycle.production_apply_allowed:
+        raise ApplyPhaseError(
+            "lifecycle_policy",
+            "Refusing production apply because lifecycle.production_apply_allowed is false.",
+        )
     app_root = deploy_bundle(manifest, manifest_path, runtime_root)
     phases: List[Dict[str, str]] = []
 
@@ -828,6 +842,32 @@ def image_digests(manifest: Manifest) -> Dict[str, str]:
         if "@sha256:" in image:
             digests[name] = image.split("@", 1)[1]
     return digests
+
+
+def _release_metadata_env(
+    manifest: Manifest,
+    *,
+    release_id: str,
+    deployed_at: str,
+    git_sha: str | None,
+) -> Dict[str, Any]:
+    images = image_references(manifest)
+    digests = image_digests(manifest)
+    services: Dict[str, Dict[str, str]] = {}
+    for service_name in sorted(manifest.services):
+        image_ref = images.get(service_name) or images.get("default") or ""
+        services[service_name] = {
+            "image_ref": image_ref,
+            "image_digest": digests.get(service_name) or digests.get("default") or "",
+        }
+    return {
+        "environment": manifest.environment or "unknown",
+        "app": manifest.app,
+        "release_id": release_id,
+        "commit_sha": git_sha or "",
+        "build_time": deployed_at,
+        "services": services,
+    }
 
 
 def _current_generated_files(app_root: Path) -> set[Path]:

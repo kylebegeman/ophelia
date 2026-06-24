@@ -40,11 +40,20 @@ The plan checks:
 - `ophelia/hooks/freeze.sh`
 - `ophelia/hooks/unfreeze.sh`
 - `ophelia/hooks/post-import.sh`
+- standard app-owned runtime checks are declared:
+  - `GET /ophelia/health`
+  - `GET /ophelia/release`
+  - `npm run ophelia:health`
+  - `npm run ophelia:data:verify`
+  - `npm run ophelia:release`
 
 Missing or invalid manifests are blockers. Missing repo-local artifacts are
 warnings because `ship pack init` can scaffold them in a preview-first flow.
 Hook and check scripts are expected to be executable; present but non-executable
 scripts are warnings.
+Missing app-owned runtime checks are warnings during adoption because app repos
+can add them before deployment. Readiness later runs declared app-owned checks
+through internal service verification and includes redacted JSON output.
 
 When `.ophelia.yml` is missing, `next_commands` includes service and static
 `ship pack init --include-manifest` bootstrap options. Fill in the real domain
@@ -58,6 +67,7 @@ The JSON output is an `ophelia.plan` with:
 - `blockers` and `warnings`
 - `required_artifacts`
 - embedded `pack_validation`
+- embedded `app_owned_contract`
 - `adoption_gates`
 - `next_commands`
 - `read_only: true`

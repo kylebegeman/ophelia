@@ -332,9 +332,12 @@ When `addons.postgres: true`, `ship deploy --apply` provisions a dedicated
 database and role in the shared Postgres container and writes `DATABASE_URL`
 into the app runtime env file. `addons.redis: true` writes `REDIS_URL` against
 the shared Redis instance and assigns the next free logical Redis database.
-Ophelia-injected runtime metadata such as `OPHELIA_APP`, `OPHELIA_SERVICE`, and
-`PORT` is rendered into Compose directly and is not required in retained app
-runtime env files unless the manifest explicitly declares it in `required_env`.
+Ophelia-injected runtime metadata such as `OPHELIA_ENVIRONMENT`,
+`OPHELIA_APP`, `OPHELIA_SERVICE`, `OPHELIA_RELEASE_ID`,
+`OPHELIA_IMAGE_REF`, `OPHELIA_IMAGE_DIGEST`, `OPHELIA_COMMIT_SHA`,
+`OPHELIA_BUILD_TIME`, and `PORT` is rendered into Compose directly and is not
+required in retained app runtime env files unless the manifest explicitly
+declares it in `required_env`.
 
 Portable pack and readiness commands are read-only by default:
 
@@ -345,6 +348,8 @@ Portable pack and readiness commands are read-only by default:
 ./cli/ship backup status demo-service --environment production --json
 ./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
 ./cli/ship backup rehearse apply ./exports/demo-service.production.export.tar --manifest .ophelia.yml --confirm <token> --json
+./cli/ship backup rehearse ./exports/demo-service.production.export.tar --manifest .ophelia.yml --environment production --json
+./cli/ship app fresh-install plan demo-service --environment staging --manifest .ophelia.staging.yml --json
 ./cli/ship app readiness demo-service --environment production --json
 ./cli/ship app runbook demo-service --environment production
 ./cli/ship app export plan demo-service --environment production --json
@@ -423,11 +428,16 @@ show concrete post-change checks.
 Fields:
 
 - `name`: optional human label
-- `type`: `http` or `command`. Defaults to `http` unless `command` is present.
+- `type`: `http`, `internal`, or `command`. Defaults to `command` when
+  `command` is present, `internal` when `path` is present, otherwise `http`.
 - `url`: required `http://` or `https://` URL for `type: http`. URLs cannot
   contain credentials, query strings, or fragments.
+- `path`: required path for `type: internal`. Ophelia runs the check inside the
+  target service container against `http://127.0.0.1:<service-port><path>`.
+- `method`: HTTP method for `http` or `internal` checks, default `GET`.
 - `expect_status`: expected HTTP status code, default `200`.
-- `service`: Compose service name for `type: command`.
+- `service`: Compose service name for `type: internal` or `type: command`.
+  `service: app` is accepted for single-service manifests.
 - `command`: argv array or shell-tokenized string for `type: command`. Command
   checks run as `docker compose exec -T <service> ...` inside the rendered app
   compose project.
@@ -437,6 +447,10 @@ Fields:
 - `expect_json`: optional mapping of dot-paths to exact JSON values. HTTP checks
   parse the response body; command checks parse stdout. Values and command text
   are redacted in plans and receipts.
+- `json_assertions`: optional schema-aware assertions. Supported forms include
+  `$.kind == "product.runtime.health"`, `$.ok is true`, `$.release.version =~
+  "^\\d+\\.\\d+\\.\\d+$"`, `$.checks.runtime present`, or mapping form with
+  `path` plus `equals`, `present`, `is_true`, `is_false`, or `regex`.
 
 `verify_policy` controls retry behavior and whether failed verification should
 block the command. Defaults are tuned for first deploys where Caddy may still be
@@ -460,6 +474,14 @@ verify:
     url: https://ops.example.net/health
     expect_json:
       status: ok
+  - name: ophelia-health
+    service: app
+    path: /ophelia/health
+    method: GET
+    expect_status: 200
+    json_assertions:
+      - $.kind == "product.runtime.health"
+      - $.ok == true
   - name: internal-health
     type: command
     service: web
@@ -479,6 +501,17 @@ verify_policy:
   failure_mode: hard
 ```
 
+Recommended app-owned runtime endpoints and scripts:
+
+- `GET /ophelia/health`
+- `GET /ophelia/release`
+- `npm run ophelia:health`
+- `npm run ophelia:data:verify`
+- `npm run ophelia:release`
+
+Readiness uses these checks through internal service verification when they are
+declared, then includes redacted JSON in the readiness report.
+
 Console manifests infer verification checks when `verify` is omitted:
 
 - `surface: console`
@@ -488,6 +521,41 @@ Console manifests infer verification checks when `verify` is omitted:
   - `https://<primary-domain-or-admin-domain>/health`
   - `https://<primary-domain-or-admin-domain>/`
   - `https://<primary-domain-or-admin-domain>/console`
+
+## Lifecycle
+
+`lifecycle` makes non-live and resettable apps explicit:
+
+```yaml
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
+```
+
+- `live`: whether the product is live for users. Default `true`.
+- `data_can_be_reset`: whether declared data volumes may be deleted and
+  initialized fresh by `ship app fresh-install`. Default `false`.
+- `production_apply_allowed`: when `false`, `ship deploy --apply` refuses a
+  production manifest before staging runtime files. Default `true`.
+
+## Runtime Release Metadata
+
+For service manifests, Ophelia injects these container env vars into the rendered
+Compose environment:
+
+- `OPHELIA_ENVIRONMENT`
+- `OPHELIA_APP`
+- `OPHELIA_SERVICE`
+- `OPHELIA_RELEASE_ID`
+- `OPHELIA_IMAGE_REF`
+- `OPHELIA_IMAGE_DIGEST`
+- `OPHELIA_COMMIT_SHA`
+- `OPHELIA_BUILD_TIME`
+
+Use these values as the recommended source for app-owned `/ophelia/release`
+responses. They are runtime-owned keys; manifest `env` and service `env` values
+with the same names are ignored during Compose rendering.
 
 ## Mounts
 
@@ -536,10 +604,13 @@ data:
       provider: restic
       target: s3://ophelia-fixture-backups/demo-service
       retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/latest.json
 ```
 
-When offsite is required but `provider`, `target`, or `retention_days` is
-missing, pack validation emits `offsite_backup_target_missing`.
+When offsite is required but any actionable field is missing, pack validation
+emits `offsite_backup_target_missing` and lists the exact missing fields.
 
 Named Docker volume ids include the app and environment, for example
 `demo-service-production-uploads`, so staging and production apps on the same

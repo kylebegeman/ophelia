@@ -56,6 +56,13 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixtures/demo-service
+      retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/demo-service-latest.json
 
 hooks:
   pre_export: ophelia/hooks/pre-export.sh

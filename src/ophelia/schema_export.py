@@ -47,7 +47,7 @@ _ENUM_BY_PATH: Dict[str, List[Any]] = {
     "edge.tls.mode": ["auto", "internal", "custom"],
     "console.surface": ["console", "root"],
     "verify_policy.failure_mode": ["hard", "warn"],
-    "verify.type": ["http", "command"],
+    "verify.type": ["http", "command", "internal"],
     "observability.metrics.format": ["prometheus", "json", "none"],
     "observability.metrics.auth": ["none", "bearer_env", "basic_env"],
 }

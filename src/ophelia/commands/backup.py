@@ -45,25 +45,14 @@ def register(subparsers: _SubParsersAction) -> None:
     rehearse_parser = backup_subparsers.add_parser(
         "rehearse", help="Plan or apply an export-artifact rehearsal using the app manifest"
     )
-    rehearse_subparsers = rehearse_parser.add_subparsers(dest="backup_rehearse_command")
-    rehearse_plan_parser = rehearse_subparsers.add_parser("plan", help="Plan an export-artifact rehearsal")
-    rehearse_plan_parser.add_argument("source", type=Path, help="Export bundle directory, .tar, or .tar.zst")
-    rehearse_plan_parser.add_argument("--manifest", type=Path, required=True, help="Path to app .ophelia manifest")
-    rehearse_plan_parser.add_argument("--environment", choices=["dev", "staging", "production"])
-    rehearse_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
-    rehearse_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
-    rehearse_plan_parser.set_defaults(handler=run_backup_rehearse_plan)
-
-    rehearse_apply_parser = rehearse_subparsers.add_parser(
-        "apply", help="Run a token-gated export-artifact rehearsal"
-    )
-    rehearse_apply_parser.add_argument("source", type=Path, help="Export bundle directory, .tar, or .tar.zst")
-    rehearse_apply_parser.add_argument("--manifest", type=Path, required=True, help="Path to app .ophelia manifest")
-    rehearse_apply_parser.add_argument("--environment", choices=["dev", "staging", "production"])
-    rehearse_apply_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
-    rehearse_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from backup rehearse plan")
-    rehearse_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
-    rehearse_apply_parser.set_defaults(handler=run_backup_rehearse_apply)
+    rehearse_parser.add_argument("mode_or_source", help="`plan`, `apply`, or export bundle directory/.tar/.tar.zst")
+    rehearse_parser.add_argument("source", nargs="?", type=Path, help="Export bundle when using `plan` or `apply`")
+    rehearse_parser.add_argument("--manifest", type=Path, required=True, help="Path to app .ophelia manifest")
+    rehearse_parser.add_argument("--environment", choices=["dev", "staging", "production"])
+    rehearse_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    rehearse_parser.add_argument("--confirm", help="Confirmation token from backup rehearse plan when using `apply`")
+    rehearse_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    rehearse_parser.set_defaults(handler=run_backup_rehearse)
 
     status_parser = backup_subparsers.add_parser("status", help="Report backup freshness and coverage")
     status_parser.add_argument("app", help="App id")
@@ -222,6 +211,66 @@ def run_backup_verify_apply(args: Namespace) -> int:
     return 0 if status == "succeeded" else 1
 
 
+def run_backup_rehearse(args: Namespace) -> int:
+    mode = str(args.mode_or_source)
+    if mode in {"plan", "apply"}:
+        if args.source is None:
+            print_error(f"backup rehearse {mode} requires a source artifact.", "backup_rehearse_source_missing", json_output=args.json)
+            return 1
+        if mode == "plan":
+            return run_backup_rehearse_plan(args)
+        if not args.confirm:
+            print_error("backup rehearse apply requires --confirm.", "confirmation_token_missing", json_output=args.json)
+            return 1
+        return run_backup_rehearse_apply(args)
+
+    source = Path(mode)
+    manifest = _load_rehearsal_manifest(args.manifest, args.json)
+    if manifest is None:
+        return 1
+    environment = args.environment or manifest.environment
+    plan = restore_drill_plan(
+        manifest.app,
+        environment=environment,
+        runtime_root=args.runtime_root,
+        manifest_path=args.manifest,
+        source=source,
+        operation_base="backup.rehearse",
+        readiness_gate=False,
+    )
+    if plan.get("blockers"):
+        if args.json:
+            print_json(plan)
+        else:
+            print(plan["summary"])
+            print_issues("Blockers", plan.get("blockers", []))
+            print_issues("Warnings", plan.get("warnings", []))
+        return 1
+    receipt = restore_drill_apply(
+        manifest.app,
+        environment=environment,
+        runtime_root=args.runtime_root,
+        manifest_path=args.manifest,
+        source=source,
+        confirm=plan.get("confirmation_token") if isinstance(plan.get("confirmation_token"), str) else None,
+        operation_base="backup.rehearse",
+        readiness_gate=False,
+        extra_receipt_fields={
+            "one_shot": True,
+            "planned_operation_id": plan.get("operation_id"),
+        },
+    )
+    if args.json:
+        print_json(receipt)
+    else:
+        print(receipt.get("summary") or f"Backup rehearsal {receipt.get('status')}.")
+        if receipt.get("drill_path"):
+            print(f"Drill: {receipt['drill_path']}")
+        print_issues("Blockers", receipt.get("blockers", []))
+        print_issues("Warnings", receipt.get("warnings", []))
+    return 0 if receipt.get("status") == "succeeded" else 1
+
+
 def run_backup_rehearse_plan(args: Namespace) -> int:
     manifest = _load_rehearsal_manifest(args.manifest, args.json)
     if manifest is None:
@@ -341,6 +390,42 @@ register_cli_descriptor(
         safety_notes=[
             "Token-gated. Refuses any rehearsal target resolving into a production app dir or the repo. "
             "Writes only an isolated rehearsal area and a receipt; never overwrites production data; never deletes.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship backup rehearse",
+        operation="backup.rehearse.apply",
+        summary="One-shot native restore rehearsal for an Ophelia export artifact using the app manifest verifier.",
+        risk="medium",
+        mutates_state=True,
+        requires_confirmation=False,
+        plan_command="ship backup rehearse plan",
+        apply_command="ship backup rehearse",
+        json_kind="ophelia.receipt",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "source": {"type": "string"},
+                "manifest": {"type": "string"},
+                "environment": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["source", "manifest"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.receipt.v1",
+        artifacts=["restore drill receipt", "rehearsal checks", "isolated extracted data"],
+        safety_notes=[
+            "Runs plan and apply in one command using the current plan token internally.",
+            "Safely rejects archive paths that escape extraction and writes only under restore-drills.",
+            "Never writes into live runtime directories.",
+        ],
+        examples=[
+            "ship backup rehearse ./demo.production.export.tar --manifest .ophelia.staging.yml --environment staging --json",
         ],
     )
 )

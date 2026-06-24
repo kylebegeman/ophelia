@@ -12,7 +12,7 @@ from .operation_schema import SCHEMA_VERSION
 from .planning import bundle_diff
 from .portability import _backup_records, _restore_drill_receipts, traffic_status
 from .receipt_index import receipt_timeline
-from .runtime import bundle_hash, render_bundle
+from .runtime import active_release, bundle_hash, render_bundle
 from .state_db import state_status, state_summary
 from .templates import RUNTIME_INJECTED_ENV_KEYS
 
@@ -190,7 +190,7 @@ def _rendered_drift(
         "drift" if findings else "clean",
         "runtime",
         f"{len(changed)} changed generated file(s), {len(removed)} removed generated file(s).",
-        desired={"bundle_hash": bundle_hash(render_bundle(manifest))},
+        desired={"bundle_hash": bundle_hash(_render_bundle_for_runtime(manifest, runtime_root))},
         observed={
             "runtime_path": str(runtime_root / "apps" / manifest.app),
             "changed_file_count": len(changed),
@@ -771,7 +771,7 @@ def _aggregate_summary(reports: List[Dict[str, object]], errors: List[Dict[str, 
 def _release_metadata(manifest: Manifest, manifest_path: Path, runtime_root: Path) -> Dict[str, object]:
     release_path = runtime_root / "apps" / manifest.app / "release.json"
     desired_manifest_hash = _file_hash(manifest_path)
-    desired_bundle_hash = bundle_hash(render_bundle(manifest))
+    desired_bundle_hash = bundle_hash(_render_bundle_for_runtime(manifest, runtime_root))
     if not release_path.exists():
         return {
             "present": False,
@@ -799,6 +799,25 @@ def _release_metadata(manifest: Manifest, manifest_path: Path, runtime_root: Pat
         "desired_bundle_hash": desired_bundle_hash,
         "mismatches": mismatches,
     }
+
+
+def _render_bundle_for_runtime(manifest: Manifest, runtime_root: Path) -> Dict[Path, str]:
+    release = active_release(runtime_root, manifest.app) or _latest_release(runtime_root, manifest.app)
+    release_metadata = release.get("runtime_env") if isinstance(release, dict) else None
+    if not isinstance(release_metadata, dict):
+        release_metadata = None
+    return render_bundle(manifest, release_metadata=release_metadata)
+
+
+def _latest_release(runtime_root: Path, app: str) -> Dict[str, object]:
+    release_path = runtime_root / "apps" / app / "release.json"
+    if not release_path.exists():
+        return {}
+    try:
+        payload = json.loads(release_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _env_status(env_example_path: Path, env_path: Path) -> Dict[str, object]:

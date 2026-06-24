@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import json
+import re
 import shlex
 import socket
 import ssl
@@ -10,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -22,6 +24,10 @@ TLS_PHASE = "certificate_obtain"
 ROUTE_PHASE = "external_route_verify"
 DEFAULT_BACKOFF = 1.2
 MAX_INTERVAL = 30.0
+APP_OWNED_PATHS = frozenset({"/ophelia/health", "/ophelia/release"})
+APP_OWNED_COMMAND_MARKERS = frozenset(
+    {"ophelia:health", "ophelia:data:verify", "ophelia:release"}
+)
 
 
 def verification_checks(manifest: Manifest) -> List[VerificationCheck]:
@@ -49,6 +55,51 @@ def verification_checks(manifest: Manifest) -> List[VerificationCheck]:
     return []
 
 
+def app_owned_verification_checks(manifest: Manifest) -> List[VerificationCheck]:
+    return [check for check in verification_checks(manifest) if _is_app_owned_check(check)]
+
+
+def run_app_owned_verifications(
+    manifest: Manifest,
+    timeout: Optional[float] = None,
+    attempts: Optional[int] = 1,
+    delay: Optional[float] = None,
+    interval: Optional[float] = 0,
+    failure_mode: Optional[str] = None,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+) -> Dict[str, Any]:
+    checks = app_owned_verification_checks(manifest)
+    if not checks:
+        return _verification_payload(
+            ok=True,
+            phase="app_owned_verify",
+            attempt=0,
+            policy=effective_verification_policy(
+                manifest,
+                timeout=timeout,
+                attempts=attempts,
+                delay=delay,
+                interval=interval,
+                failure_mode=failure_mode,
+            ),
+            results=[],
+            tls_readiness=[],
+        )
+    scoped_manifest = replace(manifest, verify=checks)
+    payload = run_verifications(
+        scoped_manifest,
+        timeout=timeout,
+        attempts=attempts,
+        delay=delay,
+        interval=interval,
+        failure_mode=failure_mode,
+        wait_for_tls=False,
+        runtime_root=runtime_root,
+    )
+    payload["phase"] = "app_owned_verify"
+    return payload
+
+
 def run_verifications(
     manifest: Manifest,
     timeout: Optional[float] = None,
@@ -61,6 +112,7 @@ def run_verifications(
 ) -> Dict[str, Any]:
     checks = verification_checks(manifest)
     http_checks = [check for check in checks if check.type == "http"]
+    internal_checks = [check for check in checks if check.type == "internal"]
     command_checks = [check for check in checks if check.type == "command"]
     policy = effective_verification_policy(
         manifest,
@@ -97,6 +149,10 @@ def run_verifications(
                 phase = TLS_PHASE
                 results = _tls_results_for_checks(http_checks, tls_readiness)
                 results.extend(
+                    _run_internal_check(manifest, check, runtime_root=runtime_root, timeout=policy["timeout"])
+                    for check in internal_checks
+                )
+                results.extend(
                     _run_command_check(manifest, check, runtime_root=runtime_root, timeout=policy["timeout"])
                     for check in command_checks
                 )
@@ -107,6 +163,10 @@ def run_verifications(
                 _run_check(check, timeout=policy["timeout"], ssl_context=ssl_context)
                 for check in http_checks
             ]
+            results.extend(
+                _run_internal_check(manifest, check, runtime_root=runtime_root, timeout=policy["timeout"])
+                for check in internal_checks
+            )
             results.extend(
                 _run_command_check(manifest, check, runtime_root=runtime_root, timeout=policy["timeout"])
                 for check in command_checks
@@ -126,6 +186,15 @@ def run_verifications(
         time.sleep(_attempt_interval(policy, attempt))
 
     return payload
+
+
+def _is_app_owned_check(check: VerificationCheck) -> bool:
+    if check.type == "internal" and check.path in APP_OWNED_PATHS:
+        return True
+    if check.type != "command":
+        return False
+    command_text = " ".join(check.command or [])
+    return any(marker in command_text for marker in APP_OWNED_COMMAND_MARKERS)
 
 
 def effective_verification_policy(
@@ -208,7 +277,11 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
         }
     display_url = redact_url(check.url)
     name = check.name or display_url
-    request = urllib.request.Request(check.url, headers={"User-Agent": "ophelia-verify/1.0"})
+    request = urllib.request.Request(
+        check.url,
+        headers={"User-Agent": "ophelia-verify/1.0"},
+        method=check.method,
+    )
     try:
         with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
             body = response.read().decode("utf-8", errors="replace")
@@ -216,7 +289,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
             matched = status == check.expect_status
             if matched and check.contains:
                 matched = check.contains in body
-            json_assertions = _json_assertions(body, check.expect_json)
+            json_assertions = _json_assertions(body, check)
             if json_assertions and not all(item["ok"] for item in json_assertions):
                 matched = False
 
@@ -224,6 +297,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
                 "name": name,
                 "type": "http",
                 "url": display_url,
+                "method": check.method,
                 "phase": ROUTE_PHASE,
                 "status_code": status,
                 "expected_status": check.expect_status,
@@ -236,13 +310,14 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
         matched = exc.code == check.expect_status
         if matched and check.contains:
             matched = check.contains in body
-        json_assertions = _json_assertions(body, check.expect_json)
+        json_assertions = _json_assertions(body, check)
         if json_assertions and not all(item["ok"] for item in json_assertions):
             matched = False
         result = {
             "name": name,
             "type": "http",
             "url": display_url,
+            "method": check.method,
             "phase": ROUTE_PHASE,
             "status_code": exc.code,
             "expected_status": check.expect_status,
@@ -259,6 +334,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
             "name": name,
             "type": "http",
             "url": display_url,
+            "method": check.method,
             "phase": ROUTE_PHASE,
             "status_code": None,
             "expected_status": check.expect_status,
@@ -277,7 +353,7 @@ def _run_command_check(
 ) -> Dict[str, Any]:
     app_root = runtime_root / "apps" / manifest.app
     compose_path = app_root / "compose.yml"
-    service = check.service or ""
+    service = _resolved_service_name(manifest, check.service)
     command = list(check.command or [])
     name = check.name or f"{service}:command"
     display_command = redact_command_string(shlex.join(command))
@@ -327,7 +403,7 @@ def _run_command_check(
     stderr = result.stderr or ""
     exit_ok = result.returncode == (0 if check.expect_exit is None else check.expect_exit)
     contains_ok = True if check.contains is None else check.contains in stdout
-    json_assertions = _json_assertions(stdout, check.expect_json)
+    json_assertions = _json_assertions(stdout, check)
     json_ok = all(item["ok"] for item in json_assertions)
     return {
         "name": name,
@@ -345,8 +421,132 @@ def _run_command_check(
     }
 
 
-def _json_assertions(body: str, expected: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not expected:
+def _run_internal_check(
+    manifest: Manifest,
+    check: VerificationCheck,
+    runtime_root: Path,
+    timeout: float,
+) -> Dict[str, Any]:
+    app_root = runtime_root / "apps" / manifest.app
+    compose_path = app_root / "compose.yml"
+    service = _resolved_service_name(manifest, check.service)
+    service_config = manifest.services.get(service)
+    name = check.name or f"{service}:{check.path or '/'}"
+    path = check.path or "/"
+    method = check.method or "GET"
+    if service_config is None:
+        return {
+            "name": name,
+            "type": "internal",
+            "service": check.service,
+            "resolved_service": service,
+            "path": path,
+            "method": method,
+            "phase": "internal_service_verify",
+            "ok": False,
+            "error": f"Service `{check.service}` could not be resolved.",
+            "error_kind": "service_unknown",
+        }
+    if not compose_path.exists():
+        return {
+            "name": name,
+            "type": "internal",
+            "service": check.service,
+            "resolved_service": service,
+            "path": path,
+            "method": method,
+            "phase": "internal_service_verify",
+            "ok": False,
+            "error": f"Compose file not found: {compose_path}",
+            "error_kind": "compose_missing",
+        }
+    script = (
+        "if command -v curl >/dev/null 2>&1; then "
+        "curl -sS -X \"$1\" -w '\\n%{http_code}' \"http://127.0.0.1:$2$3\"; "
+        "else echo 'curl is required for Ophelia internal service verification' >&2; exit 127; fi"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(compose_path),
+                "exec",
+                "-T",
+                service,
+                "sh",
+                "-ec",
+                script,
+                "ophelia-internal-check",
+                method,
+                str(service_config.port),
+                path,
+            ],
+            cwd=app_root,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "name": name,
+            "type": "internal",
+            "service": check.service,
+            "resolved_service": service,
+            "path": path,
+            "method": method,
+            "phase": "internal_service_verify",
+            "ok": False,
+            "error": f"Internal check timed out after {timeout:g}s.",
+            "error_kind": "timeout",
+        }
+    except OSError as exc:
+        return {
+            "name": name,
+            "type": "internal",
+            "service": check.service,
+            "resolved_service": service,
+            "path": path,
+            "method": method,
+            "phase": "internal_service_verify",
+            "ok": False,
+            "error": str(exc),
+            "error_kind": type(exc).__name__,
+        }
+
+    body, status_code = _split_internal_response(result.stdout or "")
+    json_assertions = _json_assertions(body, check)
+    status_ok = status_code == check.expect_status
+    contains_ok = True if check.contains is None else check.contains in body
+    json_ok = all(item["ok"] for item in json_assertions)
+    ok = result.returncode == 0 and status_ok and contains_ok and json_ok
+    payload = {
+        "name": name,
+        "type": "internal",
+        "service": check.service,
+        "resolved_service": service,
+        "path": path,
+        "method": method,
+        "phase": "internal_service_verify",
+        "status_code": status_code,
+        "expected_status": check.expect_status,
+        "contains": check.contains,
+        "json_assertions": json_assertions,
+        "stdout_excerpt": _redacted_excerpt(body),
+        "stderr_excerpt": _redacted_excerpt(result.stderr or ""),
+        "ok": ok,
+    }
+    if result.returncode != 0:
+        payload["error"] = "Internal service check command failed."
+        payload["error_kind"] = "internal_check_command_failed"
+        payload["returncode"] = result.returncode
+    return payload
+
+
+def _json_assertions(body: str, check: VerificationCheck) -> List[Dict[str, Any]]:
+    assertions = _normalized_json_assertions(check)
+    if not assertions:
         return []
     try:
         payload = json.loads(body)
@@ -360,38 +560,299 @@ def _json_assertions(body: str, expected: Optional[Dict[str, Any]]) -> List[Dict
                 "error": str(exc),
             }
         ]
-    assertions: List[Dict[str, Any]] = []
-    for field_path, expected_value in sorted(expected.items()):
-        found, actual = _json_path(payload, field_path)
-        ok = found and actual == expected_value
-        assertions.append(
+    results: List[Dict[str, Any]] = []
+    for assertion in assertions:
+        result = _evaluate_json_assertion(payload, assertion)
+        results.append(
             deep_redact(
-                {
-                    "path": field_path,
-                    "ok": ok,
-                    "expected": expected_value,
-                    "actual": actual if found else None,
-                    "present": found,
-                },
+                result,
                 propagate=True,
             )
         )
+    return results
+
+
+def _normalized_json_assertions(check: VerificationCheck) -> List[Dict[str, Any]]:
+    assertions: List[Dict[str, Any]] = []
+    if check.expect_json:
+        assertions.extend(_expect_json_assertions(check.expect_json))
+    for index, raw in enumerate(check.json_assertions):
+        assertions.append(_normalize_json_assertion(raw, index))
     return assertions
 
 
+def _expect_json_assertions(expect_json: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "path": path,
+            "kind": "equals",
+            "expected": expected,
+            "condition": "equals",
+        }
+        for path, expected in sorted(expect_json.items())
+    ]
+
+
+def _normalize_json_assertion(raw: Any, index: int) -> Dict[str, Any]:
+    if isinstance(raw, str):
+        return _assertion_from_string(raw)
+    if not isinstance(raw, dict):
+        return {
+            "path": f"json_assertions[{index}]",
+            "kind": "invalid",
+            "condition": "valid assertion",
+            "error": "JSON assertion must be a string or mapping.",
+        }
+    path = raw.get("path")
+    if not isinstance(path, str) or not path.strip():
+        return {
+            "path": f"json_assertions[{index}].path",
+            "kind": "invalid",
+            "condition": "valid path",
+            "error": "JSON assertion mapping requires a non-empty `path`.",
+        }
+    if "equals" in raw:
+        return {
+            "path": path,
+            "kind": "equals",
+            "expected": raw.get("equals"),
+            "condition": "equals",
+        }
+    if "present" in raw:
+        return {
+            "path": path,
+            "kind": "present",
+            "expected": bool(raw.get("present")),
+            "condition": "present" if raw.get("present") is not False else "absent",
+        }
+    if "exists" in raw:
+        return {
+            "path": path,
+            "kind": "present",
+            "expected": bool(raw.get("exists")),
+            "condition": "present" if raw.get("exists") is not False else "absent",
+        }
+    if raw.get("is_true") is True:
+        return {"path": path, "kind": "boolean", "expected": True, "condition": "is true"}
+    if raw.get("is_false") is True:
+        return {"path": path, "kind": "boolean", "expected": False, "condition": "is false"}
+    if "regex" in raw:
+        regex = raw.get("regex")
+        if not isinstance(regex, str) or not regex:
+            return {
+                "path": path,
+                "kind": "invalid",
+                "condition": "valid regex",
+                "error": "`regex` must be a non-empty string.",
+            }
+        return {"path": path, "kind": "regex", "expected": regex, "condition": f"matches {regex}"}
+    return {
+        "path": path,
+        "kind": "invalid",
+        "condition": "supported assertion",
+        "error": "JSON assertion mapping must include one of `equals`, `present`, `exists`, `is_true`, `is_false`, or `regex`.",
+    }
+
+
+def _assertion_from_string(expression: str) -> Dict[str, Any]:
+    text = expression.strip()
+    regex_match = re.match(r"^(.+?)\s*(?:=~|matches)\s*(.+)$", text)
+    if regex_match:
+        path = regex_match.group(1).strip()
+        expected = _parse_literal(regex_match.group(2).strip())
+        if not isinstance(expected, str):
+            expected = str(expected)
+        return {"path": path, "kind": "regex", "expected": expected, "condition": f"matches {expected}"}
+
+    equals_match = re.match(r"^(.+?)\s*==\s*(.+)$", text)
+    if equals_match:
+        path = equals_match.group(1).strip()
+        expected = _parse_literal(equals_match.group(2).strip())
+        return {"path": path, "kind": "equals", "expected": expected, "condition": "equals"}
+
+    present_match = re.match(r"^(.+?)\s+(?:exists|present)$", text, flags=re.IGNORECASE)
+    if present_match:
+        return {
+            "path": present_match.group(1).strip(),
+            "kind": "present",
+            "expected": True,
+            "condition": "present",
+        }
+
+    bool_match = re.match(r"^(.+?)\s+is\s+(true|false)$", text, flags=re.IGNORECASE)
+    if bool_match:
+        expected = bool_match.group(2).lower() == "true"
+        return {
+            "path": bool_match.group(1).strip(),
+            "kind": "boolean",
+            "expected": expected,
+            "condition": "is true" if expected else "is false",
+        }
+
+    return {
+        "path": text or "<empty>",
+        "kind": "invalid",
+        "condition": "supported assertion",
+        "error": "Use `$.path == value`, `$.path exists`, `$.path is true`, or `$.path =~ \"regex\"`.",
+    }
+
+
+def _parse_literal(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value.strip("\"'")
+
+
+def _evaluate_json_assertion(payload: Any, assertion: Dict[str, Any]) -> Dict[str, Any]:
+    path = str(assertion.get("path", ""))
+    kind = assertion.get("kind")
+    condition = str(assertion.get("condition", kind or "assertion"))
+    if kind == "invalid":
+        return {
+            "path": path,
+            "condition": condition,
+            "ok": False,
+            "message": assertion.get("error", "Invalid JSON assertion."),
+        }
+
+    present, actual = _json_path(payload, path)
+    expected = assertion.get("expected")
+    result: Dict[str, Any] = {
+        "path": path,
+        "condition": condition,
+        "present": present,
+        "ok": False,
+    }
+    if kind == "present":
+        result["expected"] = bool(expected)
+        result["ok"] = present is bool(expected)
+        result["message"] = _assertion_message(path, result["ok"], condition)
+        return result
+    if not present:
+        result["expected"] = expected
+        result["actual"] = "<missing>"
+        result["message"] = _assertion_message(path, False, condition)
+        return result
+    if kind == "equals":
+        result["expected"] = expected
+        result["actual"] = actual
+        result["ok"] = actual == expected
+        result["message"] = _assertion_message(path, result["ok"], condition)
+        return result
+    if kind == "boolean":
+        result["expected"] = bool(expected)
+        result["actual"] = actual
+        result["ok"] = isinstance(actual, bool) and actual is bool(expected)
+        result["message"] = _assertion_message(path, result["ok"], condition)
+        return result
+    if kind == "regex":
+        result["expected"] = expected
+        result["actual"] = actual
+        result["ok"] = isinstance(actual, str) and bool(re.search(str(expected), actual))
+        result["message"] = _assertion_message(path, result["ok"], condition)
+        return result
+
+    result["message"] = f"Unsupported JSON assertion `{kind}` for path `{path}`."
+    return result
+
+
+def _assertion_message(path: str, ok: bool, condition: str) -> str:
+    if ok:
+        return f"JSON path `{path}` satisfied `{condition}`."
+    return f"JSON path `{path}` did not satisfy `{condition}`."
+
+
 def _json_path(payload: Any, field_path: str) -> Tuple[bool, Any]:
+    tokens = _json_path_tokens(field_path)
+    if tokens is None:
+        return False, None
     current = payload
-    for part in field_path.split("."):
+    for part in tokens:
         if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        if isinstance(current, list) and isinstance(part, int) and 0 <= part < len(current):
             current = current[part]
             continue
         return False, None
     return True, current
 
 
+def _json_path_tokens(field_path: str) -> Optional[List[str | int]]:
+    text = field_path.strip()
+    if not text:
+        return None
+    if text == "$":
+        return []
+    if text.startswith("$."):
+        text = text[2:]
+    elif text.startswith("$["):
+        text = text[1:]
+    tokens: List[str | int] = []
+    index = 0
+    while index < len(text):
+        if text[index] == ".":
+            index += 1
+            continue
+        if text[index] == "[":
+            close = text.find("]", index)
+            if close == -1:
+                return None
+            raw_index = text[index + 1 : close].strip()
+            if not raw_index.isdigit():
+                return None
+            tokens.append(int(raw_index))
+            index = close + 1
+            continue
+        next_dot = text.find(".", index)
+        next_bracket = text.find("[", index)
+        stops = [pos for pos in (next_dot, next_bracket) if pos != -1]
+        stop = min(stops) if stops else len(text)
+        token = text[index:stop]
+        if not token:
+            return None
+        tokens.append(token)
+        index = stop
+    return tokens
+
+
+def _resolved_service_name(manifest: Manifest, service: Optional[str]) -> str:
+    if service == "app" and len(manifest.services) == 1:
+        return next(iter(manifest.services))
+    if service:
+        return service
+    if len(manifest.services) == 1:
+        return next(iter(manifest.services))
+    return ""
+
+
+def _split_internal_response(stdout: str) -> Tuple[str, int]:
+    if not stdout:
+        return "", 0
+    stripped = stdout.rstrip("\n")
+    if "\n" not in stripped:
+        try:
+            return "", int(stripped)
+        except ValueError:
+            return stdout, 0
+    body, status = stripped.rsplit("\n", 1)
+    try:
+        return body, int(status)
+    except ValueError:
+        return stdout, 0
+
+
 def _redacted_excerpt(value: str, limit: int = 240) -> str:
     if not value:
         return ""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = None
+    if parsed is not None:
+        redacted_json = json.dumps(deep_redact(parsed, propagate=True), sort_keys=True)
+        return redacted_json.replace("\x00", "")[:limit]
     redacted = deep_redact({"value": value}, propagate=True).get("value", "")
     return str(redacted).replace("\x00", "")[:limit]
 

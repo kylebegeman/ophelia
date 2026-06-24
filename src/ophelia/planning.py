@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -9,7 +10,7 @@ from .manifest import Manifest
 from .operation_schema import attach_digest, diff_artifact, operation_id
 from .policy import policy_check_entry
 from .redaction import redact_url, redacted_compose_text
-from .runtime import bundle_hash, image_digests, image_references, render_bundle
+from .runtime import active_release, bundle_hash, image_digests, image_references, render_bundle
 from .verify import verification_checks
 
 
@@ -19,7 +20,7 @@ def deploy_plan(
     runtime_root: Path,
     artifacts_dir: Optional[Path] = None,
 ) -> Dict[str, object]:
-    bundle = render_bundle(manifest)
+    bundle = _render_bundle_for_runtime(manifest, runtime_root)
     diff = bundle_diff(manifest, runtime_root)
     env_requirements = _env_requirements(bundle.get(Path("env.example"), ""))
     checks = verification_checks(manifest)
@@ -194,7 +195,7 @@ def _write_compose_diff_artifact(
 
 
 def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:
-    bundle = render_bundle(manifest)
+    bundle = _render_bundle_for_runtime(manifest, runtime_root)
     app_root = runtime_root / "apps" / manifest.app
     changed_files = []
     for relative_path, desired_content in sorted(bundle.items()):
@@ -232,6 +233,25 @@ def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:
         "compose_changes": compose_changes,
         "clean": not changed_files and not removed_files,
     }
+
+
+def _render_bundle_for_runtime(manifest: Manifest, runtime_root: Path) -> Dict[Path, str]:
+    release = active_release(runtime_root, manifest.app) or _latest_release(runtime_root, manifest.app)
+    release_metadata = release.get("runtime_env") if isinstance(release, dict) else None
+    if not isinstance(release_metadata, dict):
+        release_metadata = None
+    return render_bundle(manifest, release_metadata=release_metadata)
+
+
+def _latest_release(runtime_root: Path, app: str) -> Dict[str, object]:
+    release_path = runtime_root / "apps" / app / "release.json"
+    if not release_path.exists():
+        return {}
+    try:
+        payload = json.loads(release_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def deploy_confirmation_token(plan: Dict[str, object]) -> str:

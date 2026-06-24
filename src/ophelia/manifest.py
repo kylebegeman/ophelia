@@ -31,6 +31,8 @@ class MountConfig:
 @dataclass
 class VerificationCheck:
     url: Optional[str] = None
+    path: Optional[str] = None
+    method: str = "GET"
     expect_status: int = 200
     contains: Optional[str] = None
     name: Optional[str] = None
@@ -39,6 +41,7 @@ class VerificationCheck:
     command: Optional[List[str]] = None
     expect_exit: Optional[int] = None
     expect_json: Optional[Dict[str, Any]] = None
+    json_assertions: List[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -111,6 +114,9 @@ class OffsiteBackupConfig:
     provider: Optional[str] = None
     target: Optional[str] = None
     retention_days: Optional[int] = None
+    encryption_required: Optional[bool] = None
+    restore_rehearsal_cadence_days: Optional[int] = None
+    last_rehearsal_ref: Optional[str] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -120,6 +126,14 @@ class DataBackupsConfig:
     restore_drill_required: bool = False
     offsite_required: bool = False
     offsite: Optional[OffsiteBackupConfig] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class LifecycleConfig:
+    live: bool = True
+    data_can_be_reset: bool = False
+    production_apply_allowed: bool = True
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -263,6 +277,7 @@ class Manifest:
     data: DataConfig = field(default_factory=DataConfig)
     hooks: HooksConfig = field(default_factory=HooksConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
     depends_on: List[str] = field(default_factory=list)
     deployment_order: Optional[int] = None
     migration_before: List[str] = field(default_factory=list)
@@ -315,6 +330,7 @@ def load_manifest(path: Path) -> Manifest:
     data = _parse_data(raw.get("data"), addons)
     hooks = _parse_hooks(raw.get("hooks"))
     observability = _parse_observability(raw.get("observability"))
+    lifecycle = _parse_lifecycle(raw.get("lifecycle"))
 
     manifest = Manifest(
         version=version,
@@ -344,6 +360,7 @@ def load_manifest(path: Path) -> Manifest:
         data=data,
         hooks=hooks,
         observability=observability,
+        lifecycle=lifecycle,
         depends_on=_string_list(raw.get("depends_on", []), "depends_on"),
         deployment_order=_optional_int(raw.get("deployment_order"), "deployment_order"),
         migration_before=_string_list(raw.get("migration_before", []), "migration_before"),
@@ -574,9 +591,14 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
 
         check_type = _optional_str(item.get("type"), f"verify[{index}].type")
         if check_type is None:
-            check_type = "command" if item.get("command") is not None else "http"
-        if check_type not in {"http", "command"}:
-            raise ManifestError(f"`verify[{index}].type` must be `http` or `command`.")
+            if item.get("command") is not None:
+                check_type = "command"
+            elif item.get("path") is not None:
+                check_type = "internal"
+            else:
+                check_type = "http"
+        if check_type not in {"http", "command", "internal"}:
+            raise ManifestError(f"`verify[{index}].type` must be `http`, `command`, or `internal`.")
         url = _optional_str(item.get("url"), f"verify[{index}].url")
         if check_type == "http":
             if url is None or not url.startswith(("http://", "https://")):
@@ -590,10 +612,20 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
             raise ManifestError(f"`verify[{index}].url` is only supported for `type: http` checks.")
 
         service = _optional_str(item.get("service"), f"verify[{index}].service")
+        path = _optional_path(item.get("path"), f"verify[{index}].path")
+        method = _optional_http_method(item.get("method"), f"verify[{index}].method") or "GET"
         command = _optional_command(item.get("command"), f"verify[{index}].command")
         if check_type == "command" and (service is None or not command):
             raise ManifestError(f"`verify[{index}]` command checks require `service` and `command`.")
         if check_type == "http" and command:
+            raise ManifestError(f"`verify[{index}].command` is only supported for `type: command` checks.")
+        if check_type == "http" and path is not None:
+            raise ManifestError(f"`verify[{index}].path` is only supported for `type: internal` checks.")
+        if check_type == "command" and path is not None:
+            raise ManifestError(f"`verify[{index}].path` is only supported for `type: internal` checks.")
+        if check_type == "internal" and (service is None or path is None):
+            raise ManifestError(f"`verify[{index}]` internal checks require `service` and `path`.")
+        if check_type == "internal" and command:
             raise ManifestError(f"`verify[{index}].command` is only supported for `type: command` checks.")
 
         expect_exit = _optional_exit_code(item.get("expect_exit"), f"verify[{index}].expect_exit")
@@ -605,9 +637,12 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
         contains = _optional_str(item.get("contains"), f"verify[{index}].contains")
         name = _optional_str(item.get("name"), f"verify[{index}].name")
         expect_json = _parse_expect_json(item.get("expect_json"), f"verify[{index}].expect_json")
+        json_assertions = _parse_json_assertions(item.get("json_assertions"), f"verify[{index}].json_assertions")
         checks.append(
             VerificationCheck(
                 url=url,
+                path=path,
+                method=method,
                 expect_status=expect_status,
                 contains=contains,
                 name=name,
@@ -616,6 +651,7 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
                 command=command,
                 expect_exit=expect_exit,
                 expect_json=expect_json,
+                json_assertions=json_assertions,
             )
         )
     return checks
@@ -870,13 +906,47 @@ def _parse_offsite_backup(raw: Any) -> Optional[OffsiteBackupConfig]:
         return None
     if not isinstance(raw, dict):
         raise ManifestError("`data.backups.offsite` must be a mapping.")
-    known = {"provider", "target", "retention_days"}
+    known = {
+        "provider",
+        "target",
+        "retention_days",
+        "encryption_required",
+        "restore_rehearsal_cadence_days",
+        "last_rehearsal_ref",
+    }
     return OffsiteBackupConfig(
         provider=_optional_str(raw.get("provider"), "data.backups.offsite.provider"),
         target=_optional_offsite_target(raw.get("target"), "data.backups.offsite.target"),
         retention_days=_optional_int(raw.get("retention_days"), "data.backups.offsite.retention_days"),
+        encryption_required=_optional_bool(raw.get("encryption_required"), "data.backups.offsite.encryption_required"),
+        restore_rehearsal_cadence_days=_optional_int(
+            raw.get("restore_rehearsal_cadence_days"),
+            "data.backups.offsite.restore_rehearsal_cadence_days",
+        ),
+        last_rehearsal_ref=_optional_str(raw.get("last_rehearsal_ref"), "data.backups.offsite.last_rehearsal_ref"),
         extra={
             key: _json_compatible(value, f"data.backups.offsite.{key}")
+            for key, value in raw.items()
+            if key not in known
+        },
+    )
+
+
+def _parse_lifecycle(raw: Any) -> LifecycleConfig:
+    if raw is None:
+        return LifecycleConfig()
+    if not isinstance(raw, dict):
+        raise ManifestError("`lifecycle` must be a mapping.")
+    known = {"live", "data_can_be_reset", "production_apply_allowed"}
+    return LifecycleConfig(
+        live=_as_bool(raw.get("live", True), "lifecycle.live"),
+        data_can_be_reset=_as_bool(raw.get("data_can_be_reset", False), "lifecycle.data_can_be_reset"),
+        production_apply_allowed=_as_bool(
+            raw.get("production_apply_allowed", True),
+            "lifecycle.production_apply_allowed",
+        ),
+        extra={
+            key: _json_compatible(value, f"lifecycle.{key}")
             for key, value in raw.items()
             if key not in known
         },
@@ -1100,9 +1170,11 @@ def _validate_data_volumes(manifest: Manifest) -> None:
 def _validate_verification_checks(manifest: Manifest) -> None:
     for index, check in enumerate(manifest.verify):
         field_name = f"verify[{index}]"
-        if check.type == "command":
+        if check.type in {"command", "internal"}:
             if manifest.kind not in {"service", "multi-service"}:
-                raise ManifestError(f"`{field_name}` command checks require a service-based manifest.")
+                raise ManifestError(f"`{field_name}` {check.type} checks require a service-based manifest.")
+            if check.service == "app" and len(manifest.services) == 1:
+                continue
             if check.service not in manifest.services:
                 raise ManifestError(f"`{field_name}.service` references unknown service `{check.service}`.")
 
@@ -1270,6 +1342,16 @@ def _optional_path(value: Any, field_name: str) -> Optional[str]:
     return result
 
 
+def _optional_http_method(value: Any, field_name: str) -> Optional[str]:
+    method = _optional_str(value, field_name)
+    if method is None:
+        return None
+    normalized = method.upper()
+    if not normalized.replace("-", "").isalpha():
+        raise ManifestError(f"`{field_name}` must be an HTTP method token.")
+    return normalized
+
+
 def _optional_int(value: Any, field_name: str) -> Optional[int]:
     if value is None:
         return None
@@ -1358,6 +1440,31 @@ def _parse_expect_json(value: Any, field_name: str) -> Optional[Dict[str, Any]]:
         _mapping_key(key, field_name): _json_compatible(item, f"{field_name}.{key}")
         for key, item in value.items()
     }
+
+
+def _parse_json_assertions(value: Any, field_name: str) -> List[Any]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ManifestError(f"`{field_name}` must be a list of assertion strings or mappings.")
+    assertions: List[Any] = []
+    for index, item in enumerate(value):
+        item_field = f"{field_name}[{index}]"
+        if isinstance(item, str):
+            if not item.strip():
+                raise ManifestError(f"`{item_field}` must be a non-empty assertion string.")
+            assertions.append(item)
+            continue
+        if isinstance(item, dict):
+            assertions.append(
+                {
+                    _mapping_key(key, item_field): _json_compatible(assertion_value, f"{item_field}.{key}")
+                    for key, assertion_value in item.items()
+                }
+            )
+            continue
+        raise ManifestError(f"`{item_field}` must be a string or mapping.")
+    return assertions
 
 
 def _mapping_as_str_dict(value: Any, field_name: str) -> Dict[str, str]:

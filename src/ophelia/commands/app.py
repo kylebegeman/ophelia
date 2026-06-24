@@ -26,6 +26,8 @@ from ..portability import (
     cutover_plan,
     export_create,
     export_plan,
+    fresh_install_apply,
+    fresh_install_plan,
     import_apply,
     import_plan,
     isolation_plan,
@@ -100,6 +102,30 @@ def register(subparsers: _SubParsersAction) -> None:
     adoption_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     adoption_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     adoption_plan_parser.set_defaults(handler=run_adoption_plan)
+
+    fresh_install = app_subparsers.add_parser("fresh-install", help="Reset declared data volumes for a non-live app")
+    fresh_install_subparsers = fresh_install.add_subparsers(dest="app_fresh_install_command")
+    fresh_plan_parser = fresh_install_subparsers.add_parser("plan", help="Plan a non-live fresh install without mutation")
+    fresh_plan_parser.add_argument("app", help="App id")
+    fresh_plan_parser.add_argument("--environment", choices=["dev", "staging", "production"])
+    fresh_plan_parser.add_argument("--manifest", type=Path, help="Path to app .ophelia manifest")
+    fresh_plan_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    fresh_plan_parser.add_argument("--non-live", action="store_true", help="Mark this operation as targeting a non-live app")
+    fresh_plan_parser.add_argument("--fresh-start-allowed", action="store_true", help="Explicitly allow data reset when manifest lifecycle does not yet say so")
+    fresh_plan_parser.add_argument("--skip-pre-reset-export", action="store_true", help="Skip the default pre-reset export preservation")
+    fresh_plan_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    fresh_plan_parser.set_defaults(handler=run_fresh_install_plan)
+    fresh_apply_parser = fresh_install_subparsers.add_parser("apply", help="Apply a confirmed non-live fresh install")
+    fresh_apply_parser.add_argument("app", help="App id")
+    fresh_apply_parser.add_argument("--environment", choices=["dev", "staging", "production"])
+    fresh_apply_parser.add_argument("--manifest", type=Path, help="Path to app .ophelia manifest")
+    fresh_apply_parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    fresh_apply_parser.add_argument("--non-live", action="store_true", help="Mark this operation as targeting a non-live app")
+    fresh_apply_parser.add_argument("--fresh-start-allowed", action="store_true", help="Explicitly allow data reset when manifest lifecycle does not yet say so")
+    fresh_apply_parser.add_argument("--skip-pre-reset-export", action="store_true", help="Skip the default pre-reset export preservation")
+    fresh_apply_parser.add_argument("--confirm", required=True, help="Confirmation token from app fresh-install plan")
+    fresh_apply_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    fresh_apply_parser.set_defaults(handler=run_fresh_install_apply)
 
     export = app_subparsers.add_parser("export", help="Plan app export bundles")
     export_subparsers = export.add_subparsers(dest="app_export_command")
@@ -454,6 +480,43 @@ def run_adoption_plan(args: Namespace) -> int:
     else:
         _print_adoption_plan(plan)
     return 0 if not plan.get("blockers") else 1
+
+
+def run_fresh_install_plan(args: Namespace) -> int:
+    plan = fresh_install_plan(
+        app=args.app,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+        manifest_path=args.manifest,
+        non_live=args.non_live,
+        fresh_start_allowed=args.fresh_start_allowed,
+        skip_pre_reset_export=args.skip_pre_reset_export,
+    )
+    if args.json:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    else:
+        _print_fresh_install_plan(plan)
+    return 0 if not plan.get("blockers") else 1
+
+
+def run_fresh_install_apply(args: Namespace) -> int:
+    receipt = fresh_install_apply(
+        app=args.app,
+        environment=args.environment,
+        runtime_root=args.runtime_root,
+        manifest_path=args.manifest,
+        confirm=args.confirm,
+        non_live=args.non_live,
+        fresh_start_allowed=args.fresh_start_allowed,
+        skip_pre_reset_export=args.skip_pre_reset_export,
+    )
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        print(receipt.get("summary") or f"Fresh install {receipt['status']}.")
+        _print_string_items("Blockers", receipt.get("blockers", []))
+        _print_string_items("Warnings", receipt.get("warnings", []))
+    return 0 if receipt["status"] == "succeeded" else 1
 
 
 def run_export_plan(args: Namespace) -> int:
@@ -942,6 +1005,21 @@ def _print_export_plan(plan: dict) -> None:
     print(f"Confirmation token: {plan.get('confirmation_token')}")
 
 
+def _print_fresh_install_plan(plan: dict) -> None:
+    print(plan["summary"])
+    print(f"App: {plan.get('app') or 'unknown'}")
+    print(f"Environment: {plan.get('environment') or 'unknown'}")
+    targets = plan.get("reset_targets") if isinstance(plan.get("reset_targets"), list) else []
+    print(f"Reset targets: {len(targets)}")
+    for target in targets:
+        if isinstance(target, dict):
+            print(f"  - {target.get('kind')}: {target.get('path') or target.get('volume') or target.get('name')}")
+    print(f"Pre-reset export: {'required' if plan.get('pre_reset_export_required') else 'skipped'}")
+    _print_string_items("Blockers", plan.get("blockers", []))
+    _print_string_items("Warnings", plan.get("warnings", []))
+    print(f"Confirmation token: {plan.get('confirmation_token')}")
+
+
 def _print_import_plan(plan: dict) -> None:
     print(plan["summary"])
     print(f"App: {plan.get('app') or 'unknown'}")
@@ -1016,6 +1094,78 @@ register_cli_descriptor(
             "Read-only adoption planning. Does not mutate app repos, runtime roots, VPS state, providers, or GitHub.",
             "Uses Ophelia manifest and pack validation as the contract source of truth.",
             "Does not collect live env values, secret values, probes, or production evidence.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app fresh-install plan",
+        operation="app.fresh-install.plan",
+        summary="Plan a guarded fresh install for a non-live app by resetting declared data volumes.",
+        risk="high",
+        mutates_state=False,
+        requires_confirmation=True,
+        plan_command="ship app fresh-install plan",
+        apply_command="ship app fresh-install apply",
+        json_kind="ophelia.plan",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "manifest": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "non_live": {"type": "boolean"},
+                "fresh_start_allowed": {"type": "boolean"},
+                "skip_pre_reset_export": {"type": "boolean"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app"],
+            "additionalProperties": False,
+        },
+        output_schema_ref="ophelia.plan.v1",
+        artifacts=["planned reset evidence", "optional pre-reset export plan"],
+        safety_notes=[
+            "Read-only plan. Apply is blocked unless lifecycle marks the app non-live and resettable, or explicit non-live command flags are supplied.",
+            "Pre-reset export preservation is planned by default and must be skipped explicitly.",
+        ],
+    )
+)
+
+register_cli_descriptor(
+    CommandDescriptor(
+        command="ship app fresh-install apply",
+        operation="app.fresh-install.apply",
+        summary="Reset declared data volumes for a confirmed non-live fresh install and record evidence.",
+        risk="high",
+        mutates_state=True,
+        requires_confirmation=True,
+        plan_command="ship app fresh-install plan",
+        apply_command="ship app fresh-install apply",
+        json_kind="ophelia.receipt",
+        args_schema={
+            "type": "object",
+            "properties": {
+                "app": {"type": "string"},
+                "environment": {"enum": ["dev", "staging", "production"]},
+                "manifest": {"type": "string"},
+                "runtime_root": {"type": "string"},
+                "confirm": {"type": "string"},
+                "non_live": {"type": "boolean"},
+                "fresh_start_allowed": {"type": "boolean"},
+                "skip_pre_reset_export": {"type": "boolean"},
+                "json": {"type": "boolean"},
+            },
+            "required": ["app", "confirm"],
+            "additionalProperties": False,
+        },
+        output_schema_ref=RECEIPT_SCHEMA_REF,
+        artifacts=["fresh-install receipt", "reset evidence", "post-reset verification report"],
+        safety_notes=[
+            "Destructive. Resets only manifest-declared data.volumes targets.",
+            "Creates a pre-reset export before deletion unless --skip-pre-reset-export is passed.",
+            "Runs post-reset verification and redacts verifier output in reports.",
         ],
     )
 )

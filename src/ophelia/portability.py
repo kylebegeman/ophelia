@@ -45,8 +45,8 @@ from .redaction import (
     redacted_compose_text,
 )
 from .runtime import active_release, active_release_id, image_references, latest_release_id
-from .templates import RUNTIME_INJECTED_ENV_KEYS, compose_network_summary, render_env_example
-from .verify import verification_checks
+from .templates import RUNTIME_INJECTED_ENV_KEYS, compose_network_summary, data_volume_name, render_env_example
+from .verify import run_app_owned_verifications, run_verifications, verification_checks
 
 
 EXPORT_BUNDLE_FORMAT_VERSION = 1
@@ -231,11 +231,14 @@ def pack_validation_report(
             "No offsite backup requirement is recorded for this pack.",
         )
     elif not _offsite_backup_config_complete(data.backups):
+        missing_offsite = _offsite_backup_missing_fields(data.backups)
         _issue(
             warnings,
             "offsite_backup_target_missing",
             "data.backups.offsite",
-            "Offsite backups are required, but provider, target, and retention_days are not all declared.",
+            "Offsite backups are required, but these fields are missing: "
+            + ", ".join(missing_offsite)
+            + ".",
         )
     if manifest.environment == "production":
         for service, image in sorted(image_references(manifest).items()):
@@ -296,10 +299,34 @@ def pack_validation_report(
 
 
 def _offsite_backup_config_complete(backups: object) -> bool:
+    return not _offsite_backup_missing_fields(backups)
+
+
+def _offsite_backup_missing_fields(backups: object) -> List[str]:
     offsite = getattr(backups, "offsite", None)
     if offsite is None:
-        return False
-    return bool(offsite.provider and offsite.target and offsite.retention_days)
+        return [
+            "provider",
+            "target",
+            "retention_days",
+            "encryption_required",
+            "restore_rehearsal_cadence_days",
+            "last_rehearsal_ref",
+        ]
+    missing: List[str] = []
+    if not offsite.provider:
+        missing.append("provider")
+    if not offsite.target:
+        missing.append("target")
+    if not offsite.retention_days:
+        missing.append("retention_days")
+    if offsite.encryption_required is None:
+        missing.append("encryption_required")
+    if not offsite.restore_rehearsal_cadence_days:
+        missing.append("restore_rehearsal_cadence_days")
+    if not offsite.last_rehearsal_ref:
+        missing.append("last_rehearsal_ref")
+    return missing
 
 
 def _offsite_requirement_summary(manifest: Optional[Manifest]) -> Dict[str, object]:
@@ -312,12 +339,19 @@ def _offsite_requirement_summary(manifest: Optional[Manifest]) -> Dict[str, obje
             "provider": offsite.provider if offsite is not None else None,
             "target": offsite.target if offsite is not None else None,
             "retention_days": offsite.retention_days if offsite is not None else None,
+            "encryption_required": offsite.encryption_required if offsite is not None else None,
+            "restore_rehearsal_cadence_days": (
+                offsite.restore_rehearsal_cadence_days if offsite is not None else None
+            ),
+            "last_rehearsal_ref": offsite.last_rehearsal_ref if offsite is not None else None,
+            "missing_fields": _offsite_backup_missing_fields(backups) if backups is not None else [],
         },
         propagate=True,
     )
 
 
 def _verification_check_summary(check: VerificationCheck) -> Dict[str, object]:
+    json_assertions = deep_redact(check.json_assertions or [], propagate=True)
     if check.type == "command":
         command = shlex.join(check.command or [])
         return {
@@ -327,6 +361,19 @@ def _verification_check_summary(check: VerificationCheck) -> Dict[str, object]:
             "command": redact_command_string(command),
             "expect_exit": 0 if check.expect_exit is None else check.expect_exit,
             "expect_json": deep_redact(check.expect_json or {}, propagate=True),
+            "json_assertions": json_assertions,
+        }
+    if check.type == "internal":
+        return {
+            "name": check.name or f"{check.service}:{check.path}",
+            "type": "internal",
+            "service": check.service,
+            "path": check.path,
+            "method": check.method,
+            "expect_status": check.expect_status,
+            "contains": check.contains,
+            "expect_json": deep_redact(check.expect_json or {}, propagate=True),
+            "json_assertions": json_assertions,
         }
     url = check.url or ""
     return {
@@ -336,6 +383,7 @@ def _verification_check_summary(check: VerificationCheck) -> Dict[str, object]:
         "expect_status": check.expect_status,
         "contains": check.contains,
         "expect_json": deep_redact(check.expect_json or {}, propagate=True),
+        "json_assertions": json_assertions,
     }
 
 
@@ -840,6 +888,298 @@ def export_create(
     return receipt
 
 
+def fresh_install_plan(
+    app: str,
+    environment: Optional[str] = None,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifest_path: Optional[Path] = None,
+    *,
+    non_live: bool = False,
+    fresh_start_allowed: bool = False,
+    skip_pre_reset_export: bool = False,
+) -> Dict[str, object]:
+    resolution = resolve_app_manifest(app, environment, manifest_path=manifest_path)
+    blockers: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    checks: List[Dict[str, object]] = []
+    reset_targets: List[Dict[str, object]] = []
+    manifest = resolution.manifest
+    resolved_environment = environment or (manifest.environment if manifest is not None else None) or "unknown"
+    if manifest is None or resolution.manifest_path is None:
+        blockers.extend(schema_issue("manifest_unresolved", message) for message in resolution.blockers)
+        warnings.extend(schema_issue("manifest_warning", message) for message in resolution.warnings)
+    else:
+        lifecycle_allows = not manifest.lifecycle.live and manifest.lifecycle.data_can_be_reset
+        command_allows = non_live and fresh_start_allowed
+        checks.append(
+            {
+                "name": "lifecycle_allows_reset",
+                "ok": lifecycle_allows or command_allows,
+                "message": (
+                    "Manifest lifecycle permits data reset."
+                    if lifecycle_allows
+                    else "Use lifecycle.live=false and lifecycle.data_can_be_reset=true, or pass explicit non-live reset flags."
+                ),
+            }
+        )
+        if not lifecycle_allows and not command_allows:
+            blockers.append(
+                schema_issue(
+                    "fresh_install_not_allowed",
+                    "Fresh install is only allowed for non-live apps whose data can be reset.",
+                    "lifecycle",
+                )
+            )
+        if manifest.lifecycle.live and command_allows:
+            warnings.append(
+                schema_issue(
+                    "fresh_install_command_override",
+                    "Command flags mark this app non-live for this operation, but manifest.lifecycle.live is still true.",
+                    "lifecycle.live",
+                )
+            )
+        reset_targets = _fresh_install_reset_targets(manifest, resolution.manifest_path)
+        if not reset_targets:
+            blockers.append(schema_issue("fresh_install_no_declared_volumes", "No declared data.volumes targets can be reset.", "data.volumes"))
+        pre_export_plan: Dict[str, object] | None = None
+        if skip_pre_reset_export:
+            warnings.append(
+                schema_issue(
+                    "pre_reset_export_skipped",
+                    "Pre-reset export preservation was explicitly skipped.",
+                    "fresh_install.skip_pre_reset_export",
+                )
+            )
+        else:
+            pre_export_plan = export_plan(app, resolved_environment, runtime_root, resolution.manifest_path)
+            pre_export_blockers = _as_issues(pre_export_plan.get("blockers", []))
+            if pre_export_blockers:
+                blockers.append(
+                    schema_issue(
+                        "pre_reset_export_blocked",
+                        "Pre-reset export is required by default but cannot be planned cleanly.",
+                        "app.export.plan",
+                    )
+                )
+            checks.append(
+                {
+                    "name": "pre_reset_export_plan",
+                    "ok": not pre_export_blockers,
+                    "message": str(pre_export_plan.get("summary") or "pre-reset export plan"),
+                }
+            )
+
+    token = _token(
+        "app.fresh-install.apply",
+        {
+            "app": app,
+            "environment": resolved_environment,
+            "manifest": str(resolution.manifest_path or manifest_path or ""),
+            "skip_pre_reset_export": skip_pre_reset_export,
+            "targets": [
+                {key: target.get(key) for key in ("kind", "name", "path", "volume")}
+                for target in reset_targets
+            ],
+        },
+    )
+    manifest_path_text = str(resolution.manifest_path or manifest_path) if (resolution.manifest_path or manifest_path) else None
+    return plan_envelope(
+        "app.fresh-install.plan",
+        app,
+        resolved_environment,
+        f"Fresh install plan for {app} {resolved_environment}: {len(blockers)} blocker(s).",
+        blockers=blockers,
+        warnings=warnings,
+        checks=checks,
+        artifacts=[
+            artifact(str(runtime_root / "apps" / app / "fresh-installs"), "fresh-install-reports", "Fresh install reports", present=(runtime_root / "apps" / app / "fresh-installs").exists()),
+        ],
+        confirmation_required=True,
+        confirmation_token=token,
+        exact_apply_input={
+            "command": (
+                f"ship app fresh-install apply {app} --environment {resolved_environment} "
+                + (f"--manifest {manifest_path_text} " if manifest_path_text else "")
+                + f"--runtime-root {runtime_root} "
+                + ("--non-live --fresh-start-allowed " if non_live and fresh_start_allowed else "")
+                + ("--skip-pre-reset-export " if skip_pre_reset_export else "")
+                + f"--confirm {token}"
+            )
+        },
+        risk="high",
+        changes=[
+            {
+                "action": "reset_declared_volume",
+                "target": deep_redact(target, propagate=True),
+                "destructive": True,
+            }
+            for target in reset_targets
+        ],
+        lifecycle=manifest.to_lock_dict().get("lifecycle", {}) if manifest is not None else {},
+        reset_targets=deep_redact(reset_targets, propagate=True),
+        pre_reset_export_required=not skip_pre_reset_export,
+        apply_supported=True,
+    )
+
+
+def fresh_install_apply(
+    app: str,
+    environment: Optional[str] = None,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    manifest_path: Optional[Path] = None,
+    *,
+    confirm: Optional[str] = None,
+    non_live: bool = False,
+    fresh_start_allowed: bool = False,
+    skip_pre_reset_export: bool = False,
+) -> Dict[str, object]:
+    started_at = _utc_now()
+    plan = fresh_install_plan(
+        app,
+        environment,
+        runtime_root,
+        manifest_path,
+        non_live=non_live,
+        fresh_start_allowed=fresh_start_allowed,
+        skip_pre_reset_export=skip_pre_reset_export,
+    )
+    blockers = _as_issues(plan.get("blockers", []))
+    warnings = _as_issues(plan.get("warnings", []))
+    expected = plan.get("confirmation_token")
+    resolved_environment = str(plan.get("environment") or environment or "unknown")
+    if not isinstance(confirm, str) or not confirm:
+        blockers.append(schema_issue("confirmation_token_missing", "Fresh install apply requires a confirmation token from app fresh-install plan."))
+    elif confirm != expected:
+        blockers.append(schema_issue("confirmation_token_mismatch", "Fresh install confirmation token does not match the current plan."))
+    if blockers:
+        return receipt_envelope(
+            "app.fresh-install.apply",
+            app,
+            resolved_environment,
+            "blocked",
+            started_at,
+            _utc_now(),
+            artifacts=_artifacts_from_plan(plan),
+            checks=plan.get("checks", []) if isinstance(plan.get("checks"), list) else [],
+            rollback={"available": False, "note": "Fresh install was blocked before data reset."},
+            plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
+            blockers=blockers,
+            warnings=warnings,
+            inputs_redacted=True,
+            secrets_redacted=True,
+        )
+
+    resolution = resolve_app_manifest(app, environment, manifest_path=manifest_path)
+    manifest = resolution.manifest
+    if manifest is None or resolution.manifest_path is None:
+        return receipt_envelope(
+            "app.fresh-install.apply",
+            app,
+            resolved_environment,
+            "blocked",
+            started_at,
+            _utc_now(),
+            blockers=[schema_issue("manifest_unresolved", "Manifest became unresolved before apply.")],
+            warnings=warnings,
+            rollback={"available": False, "note": "Fresh install was blocked before data reset."},
+            inputs_redacted=True,
+            secrets_redacted=True,
+        )
+
+    pre_reset_export: Dict[str, object] | None = None
+    if not skip_pre_reset_export:
+        export_pre_plan = export_plan(app, resolved_environment, runtime_root, resolution.manifest_path)
+        export_token = export_pre_plan.get("confirmation_token")
+        pre_reset_export = export_create(
+            app,
+            resolved_environment,
+            runtime_root,
+            resolution.manifest_path,
+            confirm=export_token if isinstance(export_token, str) else None,
+        )
+        if pre_reset_export.get("status") != "succeeded":
+            return receipt_envelope(
+                "app.fresh-install.apply",
+                app,
+                resolved_environment,
+                "blocked",
+                started_at,
+                _utc_now(),
+                artifacts=_artifacts_from_plan(plan),
+                checks=[
+                    {"name": "confirmation_token", "ok": True, "message": "Matched current fresh-install plan."},
+                    {"name": "pre_reset_export", "ok": False, "message": str(pre_reset_export.get("summary") or pre_reset_export.get("status"))},
+                ],
+                rollback={"available": False, "note": "Pre-reset export failed, so no data reset was attempted."},
+                plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
+                warnings=warnings,
+                pre_reset_export=deep_redact(pre_reset_export, propagate=True),
+                inputs_redacted=True,
+                secrets_redacted=True,
+            )
+
+    reset_evidence: List[Dict[str, object]] = []
+    for target in _fresh_install_reset_targets(manifest, resolution.manifest_path):
+        reset_evidence.append(_reset_fresh_install_target(target))
+
+    verification = run_verifications(manifest, attempts=1, interval=0, wait_for_tls=False, runtime_root=runtime_root)
+    status = (
+        "succeeded"
+        if all(bool(item.get("ok")) for item in reset_evidence) and bool(verification.get("ok"))
+        else "failed"
+    )
+    install_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    install_root = runtime_root / "apps" / app / "fresh-installs" / install_id
+    receipt = receipt_envelope(
+        "app.fresh-install.apply",
+        app,
+        resolved_environment,
+        status,
+        started_at,
+        _utc_now(),
+        artifacts=[
+            artifact(str(install_root), "fresh-install-report", "Fresh install evidence", present=True),
+        ],
+        checks=[
+            {"name": "confirmation_token", "ok": True, "message": "Matched current fresh-install plan."},
+            {
+                "name": "pre_reset_export",
+                "ok": skip_pre_reset_export or (pre_reset_export is not None and pre_reset_export.get("status") == "succeeded"),
+                "message": "Skipped by operator." if skip_pre_reset_export else "Pre-reset export completed.",
+            },
+            {
+                "name": "declared_volume_reset",
+                "ok": all(bool(item.get("ok")) for item in reset_evidence),
+                "message": f"{sum(1 for item in reset_evidence if item.get('ok'))}/{len(reset_evidence)} declared volume target(s) reset.",
+            },
+            {
+                "name": "post_reset_verification",
+                "ok": bool(verification.get("ok")),
+                "message": str(verification.get("status") or "verification complete"),
+            },
+        ],
+        rollback={
+            "available": pre_reset_export is not None and pre_reset_export.get("status") == "succeeded",
+            "note": "Restore from the pre-reset export bundle if the fresh install must be reverted."
+            if pre_reset_export
+            else "No pre-reset export was created.",
+        },
+        plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
+        warnings=warnings,
+        reset_evidence=deep_redact(reset_evidence, propagate=True),
+        pre_reset_export=deep_redact(pre_reset_export, propagate=True) if pre_reset_export else None,
+        verification=deep_redact(verification, propagate=True),
+        lifecycle=manifest.to_lock_dict().get("lifecycle", {}),
+        inputs_redacted=True,
+        secrets_redacted=True,
+    )
+    _write_json(install_root / "receipt.json", receipt)
+    _write_json(install_root / "reset-evidence.json", reset_evidence)
+    _write_json(install_root / "verification.json", deep_redact(verification, propagate=True))
+    _write_json(runtime_root / "apps" / app / "receipts" / f"{receipt['operation_id']}.json", receipt)
+    return receipt
+
+
 def import_plan(
     source: Path,
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
@@ -1207,6 +1547,7 @@ def app_readiness_report(
     backup_report = backup_status_report(manifest.app, resolved_environment, runtime_root, resolution.manifest_path)
     route_report = scan_conflicts(resolution.manifest_path.parent, runtime_root=runtime_root)
     release = active_release(runtime_root, manifest.app)
+    app_owned_report = run_app_owned_verifications(manifest, runtime_root=runtime_root)
     restore_drills = _restore_drill_receipts(runtime_root, manifest.app)
     # A successful backup-verification receipt (Phase 12) is a stronger restore
     # drill: it satisfies the restore_drill factor below. This is purely
@@ -1236,6 +1577,11 @@ def app_readiness_report(
         {"name": "backup_status", "ok": not backup_report["blockers"], "message": backup_report["freshness"]["status"]},
         {"name": "route_conflicts", "ok": not route_conflict_issues, "message": route_report["summary"]},
         {"name": "release_metadata", "ok": bool(release), "message": str(release.get("release_id") if release else "missing")},
+        {
+            "name": "app_owned_checks",
+            "ok": bool(app_owned_report.get("ok")),
+            "message": f"{app_owned_report.get('count', 0)} app-owned check result(s)",
+        },
         {
             "name": "restore_drill",
             "ok": restore_drill_satisfied,
@@ -1273,6 +1619,7 @@ def app_readiness_report(
         runtime_root,
         resolution.manifest_path,
         latest_verification=latest_verification,
+        app_owned_report=app_owned_report,
     )
 
     return report_envelope(
@@ -1295,6 +1642,7 @@ def app_readiness_report(
         networking=manifest.to_lock_dict().get("networking", {}),
         compose_networks=compose_network_summary(manifest),
         release={"present": bool(release), "release_id": release.get("release_id") if release else None},
+        app_owned_checks=deep_redact(app_owned_report, propagate=True),
         restore_drill_receipts=restore_drills,
         next_actions=next_actions,
         score_details=score_details,
@@ -1399,6 +1747,7 @@ def _readiness_source_reports(
     runtime_root: Path,
     manifest_path: Optional[Path],
     latest_verification: Optional[Dict[str, object]] = None,
+    app_owned_report: Optional[Dict[str, object]] = None,
 ) -> Dict[str, Dict[str, object]]:
     """Compact, redaction-safe pointers to the sub-reports readiness consumed.
 
@@ -1460,6 +1809,12 @@ def _readiness_source_reports(
                 else None
             ),
             "backup_id": (latest_verification.get("backup_id") if latest_verification else None),
+        },
+        "app_owned_checks": {
+            "status": app_owned_report.get("status") if isinstance(app_owned_report, dict) else "missing",
+            "ok": bool(app_owned_report.get("ok")) if isinstance(app_owned_report, dict) else False,
+            "count": app_owned_report.get("count") if isinstance(app_owned_report, dict) else 0,
+            "values_redacted": True,
         },
     }
 
@@ -1906,6 +2261,7 @@ def restore_drill_apply(
     confirm: Optional[str] = None,
     operation_base: str = "app.restore-drill",
     readiness_gate: bool = True,
+    extra_receipt_fields: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     started_at = _utc_now()
     plan = restore_drill_plan(
@@ -1994,6 +2350,8 @@ def restore_drill_apply(
         inputs_redacted=True,
         secrets_redacted=True,
     )
+    if extra_receipt_fields:
+        receipt.update(deep_redact(extra_receipt_fields, propagate=True))
     _write_json(drill_root / "receipts" / _restore_drill_receipt_filename(operation_base), receipt)
     _write_json(runtime_root / "apps" / app / "receipts" / f"{receipt['operation_id']}.json", receipt)
     return receipt
@@ -6024,6 +6382,111 @@ def _create_tar_from_path(source_path: Path, archive_path: Path) -> None:
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _fresh_install_reset_targets(manifest: Manifest, manifest_path: Path) -> List[Dict[str, object]]:
+    targets: List[Dict[str, object]] = []
+    for volume in manifest.data.volumes:
+        source = volume.source
+        if source and _source_is_host_path(source):
+            path = Path(source).expanduser()
+            if not path.is_absolute():
+                path = manifest_path.parent / path
+            targets.append(
+                {
+                    "kind": "host_path",
+                    "name": volume.name,
+                    "path": str(path),
+                    "mount": volume.mount,
+                    "service": volume.service,
+                }
+            )
+            continue
+        targets.append(
+            {
+                "kind": "docker_volume",
+                "name": volume.name,
+                "volume": source or data_volume_name(manifest, volume),
+                "mount": volume.mount,
+                "service": volume.service,
+            }
+        )
+    return targets
+
+
+def _source_is_host_path(source: str) -> bool:
+    return source.startswith(("/", "./", "../", "~/")) or "/" in source
+
+
+def _reset_fresh_install_target(target: Dict[str, object]) -> Dict[str, object]:
+    if target.get("kind") == "host_path":
+        return _reset_host_path_target(target)
+    if target.get("kind") == "docker_volume":
+        return _reset_docker_volume_target(target)
+    return {**target, "ok": False, "status": "failed", "error": "Unknown reset target kind."}
+
+
+def _reset_host_path_target(target: Dict[str, object]) -> Dict[str, object]:
+    path = Path(str(target.get("path") or "")).expanduser()
+    evidence = dict(target)
+    try:
+        resolved = path.resolve(strict=False)
+        if _unsafe_reset_path(resolved):
+            return {**evidence, "ok": False, "status": "blocked", "error": f"Unsafe reset path: {resolved}"}
+        if path.exists() and path.is_symlink():
+            return {**evidence, "ok": False, "status": "blocked", "error": f"Refusing to reset symlink path: {path}"}
+        if path.exists() and not path.is_dir():
+            return {**evidence, "ok": False, "status": "blocked", "error": f"Reset path is not a directory: {path}"}
+        path.mkdir(parents=True, exist_ok=True)
+        removed = 0
+        for child in path.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+            removed += 1
+        return {**evidence, "ok": True, "status": "reset", "removed_entries": removed}
+    except OSError as exc:
+        return {**evidence, "ok": False, "status": "failed", "error": str(exc)}
+
+
+def _unsafe_reset_path(path: Path) -> bool:
+    home = Path.home().resolve()
+    return path in {Path("/"), home} or len(path.parts) < 3
+
+
+def _reset_docker_volume_target(target: Dict[str, object]) -> Dict[str, object]:
+    volume = str(target.get("volume") or "")
+    evidence = dict(target)
+    if not volume:
+        return {**evidence, "ok": False, "status": "blocked", "error": "Docker volume name is empty."}
+    inspect = subprocess.run(["docker", "volume", "inspect", volume], text=True, capture_output=True)
+    if inspect.returncode == 0:
+        remove = subprocess.run(["docker", "volume", "rm", volume], text=True, capture_output=True)
+        if remove.returncode != 0:
+            return {
+                **evidence,
+                "ok": False,
+                "status": "failed",
+                "error": (remove.stderr or remove.stdout or "docker volume rm failed").strip(),
+                "removed": False,
+            }
+    create = subprocess.run(["docker", "volume", "create", volume], text=True, capture_output=True)
+    if create.returncode != 0:
+        return {
+            **evidence,
+            "ok": False,
+            "status": "failed",
+            "error": (create.stderr or create.stdout or "docker volume create failed").strip(),
+            "created": False,
+        }
+    return {
+        **evidence,
+        "ok": True,
+        "status": "reset",
+        "removed": inspect.returncode == 0,
+        "created": True,
+    }
 
 
 def _atomic_write_json(path: Path, payload: object) -> None:

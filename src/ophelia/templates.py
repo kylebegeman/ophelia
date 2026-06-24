@@ -11,15 +11,30 @@ from .config import TEMPLATES_DIR
 from .manifest import CatchAllEdgeConfig, DataVolumeConfig, Manifest, RouteConfig, ServiceConfig
 
 
-RUNTIME_INJECTED_ENV_KEYS = frozenset({"OPHELIA_APP", "OPHELIA_SERVICE", "PORT"})
+RUNTIME_INJECTED_ENV_KEYS = frozenset(
+    {
+        "OPHELIA_ENVIRONMENT",
+        "OPHELIA_APP",
+        "OPHELIA_SERVICE",
+        "OPHELIA_RELEASE_ID",
+        "OPHELIA_IMAGE_REF",
+        "OPHELIA_IMAGE_DIGEST",
+        "OPHELIA_COMMIT_SHA",
+        "OPHELIA_BUILD_TIME",
+        "PORT",
+    }
+)
 
 
-def render_compose(manifest: Manifest) -> Optional[str]:
+def render_compose(manifest: Manifest, release_metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
     if manifest.kind in {"static", "tunnel", "redirect"}:
         return None
 
     template = _read_template("compose/app.compose.tpl")
-    services_block = "\n".join(_render_service_block(manifest, service) for service in manifest.services.values())
+    services_block = "\n".join(
+        _render_service_block(manifest, service, release_metadata=release_metadata)
+        for service in manifest.services.values()
+    )
     networks_block = _render_networks_block(manifest)
     rendered = (
         template.replace("{{SERVICES_BLOCK}}", services_block.rstrip())
@@ -125,7 +140,12 @@ def render_env_example(manifest: Manifest) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
+def _render_service_block(
+    manifest: Manifest,
+    service: ServiceConfig,
+    *,
+    release_metadata: Optional[Dict[str, Any]] = None,
+) -> str:
     service_lines: List[str] = [
         f"  {service.name}:",
         f"    image: {_quote(service.image or manifest.image or '')}",
@@ -144,16 +164,17 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
     service_lines.extend(
         [
             "    environment:",
-            f"      OPHELIA_APP: {_quote(manifest.app)}",
-            f"      OPHELIA_SERVICE: {_quote(service.name)}",
-            f"      PORT: {_quote(str(service.port))}",
         ]
     )
+    for key, value in _runtime_env_values(manifest, service, release_metadata=release_metadata).items():
+        service_lines.append(f"      {key}: {_quote(value)}")
 
     env_map = OrderedDict(sorted(manifest.env.items()))
     env_map.update(OrderedDict(sorted(service.env.items())))
 
     for key, value in env_map.items():
+        if key in RUNTIME_INJECTED_ENV_KEYS:
+            continue
         service_lines.append(f"      {key}: {_quote(value)}")
 
     service_lines.extend(
@@ -198,6 +219,51 @@ def _render_service_block(manifest: Manifest, service: ServiceConfig) -> str:
     if manifest.networking.internal == "per-app":
         service_lines.append(f"          - {_quote(service.name)}")
     return "\n".join(service_lines)
+
+
+def _runtime_env_values(
+    manifest: Manifest,
+    service: ServiceConfig,
+    *,
+    release_metadata: Optional[Dict[str, Any]] = None,
+) -> "OrderedDict[str, str]":
+    metadata = release_metadata or {}
+    service_metadata = metadata.get("services", {})
+    if not isinstance(service_metadata, dict):
+        service_metadata = {}
+    service_values = service_metadata.get(service.name, {})
+    if not isinstance(service_values, dict):
+        service_values = {}
+
+    image_ref = str(
+        service_values.get("image_ref")
+        or metadata.get("image_ref")
+        or service.image
+        or manifest.image
+        or ""
+    )
+    image_digest = str(
+        service_values.get("image_digest")
+        or metadata.get("image_digest")
+        or _image_digest_from_ref(image_ref)
+    )
+    values: "OrderedDict[str, str]" = OrderedDict()
+    values["OPHELIA_ENVIRONMENT"] = str(metadata.get("environment") or manifest.environment or "unknown")
+    values["OPHELIA_APP"] = manifest.app
+    values["OPHELIA_SERVICE"] = service.name
+    values["OPHELIA_RELEASE_ID"] = str(metadata.get("release_id") or "unreleased")
+    values["OPHELIA_IMAGE_REF"] = image_ref
+    values["OPHELIA_IMAGE_DIGEST"] = image_digest
+    values["OPHELIA_COMMIT_SHA"] = str(metadata.get("commit_sha") or "")
+    values["OPHELIA_BUILD_TIME"] = str(metadata.get("build_time") or "")
+    values["PORT"] = str(service.port)
+    return values
+
+
+def _image_digest_from_ref(image_ref: str) -> str:
+    if "@sha256:" not in image_ref:
+        return ""
+    return image_ref.split("@", 1)[1]
 
 
 def _render_service_volume_lines(manifest: Manifest, service: ServiceConfig) -> List[str]:
@@ -278,6 +344,10 @@ def _data_volumes_for_service(manifest: Manifest, service: ServiceConfig) -> Lis
 def _data_volume_name(manifest: Manifest, volume: DataVolumeConfig) -> str:
     environment = manifest.environment or "default"
     return _safe_docker_name(f"{manifest.app}-{environment}-{volume.name}")
+
+
+def data_volume_name(manifest: Manifest, volume: DataVolumeConfig) -> str:
+    return _data_volume_name(manifest, volume)
 
 
 def _safe_docker_name(value: str) -> str:

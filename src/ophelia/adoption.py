@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,8 @@ ADOPTION_ARTIFACTS = (
     ("ophelia/hooks/unfreeze.sh", "hook", "Unfreeze hook."),
     ("ophelia/hooks/post-import.sh", "hook", "Post-import hook."),
 )
+STANDARD_APP_ENDPOINTS = ("/ophelia/health", "/ophelia/release")
+STANDARD_PACKAGE_SCRIPTS = ("ophelia:health", "ophelia:data:verify", "ophelia:release")
 
 
 def adoption_plan(
@@ -176,6 +179,25 @@ def adoption_plan(
             ),
         }
     )
+    app_owned_contract: Dict[str, Any] = {}
+    if manifest is not None and manifest.kind in {"service", "multi-service"}:
+        app_owned_contract = _app_owned_contract(repo_root, manifest)
+        missing_contract = app_owned_contract.get("missing") if isinstance(app_owned_contract.get("missing"), list) else []
+        checks.append(
+            {
+                "name": "app_owned_runtime_contract",
+                "ok": not missing_contract,
+                "message": f"{len(missing_contract)} missing standard app-owned check(s).",
+            }
+        )
+        if missing_contract:
+            warnings.append(
+                issue(
+                    "adoption_app_owned_checks_missing",
+                    "Standard Ophelia app-owned checks are missing: " + ", ".join(str(item) for item in missing_contract) + ".",
+                    "verify",
+                )
+            )
 
     resolved_environment = _resolved_environment(environment, manifest)
     manifest_exists = resolved_manifest_path.exists()
@@ -222,6 +244,7 @@ def adoption_plan(
         manifest_path=str(resolved_manifest_path),
         required_artifacts=artifacts,
         pack_validation=deep_redact(pack_validation),
+        app_owned_contract=deep_redact(app_owned_contract),
         adoption_gates=gates,
         next_commands=next_commands,
         secrets_redacted=True,
@@ -272,6 +295,62 @@ def _repo_artifacts(repo_root: Path, manifest_path: Path) -> List[Dict[str, Any]
             }
         )
     return artifacts
+
+
+def _app_owned_contract(repo_root: Path, manifest: Manifest) -> Dict[str, Any]:
+    scripts = _package_scripts(repo_root)
+    internal_paths = {
+        str(check.path)
+        for check in manifest.verify
+        if check.type == "internal" and check.path
+    }
+    command_texts = [" ".join(check.command or []) for check in manifest.verify if check.type == "command"]
+    manifest_commands = {
+        script: any(script in command for command in command_texts)
+        for script in STANDARD_PACKAGE_SCRIPTS
+    }
+    endpoint_presence = {
+        path: path in internal_paths
+        for path in STANDARD_APP_ENDPOINTS
+    }
+    script_presence = {
+        script: script in scripts
+        for script in STANDARD_PACKAGE_SCRIPTS
+    }
+    runtime_checks = {
+        "health": endpoint_presence["/ophelia/health"] or manifest_commands["ophelia:health"],
+        "release": endpoint_presence["/ophelia/release"] or manifest_commands["ophelia:release"],
+        "data_verify": manifest_commands["ophelia:data:verify"],
+    }
+    missing: List[str] = []
+    for name, present in runtime_checks.items():
+        if not present:
+            missing.append(f"manifest runtime check {name}")
+    for script, present in script_presence.items():
+        if not present:
+            missing.append(f"package script {script}")
+    return {
+        "standard_endpoints": endpoint_presence,
+        "standard_scripts": script_presence,
+        "manifest_commands": manifest_commands,
+        "runtime_checks": runtime_checks,
+        "package_json_present": (repo_root / "package.json").exists(),
+        "missing": missing,
+    }
+
+
+def _package_scripts(repo_root: Path) -> Dict[str, str]:
+    package_json = repo_root / "package.json"
+    if not package_json.exists():
+        return {}
+    try:
+        payload = json.loads(package_json.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    scripts = payload.get("scripts") if isinstance(payload, dict) else None
+    if not isinstance(scripts, dict):
+        return {}
+    return {str(key): str(value) for key, value in scripts.items() if isinstance(key, str)}
 
 
 def _artifact_requires_executable(path: Path) -> bool:

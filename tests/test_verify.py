@@ -11,7 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ophelia.manifest import Manifest, VerificationCheck, VerificationPolicy
+from ophelia.manifest import Manifest, ServiceConfig, VerificationCheck, VerificationPolicy
 from ophelia.verify import run_verifications, verification_blocks_release
 
 
@@ -274,6 +274,65 @@ class VerifyTests(unittest.TestCase):
         result = payload["results"][0]
         self.assertEqual("command", result["type"])
         self.assertTrue(all(item["ok"] for item in result["json_assertions"]))
+
+    def test_internal_service_verification_asserts_json_paths_and_redacts_output(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="internal-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={"web": ServiceConfig(name="web", port=3000, image="example/app:latest")},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="ophelia-health",
+                    type="internal",
+                    service="app",
+                    path="/ophelia/health",
+                    method="GET",
+                    expect_status=200,
+                    json_assertions=[
+                        '$.kind == "product.runtime.health"',
+                        "$.ok is true",
+                        {"path": "$.release.version", "regex": r"^\d+\.\d+\.\d+$"},
+                        {"path": "$.checks.runtime", "present": True},
+                    ],
+                )
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            app_root = runtime_root / "apps" / "internal-app"
+            app_root.mkdir(parents=True)
+            (app_root / "compose.yml").write_text("services:\n  web:\n    image: example/app\n")
+            body = json.dumps(
+                {
+                    "kind": "product.runtime.health",
+                    "ok": True,
+                    "release": {"version": "1.2.3"},
+                    "checks": {"runtime": {"ok": True}},
+                    "token": "super-secret",
+                }
+            )
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=f"{body}\n200",
+                stderr="",
+            )
+            with mock.patch("ophelia.verify.subprocess.run", return_value=completed) as run:
+                payload = run_verifications(manifest, runtime_root=runtime_root, wait_for_tls=False)
+
+        self.assertTrue(payload["ok"])
+        command = run.call_args.args[0]
+        self.assertEqual("web", command[6])
+        result = payload["results"][0]
+        self.assertEqual("internal", result["type"])
+        self.assertEqual(200, result["status_code"])
+        self.assertTrue(all(item["ok"] for item in result["json_assertions"]))
+        self.assertNotIn("super-secret", json.dumps(payload))
 
     def test_cli_verify_app_name_updates_current_release(self) -> None:
         repo = Path(__file__).resolve().parents[1]

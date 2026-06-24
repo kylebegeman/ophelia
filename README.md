@@ -230,20 +230,29 @@ data:
       provider: restic
       target: s3://ophelia-fixture-backups/demo-service
       retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/latest.json
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
 verify:
-  - name: health
-    url: https://demo-service.example.com/health
-  - name: internal-runtime-health
-    type: command
-    service: web
-    command:
-      - npm
-      - run
-      - ophelia:health
-      - --
-      - --json
-    expect_json:
-      status: ok
+  - name: ophelia-health
+    service: app
+    path: /ophelia/health
+    method: GET
+    expect_status: 200
+    json_assertions:
+      - $.kind == "product.runtime.health"
+      - $.ok == true
+  - name: ophelia-release
+    service: app
+    path: /ophelia/release
+    method: GET
+    expect_status: 200
+    json_assertions:
+      - $.kind == "product.runtime.release"
 ```
 
 Full field reference: [Manifest Spec](docs/manifest-spec.md).
@@ -267,8 +276,8 @@ Ophelia's default posture is conservative:
 | --- | --- |
 | `validate`, `explain`, `schema` | Manifest validation and contract discovery. |
 | `render`, `deploy`, `diff`, `rollback` | Runtime bundle planning and controlled apply flows. |
-| `pack`, `app adoption`, `app readiness` | App portability, manifest bootstrap, migration readiness, and adoption checks. |
-| `backup`, `restore`, `restore-drills` | Backup planning, artifact rehearsal, restore previews, and drill receipts. |
+| `pack`, `app adoption`, `app readiness`, `app fresh-install` | App portability, manifest bootstrap, migration readiness, non-live reset workflows, and adoption checks. |
+| `backup`, `restore`, `backup rehearse`, `restore-drills` | Backup planning, artifact rehearsal, restore previews, and drill receipts. |
 | `host`, `live-readiness`, `live-drills`, `live-hydration` | Host readiness, app readiness, evidence scaffolds, and reviewed live observations. |
 | `workflow`, `operations`, `receipts`, `state` | Agent-executable operation graphs, receipts, and local state indexing. |
 | `providers`, `secrets`, `policy`, `hardening` | Provider readiness, secret references, safety policy, and production go/no-go checks. |

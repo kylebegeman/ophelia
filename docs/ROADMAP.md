@@ -23,6 +23,7 @@ reference doc for the feature being changed.
 | App factory and adoption | Landed with per-template scaffolds, overwrite guards, manifest bootstrap, adoption fixtures, and redacted metadata. |
 | Fixture suite | Landed with synthetic service, static, stateful, worker, provider, incomplete, multi-service, and console-profile fixtures. |
 | Readiness and hardening | Landed with live-readiness lanes, reviewed evidence promotion, no-probe gates, drill profiles, and production hardening reports. |
+| SaaS onboarding contracts | Landed with internal service verification, schema-aware JSON assertions, lifecycle reset policy, fresh-install plans, one-shot backup rehearsals, actionable offsite backup policy, runtime release metadata env, and app-owned readiness evidence. |
 | Operator console and plugins | Landed as read-only console payloads, API summaries, and fixture plugin contracts. |
 | Open-source preparation | Landed with Apache-2.0, DCO, governance files, public-safe docs, CI, docs-check, and strict zero-warning audit. |
 
@@ -49,10 +50,12 @@ app is ready to move onto Ophelia. The expected flow is:
 2. Run adoption planning and manifest validation locally.
 3. Generate or review required env names, provider references, and backup
    expectations without storing secret values in Git.
-4. Capture reviewed live evidence outside the source checkout.
-5. Promote sanitized observations into fixtures only when they define reusable
+4. Add app-owned `/ophelia/health`, `/ophelia/release`, and `npm run
+   ophelia:*` checks before production onboarding.
+5. Capture reviewed live evidence outside the source checkout.
+6. Promote sanitized observations into fixtures only when they define reusable
    Ophelia behavior.
-6. Run `make open-source-audit-strict` before any material returns to this repo.
+7. Run `make open-source-audit-strict` before any material returns to this repo.
 
 ## Deferred Decisions
 

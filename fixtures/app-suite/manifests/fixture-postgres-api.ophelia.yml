@@ -43,6 +43,13 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixtures/fixture-postgres-api
+      retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/fixture-postgres-api-latest.json
     max_age_hours: 1000000
 
 observability:
@@ -56,4 +63,3 @@ observability:
   logs:
     containers: true
     retain_days: 30
-

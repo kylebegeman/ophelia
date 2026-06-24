@@ -67,3 +67,4 @@
 | [0063](0063-export-backed-backup-readiness.md) | 2026-06-23 | landed | Export-backed backup readiness | backup, export, readiness, docker-volumes, tests |
 | [0064](0064-export-backup-report-polish.md) | 2026-06-23 | landed | Export backup report polish | backup, export, readiness, reports, tests |
 | [0065](0065-native-rehearsal-and-internal-verification.md) | 2026-06-23 | landed | Native rehearsal and internal verification | verification, backup, restore-drill, manifest, docs, tests |
+| [0066](0066-saas-onboarding-contracts.md) | 2026-06-24 | landed | SaaS onboarding contracts | verification, manifest, lifecycle, backup, fresh-install, readiness, adoption, docs, tests |

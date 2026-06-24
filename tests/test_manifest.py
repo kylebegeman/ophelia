@@ -743,6 +743,79 @@ routes:
         self.assertIn('          - "web"', compose)
         self.assertNotIn("  ophelia-internal:\n    external: true", compose)
 
+    def test_lifecycle_and_internal_verify_shape_round_trip(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: lifecycle-app
+environment: staging
+kind: service
+image: ghcr.io/example/lifecycle-app:latest
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
+services:
+  web:
+    port: 3000
+routes:
+  - domain: lifecycle.example.com
+    service: web
+verify:
+  - service: app
+    path: /ophelia/health
+    method: GET
+    expect_status: 200
+    json_assertions:
+      - $.kind == "product.runtime.health"
+      - $.ok == true
+"""
+        )
+
+        lock = manifest.to_lock_dict()
+
+        self.assertFalse(lock["lifecycle"]["live"])
+        self.assertTrue(lock["lifecycle"]["data_can_be_reset"])
+        self.assertFalse(lock["lifecycle"]["production_apply_allowed"])
+        self.assertEqual("internal", lock["verify"][0]["type"])
+        self.assertEqual("/ophelia/health", lock["verify"][0]["path"])
+
+    def test_render_compose_injects_release_metadata_env(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: release-env-app
+environment: staging
+kind: service
+image: ghcr.io/example/release-env-app@sha256:aaaaaaaa
+env:
+  OPHELIA_RELEASE_ID: user-value
+services:
+  web:
+    port: 3000
+routes:
+  - domain: release-env.example.com
+    service: web
+"""
+        )
+
+        compose = render_compose(
+            manifest,
+            release_metadata={
+                "release_id": "release-123",
+                "commit_sha": "abc123",
+                "build_time": "2026-06-24T00:00:00Z",
+            },
+        )
+
+        assert compose is not None
+        self.assertIn('      OPHELIA_ENVIRONMENT: "staging"', compose)
+        self.assertIn('      OPHELIA_RELEASE_ID: "release-123"', compose)
+        self.assertIn('      OPHELIA_IMAGE_REF: "ghcr.io/example/release-env-app@sha256:aaaaaaaa"', compose)
+        self.assertIn('      OPHELIA_IMAGE_DIGEST: "sha256:aaaaaaaa"', compose)
+        self.assertIn('      OPHELIA_COMMIT_SHA: "abc123"', compose)
+        self.assertNotIn("user-value", compose)
+
     def test_root_surface_infers_root_host_verification_checks(self) -> None:
         manifest = """
 version: 1
