@@ -59,6 +59,25 @@ class SelfTestTests(unittest.TestCase):
         self.assertEqual(payload["kind"], "ophelia.self_test")
         self.assertIn(payload["status"], {"ok", "warn"})
 
+    def test_version_command_json_is_pure_json(self) -> None:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = main(["version", "--json"])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["kind"], "ophelia.version")
+        self.assertEqual(payload["name"], "ophelia")
+        self.assertTrue(payload["version"])
+
+    def test_global_version_flag_prints_version(self) -> None:
+        buffer = io.StringIO()
+        with self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(buffer):
+                main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("ship", buffer.getvalue())
+        self.assertIn("0.", buffer.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

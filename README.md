@@ -85,6 +85,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[test]"
 
 ./cli/ship self-test --json
+./cli/ship version --json
 ./cli/ship schema manifest --json
 ./cli/ship validate examples/service-app.ophelia.yml
 ./cli/ship render examples/service-app.ophelia.yml --output-dir ./build/demo-service
@@ -94,6 +95,7 @@ After editable install, the console scripts are available too:
 
 ```bash
 ship self-test
+ship version
 ophelia self-test
 ship validate examples/service-app.ophelia.yml
 ```
@@ -101,20 +103,19 @@ ship validate examples/service-app.ophelia.yml
 Confirm installed metadata:
 
 ```bash
-.venv/bin/python - <<'PY'
-from importlib.metadata import metadata, version
-print(version("ophelia"))
-for value in metadata("ophelia").get_all("Project-URL") or []:
-    print(value)
-PY
+ship version --json
 ```
 
-Expected output:
+Expected output excerpt:
 
-```text
-0.3.12
-Repository, https://github.com/mrbagels/ophelia
-Issues, https://github.com/mrbagels/ophelia/issues
+```json
+{
+  "kind": "ophelia.version",
+  "name": "ophelia",
+  "schema_version": 1,
+  "source": "package_metadata",
+  "version": "0.3.12"
+}
 ```
 
 ## Deploy A Static Site

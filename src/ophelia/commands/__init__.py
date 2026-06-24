@@ -46,6 +46,7 @@ from .status import register as register_status
 from .traffic import register as register_traffic
 from .validate import register as register_validate
 from .verify import register as register_verify
+from .version import register as register_version
 from .workflows import register as register_workflows
 
 
@@ -67,6 +68,7 @@ def register_commands(subparsers):
     register_secrets(subparsers)
     register_schema(subparsers)
     register_self_test(subparsers)
+    register_version(subparsers)
     register_state(subparsers)
     register_runtime(subparsers)
     register_operations(subparsers)
