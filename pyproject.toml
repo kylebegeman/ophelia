@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ophelia"
-version = "0.3.12"
+version = "0.4.0"
 description = "Fixture-first deployment control plane for VPS apps and agent-readable operations"
 readme = "README.md"
 requires-python = ">=3.9"

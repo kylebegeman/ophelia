@@ -240,6 +240,9 @@ def pack_validation_report(
             + ", ".join(missing_offsite)
             + ".",
         )
+    offsite_policy = _offsite_policy_report(manifest, manifest_path)
+    warnings.extend(offsite_policy["warnings"])
+    checks.extend(offsite_policy["checks"])
     if manifest.environment == "production":
         for service, image in sorted(image_references(manifest).items()):
             if "@sha256:" not in image:
@@ -247,7 +250,7 @@ def pack_validation_report(
                     warnings,
                     "production_image_without_digest",
                     f"image:{service}",
-                    f"Production image `{image}` is not pinned by digest.",
+                    f"Production image `{image}` is not pinned by digest. Run `ship release image-lock plan {manifest_path} --json` to resolve a pinned reference.",
                 )
 
     checks.append(
@@ -274,6 +277,7 @@ def pack_validation_report(
         "host_requirements": manifest.to_lock_dict().get("host_requirements", {}),
         "networking": manifest.to_lock_dict().get("networking", {}),
         "data_contracts": data_contract_dict(manifest),
+        "offsite_policy": offsite_policy["summary"],
         "hooks": manifest.to_lock_dict().get("hooks", {}),
         "errors": errors,
         "warnings": warnings,
@@ -348,6 +352,149 @@ def _offsite_requirement_summary(manifest: Optional[Manifest]) -> Dict[str, obje
         },
         propagate=True,
     )
+
+
+def _offsite_policy_report(manifest: Manifest, manifest_path: Path) -> Dict[str, object]:
+    warnings: List[Dict[str, str]] = []
+    checks: List[Dict[str, object]] = []
+    summary = _offsite_requirement_summary(manifest)
+    backups = manifest.data.backups
+    offsite = backups.offsite if backups is not None else None
+    evidence: Dict[str, object] = {
+        "declared": bool(offsite and offsite.last_rehearsal_ref),
+        "path": offsite.last_rehearsal_ref if offsite is not None else None,
+        "exists": None,
+        "status": "not_declared",
+    }
+
+    if backups is not None and backups.offsite_required and offsite is not None:
+        if offsite.encryption_required is False:
+            warnings.append(
+                schema_issue(
+                    "offsite_backup_encryption_not_required",
+                    "Offsite backups are required, but `encryption_required` is false.",
+                    "data.backups.offsite.encryption_required",
+                )
+            )
+        if offsite.last_rehearsal_ref:
+            evidence = _offsite_rehearsal_evidence(
+                manifest_path,
+                offsite.last_rehearsal_ref,
+                offsite.restore_rehearsal_cadence_days,
+            )
+            checks.append(
+                {
+                    "name": "offsite_rehearsal_evidence",
+                    "ok": evidence.get("status") == "fresh_success",
+                    "message": str(evidence.get("message") or evidence.get("status")),
+                }
+            )
+            if evidence.get("warning"):
+                warning_code = str(evidence["warning"])
+                warnings.append(
+                    schema_issue(
+                        warning_code,
+                        str(evidence.get("message") or warning_code),
+                        "data.backups.offsite.last_rehearsal_ref",
+                    )
+                )
+
+    summary["evidence"] = evidence
+    return {
+        "summary": deep_redact(summary, propagate=True),
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+
+def _offsite_rehearsal_evidence(
+    manifest_path: Path,
+    ref: str,
+    cadence_days: Optional[int],
+) -> Dict[str, object]:
+    resolved = _resolve_manifest_ref(manifest_path, ref)
+    evidence: Dict[str, object] = {
+        "declared": True,
+        "path": ref,
+        "resolved_path": str(resolved),
+        "exists": resolved.exists(),
+    }
+    if not resolved.exists():
+        return {
+            **evidence,
+            "status": "missing",
+            "warning": "offsite_rehearsal_evidence_missing",
+            "message": f"Offsite restore rehearsal evidence file does not exist: {ref}",
+        }
+    try:
+        raw = resolved.read_bytes()
+    except OSError as exc:
+        return {
+            **evidence,
+            "status": "unreadable",
+            "warning": "offsite_rehearsal_evidence_unreadable",
+            "message": f"Offsite restore rehearsal evidence file could not be read: {exc}",
+        }
+    payload = _read_json(resolved)
+    evidence["sha256"] = hashlib.sha256(raw).hexdigest()[:20]
+    evidence["bytes"] = len(raw)
+    evidence["json"] = bool(payload)
+    if not payload:
+        return {
+            **evidence,
+            "status": "unparseable",
+            "warning": "offsite_rehearsal_evidence_unparseable",
+            "message": "Offsite restore rehearsal evidence must be a JSON object.",
+        }
+    ok = payload.get("ok")
+    status = str(payload.get("status") or payload.get("result") or "").lower()
+    success = ok is True or status in {"ok", "passed", "success", "succeeded"}
+    evidence["reported_status"] = status or ok
+    if payload and not success:
+        return {
+            **evidence,
+            "status": "not_successful",
+            "warning": "offsite_rehearsal_evidence_not_successful",
+            "message": "Offsite restore rehearsal evidence exists, but it does not report success.",
+        }
+
+    timestamp = _evidence_timestamp(payload)
+    evidence["completed_at"] = timestamp.isoformat().replace("+00:00", "Z") if timestamp else None
+    if timestamp is None:
+        return {
+            **evidence,
+            "status": "unstamped",
+            "warning": "offsite_rehearsal_evidence_unstamped",
+            "message": "Offsite restore rehearsal evidence has no completed timestamp.",
+        }
+    age_days = (datetime.now(timezone.utc) - timestamp).total_seconds() / 86400
+    evidence["age_days"] = round(age_days, 2)
+    evidence["cadence_days"] = cadence_days
+    if cadence_days and age_days > cadence_days:
+        return {
+            **evidence,
+            "status": "stale",
+            "warning": "offsite_rehearsal_evidence_stale",
+            "message": f"Offsite restore rehearsal evidence is stale: {age_days:.1f} day(s) old, cadence is {cadence_days} day(s).",
+        }
+    return {**evidence, "status": "fresh_success", "message": "Offsite restore rehearsal evidence is fresh and successful."}
+
+
+def _resolve_manifest_ref(manifest_path: Path, ref: str) -> Path:
+    path = Path(ref).expanduser()
+    if path.is_absolute():
+        return path
+    return (manifest_path.parent / path).resolve(strict=False)
+
+
+def _evidence_timestamp(payload: Dict[str, object]) -> Optional[datetime]:
+    for key in ("completed_at", "completedAt", "ended_at", "endedAt", "created_at", "createdAt", "timestamp"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            parsed = _parse_timestamp(value)
+            if parsed is not None:
+                return parsed
+    return None
 
 
 def _verification_check_summary(check: VerificationCheck) -> Dict[str, object]:
@@ -2409,6 +2556,22 @@ def cutover_plan(
     blockers = list(readiness.get("blockers", []))
     warnings = list(readiness.get("warnings", []))
     warnings.append(schema_issue("route_mutation_not_automated", "Cutover apply records a checkpoint receipt but does not mutate Caddy or DNS."))
+    resolution = resolve_app_manifest(app, environment, manifest_path=manifest_path)
+    shared_postgres_cutover = _shared_postgres_cutover_evidence(
+        resolution.manifest,
+        source_host,
+        target_host,
+        runtime_root,
+        str(readiness.get("environment") or environment or "unknown"),
+    )
+    if shared_postgres_cutover.get("required"):
+        warnings.append(
+            schema_issue(
+                "critical_shared_postgres_cutover_evidence_required",
+                "Critical shared Postgres cutover requires explicit backup, restore, verifier, and rollback evidence in the cutover receipt.",
+                "data.postgres.mode",
+            )
+        )
     token = _token("app.cutover.apply", {"app": app, "environment": readiness.get("environment"), "from": source_host, "to": target_host})
     return plan_envelope(
         "app.cutover.plan",
@@ -2428,6 +2591,7 @@ def cutover_plan(
         source_host=source_host,
         target_host=target_host,
         readiness=readiness,
+        shared_postgres_cutover=shared_postgres_cutover,
         rollback={"available": True, "note": "Before DNS/Caddy changes, rollback is canceling cutover and leaving source active."},
         apply_supported=True,
         route_mutation_supported=False,
@@ -2476,6 +2640,22 @@ def cutover_apply(
     cutover_root = runtime_root / "apps" / app / "cutovers" / cutover_id
     cutover_root.mkdir(parents=True, exist_ok=False)
     _write_json(cutover_root / "cutover-plan.json", plan)
+    shared_postgres_cutover = plan.get("shared_postgres_cutover") if isinstance(plan.get("shared_postgres_cutover"), dict) else {}
+    if shared_postgres_cutover:
+        _write_json(cutover_root / "shared-postgres-cutover-evidence.json", shared_postgres_cutover)
+    artifacts = [
+        artifact(str(cutover_root), "cutover-checkpoint", "Cutover checkpoint artifacts", present=True),
+        artifact(str(cutover_root / "cutover-plan.json"), "cutover-plan", present=True),
+    ]
+    if shared_postgres_cutover:
+        artifacts.append(
+            artifact(
+                str(cutover_root / "shared-postgres-cutover-evidence.json"),
+                "shared-postgres-cutover-evidence",
+                "Critical shared Postgres cutover evidence template and current refs",
+                present=True,
+            )
+        )
     receipt = receipt_envelope(
         "app.cutover.apply",
         app,
@@ -2483,14 +2663,20 @@ def cutover_apply(
         "succeeded",
         started_at,
         _utc_now(),
-        artifacts=[
-            artifact(str(cutover_root), "cutover-checkpoint", "Cutover checkpoint artifacts", present=True),
-            artifact(str(cutover_root / "cutover-plan.json"), "cutover-plan", present=True),
-        ],
+        artifacts=artifacts,
         checks=[
             {"name": "confirmation_token", "ok": True, "message": "Matched current cutover plan."},
             {"name": "active_runtime_unchanged", "ok": True, "message": "No active runtime files were modified."},
             {"name": "route_mutation", "ok": True, "message": "Caddy and DNS were not mutated by this checkpoint apply."},
+            {
+                "name": "shared_postgres_cutover_evidence",
+                "ok": True,
+                "message": (
+                    "Critical shared Postgres evidence recorded."
+                    if shared_postgres_cutover.get("required")
+                    else "Shared Postgres critical evidence not required."
+                ),
+            },
         ],
         rollback={"available": True, "note": "No route mutation was performed. Rollback is canceling this checkpoint before manual traffic movement."},
         plan_operation_id=plan.get("operation_id") if isinstance(plan.get("operation_id"), str) else None,
@@ -2498,6 +2684,7 @@ def cutover_apply(
         source_host=source_host,
         target_host=target_host,
         cutover_path=str(cutover_root),
+        shared_postgres_cutover=shared_postgres_cutover,
         route_mutation_performed=False,
         inputs_redacted=True,
         secrets_redacted=True,
@@ -2505,6 +2692,72 @@ def cutover_apply(
     _write_json(cutover_root / "receipts" / "cutover-apply.json", receipt)
     _write_json(runtime_root / "apps" / app / "receipts" / f"{receipt['operation_id']}.json", receipt)
     return receipt
+
+
+def _shared_postgres_cutover_evidence(
+    manifest: Optional[Manifest],
+    source_host: str,
+    target_host: str,
+    runtime_root: Path,
+    environment: str,
+) -> Dict[str, object]:
+    required = bool(
+        manifest
+        and manifest.pack.portability == "critical"
+        and manifest.data.postgres
+        and manifest.data.postgres.mode == "shared-postgres-database"
+    )
+    if manifest is None:
+        return {
+            "required": False,
+            "status": "manifest_unresolved",
+            "source_host": source_host,
+            "target_host": target_host,
+        }
+    latest_backups = _backup_records(runtime_root / "backups" / "apps" / manifest.app)
+    latest_backups.extend(_export_backup_records(runtime_root / "apps" / manifest.app / "export-bundles"))
+    latest_backups = _sort_backup_records(latest_backups)
+    latest_backup = latest_backups[-1] if latest_backups else None
+    latest_verification = _latest_successful_backup_verification(runtime_root, manifest.app, environment)
+    postgres = manifest.data.postgres
+    payload = {
+        "required": required,
+        "status": "required" if required else "not_required",
+        "app": manifest.app,
+        "environment": environment,
+        "source_host": source_host,
+        "target_host": target_host,
+        "postgres": {
+            "mode": postgres.mode if postgres is not None else None,
+            "database": postgres.database if postgres is not None else None,
+            "class": postgres.class_name if postgres is not None else None,
+            "export": deep_redact(postgres.export if postgres is not None else {}, propagate=True),
+            "import": deep_redact(postgres.import_config if postgres is not None else {}, propagate=True),
+            "verify": deep_redact(postgres.verify if postgres is not None else {}, propagate=True),
+        },
+        "latest_backup": latest_backup,
+        "latest_restore_or_backup_verification": latest_verification,
+        "offsite_requirement": _offsite_requirement_summary(manifest),
+        "evidence_required": [
+            "source dump artifact path",
+            "source dump checksum",
+            "target restore destination",
+            "manifest data verifier output",
+            "freeze and unfreeze hook outcome",
+            "rollback point before traffic movement",
+        ],
+        "checkpoint": {
+            "route_mutation_performed": False,
+            "source_runtime_expected_active": True,
+            "target_runtime_expected_ready": True,
+            "rollback_before_traffic": "Leave source traffic active and discard this checkpoint.",
+        },
+        "notes": [
+            "This receipt is a checkpoint. It does not dump, restore, mutate shared Postgres, Caddy, or DNS.",
+            "Attach the actual dump, restore, verifier, and rollback receipts before approving manual traffic movement.",
+        ],
+    }
+    return deep_redact(payload, propagate=True)
 
 
 def traffic_plan(

@@ -11,9 +11,10 @@ networks compatible with Ophelia-managed shared Postgres and Redis, hardens
 static asset publishing, and fixes remote production deploy confirmation so SSH
 applies use confirmation tokens generated from the staged remote runtime bundle.
 
-The immediate deployment need is StillUp staging: it can remove the temporary
-`networking.internal: shared` workaround and return to `networking.internal:
-per-app` while still reaching shared Postgres through `ophelia-internal`.
+The immediate deployment need is a retained staging app: it can remove the
+temporary `networking.internal: shared` workaround and return to
+`networking.internal: per-app` while still reaching shared Postgres through
+`ophelia-internal`.
 
 ## Changes
 

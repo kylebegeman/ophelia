@@ -266,6 +266,9 @@ data:
       provider: restic
       target: s3://ophelia-fixture-backups/demo-service
       retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: restore-drills/latest.json
 
 hooks:
   pre_export: ophelia/hooks/pre-export.sh
@@ -351,6 +354,8 @@ Portable pack and readiness commands are read-only by default:
 ./cli/ship backup rehearse plan ./exports/demo-service.production.export.tar --manifest .ophelia.yml --json
 ./cli/ship backup rehearse apply ./exports/demo-service.production.export.tar --manifest .ophelia.yml --confirm <token> --json
 ./cli/ship backup rehearse ./exports/demo-service.production.export.tar --manifest .ophelia.yml --environment production --json
+./cli/ship release image-lock plan .ophelia.yml --output .ophelia.image-lock.json --pinned-manifest .ophelia.pinned.yml --json
+./cli/ship release image-lock apply .ophelia.yml --output .ophelia.image-lock.json --pinned-manifest .ophelia.pinned.yml --confirm <token> --json
 ./cli/ship app fresh-install plan demo-service --environment staging --manifest .ophelia.staging.yml --json
 ./cli/ship app readiness demo-service --environment production --json
 ./cli/ship app runbook demo-service --environment production
@@ -370,6 +375,15 @@ Portable pack and readiness commands are read-only by default:
 ./cli/ship pack init --app demo-service --environment production --critical --postgres --uploads --json
 ./cli/ship pack init --app demo-service --environment staging --directory ../demo-service --include-manifest --kind service --domain demo-service.example.com --image ghcr.io/example/demo-service:latest --json
 ```
+
+For critical apps using `data.postgres.mode: shared-postgres-database`,
+cutover plan/apply include a `shared_postgres_cutover` checkpoint. Apply writes
+`shared-postgres-cutover-evidence.json` beside the cutover plan and receipt.
+That artifact records source/target hosts, the declared Postgres export,
+import, verifier contract, latest backup references, offsite policy, required
+human evidence, and rollback checkpoint notes. It is evidence scaffolding only:
+Ophelia still does not dump, restore, mutate shared Postgres, Caddy, or DNS in
+the cutover apply step.
 
 `ship pack init` previews by default. It writes scaffold files only when
 `--write` is passed, and refuses to overwrite existing files without `--force`.
@@ -615,6 +629,19 @@ data:
 
 When offsite is required but any actionable field is missing, pack validation
 emits `offsite_backup_target_missing` and lists the exact missing fields.
+When `last_rehearsal_ref` is present, it must point to a JSON receipt or
+evidence file relative to the manifest directory, unless it is an absolute path.
+The evidence must report success through `ok: true` or a successful
+`status`/`result`, and must include a timestamp such as `completed_at`.
+`ship pack validate` reports missing, unreadable, unsuccessful, unstamped, or
+stale evidence with a specific `offsite_rehearsal_evidence_*` warning.
+
+Production manifests should pin images to immutable digests before apply. Use
+`ship release image-lock plan <manifest> --json` to resolve tags through Docker
+registry metadata, then `ship release image-lock apply <manifest> --confirm
+<token>` to write a redacted image-lock artifact and, optionally, a pinned
+manifest copy. The workflow writes only explicit output files and does not
+deploy or mutate runtime state.
 
 Named Docker volume ids include the app and environment, for example
 `demo-service-production-uploads`, so staging and production apps on the same

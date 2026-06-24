@@ -1,15 +1,17 @@
 # Ophelia Roadmap
 
-Status: current after the 0.3.11 patch release
+Status: current after the 0.4.0 minor release
 
 Ophelia 0.3.0 completes the fixture-first foundation: manifest contracts,
 runtime rendering, safety-gated operations, receipts, readiness, synthetic app
 fixtures, app adoption planning, live evidence scaffolds, public governance, and
 strict release hygiene.
 
-The 0.3.x patch line keeps that foundation stable while tightening real
-operator workflows. Current patches include first-class static-site publishing
-from relative `static_root` directories into immutable runtime static releases.
+The 0.4.x line keeps that foundation stable while tightening real operator
+workflows. Current work includes first-class static-site publishing, managed
+addon networking for per-app services, image digest locking, offsite rehearsal
+evidence, clearer critical shared Postgres cutover receipts, and version
+reporting.
 
 This roadmap replaces the older long-form implementation plans now stored in
 [Archive](archive/README.md). Use the archive for historical context only.
@@ -28,6 +30,7 @@ reference doc for the feature being changed.
 | Fixture suite | Landed with synthetic service, static, stateful, worker, provider, incomplete, multi-service, and console-profile fixtures. |
 | Readiness and hardening | Landed with live-readiness lanes, reviewed evidence promotion, no-probe gates, drill profiles, and production hardening reports. |
 | SaaS onboarding contracts | Landed with internal service verification, schema-aware JSON assertions, lifecycle reset policy, fresh-install plans, one-shot backup rehearsals, actionable offsite backup policy, runtime release metadata env, and app-owned readiness evidence. |
+| Release hardening | Landed with `ship version`, production image digest lock planning/apply, offsite rehearsal evidence freshness checks, and shared Postgres cutover evidence artifacts. |
 | Operator console and plugins | Landed as read-only console payloads, API summaries, and fixture plugin contracts. |
 | Open-source preparation | Landed with Apache-2.0, DCO, governance files, public-safe docs, CI, docs-check, and strict zero-warning audit. |
 
@@ -103,7 +106,7 @@ app is ready to move onto Ophelia. The expected flow is:
 
 3. Distribution beyond GitHub
 
-   Issue: 0.3.0 is GitHub-only and has no PyPI release path.
+   Issue: 0.4.0 is GitHub-only and has no PyPI release path.
 
    Proposed direction: keep GitHub-only for the private phase; revisit package
    publishing after public support expectations are clear.

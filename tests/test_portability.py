@@ -91,6 +91,65 @@ class PortabilityTests(unittest.TestCase):
         warning = next(item for item in report["warnings"] if item["code"] == "offsite_backup_target_missing")
         self.assertIn("encryption_required", warning["message"])
 
+    def test_pack_validation_accepts_fresh_offsite_rehearsal_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "uploads").mkdir()
+            evidence_path = root / "restore-drills" / "latest.json"
+            evidence_path.parent.mkdir()
+            evidence_path.write_text(
+                json.dumps({"status": "succeeded", "completed_at": _iso(datetime.now(timezone.utc))}) + "\n",
+                encoding="utf-8",
+            )
+            manifest_path = root / "demo-service.ophelia.yml"
+            manifest_path.write_text(_portable_manifest_with_offsite_evidence("restore-drills/latest.json"))
+            manifest = load_manifest(manifest_path)
+
+            report = pack_validation_report(manifest, manifest_path)
+
+        warning_codes = {item["code"] for item in report["warnings"]}
+        self.assertNotIn("offsite_backup_target_missing", warning_codes)
+        self.assertNotIn("offsite_rehearsal_evidence_stale", warning_codes)
+        self.assertEqual("fresh_success", report["offsite_policy"]["evidence"]["status"])
+        self.assertTrue(next(item for item in report["checks"] if item["name"] == "offsite_rehearsal_evidence")["ok"])
+
+    def test_pack_validation_warns_for_stale_offsite_rehearsal_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "uploads").mkdir()
+            evidence_path = root / "restore-drills" / "latest.json"
+            evidence_path.parent.mkdir()
+            evidence_path.write_text(
+                json.dumps({"status": "succeeded", "completed_at": _iso(datetime.now(timezone.utc) - timedelta(days=45))}) + "\n",
+                encoding="utf-8",
+            )
+            manifest_path = root / "demo-service.ophelia.yml"
+            manifest_path.write_text(_portable_manifest_with_offsite_evidence("restore-drills/latest.json"))
+            manifest = load_manifest(manifest_path)
+
+            report = pack_validation_report(manifest, manifest_path)
+
+        warning_codes = {item["code"] for item in report["warnings"]}
+        self.assertIn("offsite_rehearsal_evidence_stale", warning_codes)
+        self.assertEqual("stale", report["offsite_policy"]["evidence"]["status"])
+
+    def test_pack_validation_warns_for_unstamped_offsite_rehearsal_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "uploads").mkdir()
+            evidence_path = root / "restore-drills" / "latest.json"
+            evidence_path.parent.mkdir()
+            evidence_path.write_text(json.dumps({"status": "succeeded"}) + "\n", encoding="utf-8")
+            manifest_path = root / "demo-service.ophelia.yml"
+            manifest_path.write_text(_portable_manifest_with_offsite_evidence("restore-drills/latest.json"))
+            manifest = load_manifest(manifest_path)
+
+            report = pack_validation_report(manifest, manifest_path)
+
+        warning_codes = {item["code"] for item in report["warnings"]}
+        self.assertIn("offsite_rehearsal_evidence_unstamped", warning_codes)
+        self.assertEqual("unstamped", report["offsite_policy"]["evidence"]["status"])
+
     def test_fresh_install_plan_and_apply_reset_non_live_host_volume(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -899,6 +958,46 @@ data:
         self.assertEqual("succeeded", receipt["status"])
         self.assertFalse(receipt["route_mutation_performed"])
         self.assertTrue(cutover_plan_exists)
+
+    def test_cutover_apply_records_critical_shared_postgres_evidence(self) -> None:
+        with self._skip_docker_status():
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                runtime_root = root / "runtime"
+                manifest_path = root / "critical-pg.ophelia.yml"
+                manifest_path.write_text(_critical_shared_postgres_manifest())
+                manifest = load_manifest(manifest_path)
+                app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+                (app_root / "active_release.json").write_text((app_root / "release.json").read_text())
+                _write_filled_env(app_root)
+
+                plan = cutover_plan("critical-pg", "source-host", "target-host", "staging", runtime_root, manifest_path)
+                receipt = cutover_apply(
+                    "critical-pg",
+                    "source-host",
+                    "target-host",
+                    "staging",
+                    runtime_root,
+                    manifest_path,
+                    str(plan["confirmation_token"]),
+                )
+                cutover_path = Path(str(receipt["cutover_path"]))
+                evidence_path = cutover_path / "shared-postgres-cutover-evidence.json"
+                evidence_path_exists = evidence_path.exists()
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+
+        self.assertEqual([], plan["blockers"])
+        self.assertTrue(plan["shared_postgres_cutover"]["required"])
+        self.assertEqual("required", plan["shared_postgres_cutover"]["status"])
+        self.assertIn(
+            "critical_shared_postgres_cutover_evidence_required",
+            {item["code"] for item in plan["warnings"]},
+        )
+        self.assertEqual("succeeded", receipt["status"])
+        self.assertTrue(evidence_path_exists)
+        self.assertTrue(receipt["shared_postgres_cutover"]["required"])
+        self.assertEqual("shared-postgres-database", evidence["postgres"]["mode"])
+        self.assertIn("source dump checksum", evidence["evidence_required"])
 
     def test_traffic_plan_and_apply_write_checkpoint_without_provider_mutation(self) -> None:
         with self._skip_docker_status():
@@ -2244,6 +2343,96 @@ data:
     required: true
     restore_drill_required: true
     offsite_required: true
+""".strip() + "\n"
+
+
+def _portable_manifest_with_offsite_evidence(last_rehearsal_ref: str) -> str:
+    return f"""
+version: 1
+app: demo-service
+environment: production
+kind: service
+image: ghcr.io/example/demo-service@sha256:aaaaaaaa
+pack:
+  portability: critical
+  owner: personal
+host_requirements:
+  min_disk_free: 1b
+services:
+  web:
+    port: 3000
+routes:
+  - domain: demo-service.example.net
+    service: web
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: dragon_writer
+    export:
+      format: custom
+      command: pg_dump
+    import:
+      command: pg_restore
+    verify:
+      command: ophelia/checks/data-verify.sh
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      source: uploads
+      class: critical
+      export: tar-zstd
+      import: tar-zstd
+  backups:
+    required: true
+    restore_drill_required: true
+    offsite_required: true
+    offsite:
+      provider: restic
+      target: s3://ophelia-fixture-backups/demo-service
+      retention_days: 30
+      encryption_required: true
+      restore_rehearsal_cadence_days: 30
+      last_rehearsal_ref: {last_rehearsal_ref}
+verify:
+  - name: health
+    url: https://demo-service.example.net/health
+""".strip() + "\n"
+
+
+def _critical_shared_postgres_manifest() -> str:
+    return """
+version: 1
+app: critical-pg
+environment: staging
+kind: service
+image: ghcr.io/example/critical-pg@sha256:aaaaaaaa
+pack:
+  portability: critical
+  owner: personal
+host_requirements:
+  min_disk_free: 1b
+services:
+  web:
+    port: 3000
+routes:
+  - domain: critical-pg.example.net
+    service: web
+data:
+  postgres:
+    mode: shared-postgres-database
+    database: critical_pg
+    class: critical
+    export:
+      format: custom
+      command: pg_dump
+    import:
+      command: pg_restore
+    verify:
+      command: psql critical_pg -c "select 1"
+  backups:
+    required: false
+    restore_drill_required: false
+    offsite_required: false
 """.strip() + "\n"
 
 

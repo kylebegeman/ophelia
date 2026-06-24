@@ -150,6 +150,10 @@ When `data.backups.offsite_required: true`, declare the concrete offsite target:
 `encryption_required`, `restore_rehearsal_cadence_days`, and
 `last_rehearsal_ref`. Pack validation warns with
 `offsite_backup_target_missing` and lists missing fields until all are set.
+`last_rehearsal_ref` should point to a JSON receipt or evidence file that
+reports success and includes a completion timestamp. `ship pack validate`
+checks that evidence for existence, JSON readability, success, timestamp
+presence, and freshness against `restore_rehearsal_cadence_days`.
 
 ## Field Reference
 
@@ -329,6 +333,19 @@ credential URLs are masked while preserving enough command shape for review.
 These commands are read-only. They report redacted env shape, backup freshness,
 route/domain ownership, portability score, generated runbook text, and existing
 operation receipts.
+
+### Production Image Lock Commands
+
+```bash
+./cli/ship release image-lock plan .ophelia.yml --output .ophelia.image-lock.json --pinned-manifest .ophelia.pinned.yml --json
+./cli/ship release image-lock apply .ophelia.yml --output .ophelia.image-lock.json --pinned-manifest .ophelia.pinned.yml --confirm <token> --json
+```
+
+Production manifests should use immutable `@sha256:` image references. The
+image-lock plan resolves tag references through Docker registry metadata and
+shows the exact lock changes. The apply command is confirmation-gated and writes
+only the requested image-lock artifact and optional pinned manifest copy; it
+does not deploy, pull, restart, or mutate runtime state.
 
 ### Backup Rehearsal Commands
 
@@ -522,6 +539,14 @@ Cutover apply should only run after successful import and verification on the
 target host. The current apply form writes a confirmed cutover checkpoint
 receipt and rollback note. It does not mutate Caddy, DNS, or source retention
 state.
+
+For critical apps on `shared-postgres-database`, the cutover checkpoint includes
+`shared_postgres_cutover` and writes
+`shared-postgres-cutover-evidence.json`. The evidence file summarizes the
+declared dump/import/verifier contract, latest backup references, offsite
+requirement, required human evidence, and rollback checkpoint. It is a receipt
+scaffold for safe manual cutover approval, not an automated shared Postgres
+mutation.
 
 ### Traffic Automation Commands
 
