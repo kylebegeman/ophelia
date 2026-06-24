@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .config import DEFAULT_RUNTIME_ROOT
 from .manifest import Manifest, VerificationCheck, VerificationPolicy
-from .redaction import deep_redact, redact_command_string, redact_url
+from .redaction import deep_redact, is_sensitive_key, redact_command_string, redact_url, redact_value
 
 
 TLS_PHASE = "certificate_obtain"
@@ -326,7 +326,7 @@ def _run_check(check: VerificationCheck, timeout: float, ssl_context: ssl.SSLCon
             "ok": matched,
         }
         if not matched:
-            result["error"] = body[:240]
+            result["error"] = _redacted_excerpt(body)
             result["error_kind"] = "http_status"
         return result
     except Exception as exc:  # pragma: no cover - network failures vary by environment.
@@ -654,7 +654,7 @@ def _normalize_json_assertion(raw: Any, index: int) -> Dict[str, Any]:
                 "condition": "valid regex",
                 "error": "`regex` must be a non-empty string.",
             }
-        return {"path": path, "kind": "regex", "expected": regex, "condition": f"matches {regex}"}
+        return {"path": path, "kind": "regex", "expected": regex, "condition": "matches regex"}
     return {
         "path": path,
         "kind": "invalid",
@@ -671,7 +671,7 @@ def _assertion_from_string(expression: str) -> Dict[str, Any]:
         expected = _parse_literal(regex_match.group(2).strip())
         if not isinstance(expected, str):
             expected = str(expected)
-        return {"path": path, "kind": "regex", "expected": expected, "condition": f"matches {expected}"}
+        return {"path": path, "kind": "regex", "expected": expected, "condition": "matches regex"}
 
     equals_match = re.match(r"^(.+?)\s*==\s*(.+)$", text)
     if equals_match:
@@ -737,39 +737,66 @@ def _evaluate_json_assertion(payload: Any, assertion: Dict[str, Any]) -> Dict[st
         result["expected"] = bool(expected)
         result["ok"] = present is bool(expected)
         result["message"] = _assertion_message(path, result["ok"], condition)
-        return result
+        return _redact_assertion_result(result, kind)
     if not present:
         result["expected"] = expected
         result["actual"] = "<missing>"
         result["message"] = _assertion_message(path, False, condition)
-        return result
+        return _redact_assertion_result(result, kind)
     if kind == "equals":
         result["expected"] = expected
         result["actual"] = actual
         result["ok"] = actual == expected
         result["message"] = _assertion_message(path, result["ok"], condition)
-        return result
+        return _redact_assertion_result(result, kind)
     if kind == "boolean":
         result["expected"] = bool(expected)
         result["actual"] = actual
         result["ok"] = isinstance(actual, bool) and actual is bool(expected)
         result["message"] = _assertion_message(path, result["ok"], condition)
-        return result
+        return _redact_assertion_result(result, kind)
     if kind == "regex":
         result["expected"] = expected
         result["actual"] = actual
-        result["ok"] = isinstance(actual, str) and bool(re.search(str(expected), actual))
+        if not isinstance(actual, str):
+            result["ok"] = False
+            result["message"] = _assertion_message(path, False, condition)
+            return _redact_assertion_result(result, kind)
+        try:
+            result["ok"] = bool(re.search(str(expected), actual))
+        except re.error as exc:
+            result["ok"] = False
+            result["error"] = f"Invalid regex: {exc}"
+            result["message"] = _assertion_message(path, False, condition)
+            return _redact_assertion_result(result, kind)
         result["message"] = _assertion_message(path, result["ok"], condition)
-        return result
+        return _redact_assertion_result(result, kind)
 
     result["message"] = f"Unsupported JSON assertion `{kind}` for path `{path}`."
-    return result
+    return _redact_assertion_result(result, kind)
 
 
 def _assertion_message(path: str, ok: bool, condition: str) -> str:
     if ok:
         return f"JSON path `{path}` satisfied `{condition}`."
     return f"JSON path `{path}` did not satisfy `{condition}`."
+
+
+def _redact_assertion_result(result: Dict[str, Any], kind: object) -> Dict[str, Any]:
+    path_sensitive = _json_path_contains_sensitive_key(str(result.get("path") or ""))
+    for key in ("expected", "actual"):
+        if key not in result:
+            continue
+        if path_sensitive or (kind == "regex" and key == "expected"):
+            result[key] = redact_value(result[key])
+    return result
+
+
+def _json_path_contains_sensitive_key(field_path: str) -> bool:
+    tokens = _json_path_tokens(field_path)
+    if tokens is None:
+        return False
+    return any(isinstance(token, str) and is_sensitive_key(token) for token in tokens)
 
 
 def _json_path(payload: Any, field_path: str) -> Tuple[bool, Any]:

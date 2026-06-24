@@ -82,6 +82,8 @@ class SchemaExportTests(unittest.TestCase):
         self.assertEqual(props["verify_policy"]["properties"]["failure_mode"]["enum"], ["hard", "warn"])
         self.assertEqual(props["verify"]["items"]["properties"]["type"]["enum"], ["http", "command", "internal"])
         self.assertEqual(props["verify"]["items"]["properties"]["url"]["pattern"], r"^https?://(?![^/?#]*@)[^?#]*$")
+        self.assertEqual(props["verify"]["items"]["properties"]["path"]["pattern"], r"^/")
+        self.assertEqual(props["verify"]["items"]["properties"]["method"]["pattern"], r"^[A-Za-z][A-Za-z-]*$")
         backups = props["data"]["properties"]["backups"]["properties"]
         self.assertIn("offsite", backups)
         self.assertIn("retention_days", backups["offsite"]["properties"])

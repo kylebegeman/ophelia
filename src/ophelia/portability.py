@@ -941,6 +941,10 @@ def fresh_install_plan(
         reset_targets = _fresh_install_reset_targets(manifest, resolution.manifest_path)
         if not reset_targets:
             blockers.append(schema_issue("fresh_install_no_declared_volumes", "No declared data.volumes targets can be reset.", "data.volumes"))
+        for target in reset_targets:
+            safety_issue = _fresh_install_target_safety_issue(target)
+            if safety_issue is not None:
+                blockers.append(safety_issue)
         pre_export_plan: Dict[str, object] | None = None
         if skip_pre_reset_export:
             warnings.append(
@@ -1122,7 +1126,7 @@ def fresh_install_apply(
     for target in _fresh_install_reset_targets(manifest, resolution.manifest_path):
         reset_evidence.append(_reset_fresh_install_target(target))
 
-    verification = run_verifications(manifest, attempts=1, interval=0, wait_for_tls=False, runtime_root=runtime_root)
+    verification = run_app_owned_verifications(manifest, attempts=1, interval=0, runtime_root=runtime_root)
     status = (
         "succeeded"
         if all(bool(item.get("ok")) for item in reset_evidence) and bool(verification.get("ok"))
@@ -6388,15 +6392,15 @@ def _fresh_install_reset_targets(manifest: Manifest, manifest_path: Path) -> Lis
     targets: List[Dict[str, object]] = []
     for volume in manifest.data.volumes:
         source = volume.source
-        if source and _source_is_host_path(source):
-            path = Path(source).expanduser()
-            if not path.is_absolute():
-                path = manifest_path.parent / path
+        if source:
+            path = _resolve_pack_path(source, manifest_path)
             targets.append(
                 {
                     "kind": "host_path",
                     "name": volume.name,
                     "path": str(path),
+                    "source": source,
+                    "manifest_dir": str(manifest_path.parent),
                     "mount": volume.mount,
                     "service": volume.service,
                 }
@@ -6414,16 +6418,31 @@ def _fresh_install_reset_targets(manifest: Manifest, manifest_path: Path) -> Lis
     return targets
 
 
-def _source_is_host_path(source: str) -> bool:
-    return source.startswith(("/", "./", "../", "~/")) or "/" in source
-
-
 def _reset_fresh_install_target(target: Dict[str, object]) -> Dict[str, object]:
     if target.get("kind") == "host_path":
         return _reset_host_path_target(target)
     if target.get("kind") == "docker_volume":
         return _reset_docker_volume_target(target)
     return {**target, "ok": False, "status": "failed", "error": "Unknown reset target kind."}
+
+
+def _fresh_install_target_safety_issue(target: Dict[str, object]) -> Optional[Dict[str, str]]:
+    if target.get("kind") != "host_path":
+        return None
+    path = Path(str(target.get("path") or "")).expanduser()
+    resolved = path.resolve(strict=False)
+    if _unsafe_reset_path(resolved):
+        return schema_issue("fresh_install_unsafe_reset_path", f"Unsafe reset path: {resolved}", "data.volumes")
+    manifest_dir = target.get("manifest_dir")
+    if isinstance(manifest_dir, str) and manifest_dir:
+        resolved_manifest_dir = Path(manifest_dir).expanduser().resolve(strict=False)
+        if resolved == resolved_manifest_dir or resolved in resolved_manifest_dir.parents:
+            return schema_issue(
+                "fresh_install_unsafe_reset_path",
+                f"Reset path resolves to the manifest directory or an ancestor: {resolved}",
+                "data.volumes",
+            )
+    return None
 
 
 def _reset_host_path_target(target: Dict[str, object]) -> Dict[str, object]:
@@ -6433,6 +6452,16 @@ def _reset_host_path_target(target: Dict[str, object]) -> Dict[str, object]:
         resolved = path.resolve(strict=False)
         if _unsafe_reset_path(resolved):
             return {**evidence, "ok": False, "status": "blocked", "error": f"Unsafe reset path: {resolved}"}
+        manifest_dir = target.get("manifest_dir")
+        if isinstance(manifest_dir, str) and manifest_dir:
+            resolved_manifest_dir = Path(manifest_dir).expanduser().resolve(strict=False)
+            if resolved == resolved_manifest_dir or resolved in resolved_manifest_dir.parents:
+                return {
+                    **evidence,
+                    "ok": False,
+                    "status": "blocked",
+                    "error": f"Refusing to reset manifest directory or ancestor: {resolved}",
+                }
         if path.exists() and path.is_symlink():
             return {**evidence, "ok": False, "status": "blocked", "error": f"Refusing to reset symlink path: {path}"}
         if path.exists() and not path.is_dir():

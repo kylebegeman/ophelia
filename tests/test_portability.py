@@ -146,6 +146,172 @@ data:
         self.assertFalse((data_dir / "old.txt").exists())
         self.assertTrue(receipt["reset_evidence"][0]["ok"])
 
+    def test_fresh_install_resolves_relative_volume_source_as_host_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            data_dir = root / "uploads"
+            data_dir.mkdir()
+            (data_dir / "old.txt").write_text("old")
+            manifest_path = root / "fresh-relative.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: fresh-relative-app
+environment: staging
+kind: service
+image: ghcr.io/example/fresh-relative-app:latest
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
+services:
+  web:
+    port: 3000
+routes:
+  - domain: fresh-relative.example.com
+    service: web
+data:
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      source: uploads
+""".strip()
+                + "\n"
+            )
+
+            plan = fresh_install_plan(
+                "fresh-relative-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                skip_pre_reset_export=True,
+            )
+            receipt = fresh_install_apply(
+                "fresh-relative-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                confirm=str(plan["confirmation_token"]),
+                skip_pre_reset_export=True,
+            )
+
+        self.assertEqual([], plan["blockers"])
+        self.assertEqual("host_path", plan["reset_targets"][0]["kind"])
+        self.assertEqual(str(data_dir), plan["reset_targets"][0]["path"])
+        self.assertEqual("succeeded", receipt["status"])
+        self.assertFalse((data_dir / "old.txt").exists())
+
+    def test_fresh_install_runs_app_owned_verifier_not_public_route_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            data_dir = root / "uploads"
+            data_dir.mkdir()
+            manifest_path = root / "fresh-verify.ophelia.yml"
+            manifest_path.write_text(
+                f"""
+version: 1
+app: fresh-verify-app
+environment: staging
+kind: service
+image: ghcr.io/example/fresh-verify-app:latest
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
+services:
+  web:
+    port: 3000
+routes:
+  - domain: fresh-verify.example.com
+    service: web
+data:
+  volumes:
+    - name: uploads
+      mount: /app/uploads
+      source: {data_dir}
+verify:
+  - name: public-health
+    url: https://fresh-verify.example.com/health
+""".strip()
+                + "\n"
+            )
+            plan = fresh_install_plan(
+                "fresh-verify-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                skip_pre_reset_export=True,
+            )
+            with mock.patch("ophelia.portability.run_verifications") as broad_verify, mock.patch(
+                "ophelia.portability.run_app_owned_verifications",
+                return_value={"ok": True, "status": "passed", "count": 0, "results": []},
+            ) as app_owned_verify:
+                receipt = fresh_install_apply(
+                    "fresh-verify-app",
+                    "staging",
+                    runtime_root,
+                    manifest_path,
+                    confirm=str(plan["confirmation_token"]),
+                    skip_pre_reset_export=True,
+                )
+
+        broad_verify.assert_not_called()
+        app_owned_verify.assert_called_once()
+        self.assertEqual("succeeded", receipt["status"])
+
+    def test_fresh_install_blocks_manifest_directory_reset_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "fresh-unsafe.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: fresh-unsafe-app
+environment: staging
+kind: service
+image: ghcr.io/example/fresh-unsafe-app:latest
+lifecycle:
+  live: false
+  data_can_be_reset: true
+  production_apply_allowed: false
+services:
+  web:
+    port: 3000
+routes:
+  - domain: fresh-unsafe.example.com
+    service: web
+data:
+  volumes:
+    - name: everything
+      mount: /app/data
+      source: .
+""".strip()
+                + "\n"
+            )
+
+            plan = fresh_install_plan(
+                "fresh-unsafe-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                skip_pre_reset_export=True,
+            )
+            receipt = fresh_install_apply(
+                "fresh-unsafe-app",
+                "staging",
+                runtime_root,
+                manifest_path,
+                confirm=str(plan["confirmation_token"]),
+                skip_pre_reset_export=True,
+            )
+
+        blocker_codes = {item["code"] for item in plan["blockers"]}
+        self.assertIn("fresh_install_unsafe_reset_path", blocker_codes)
+        self.assertEqual("blocked", receipt["status"])
+
     def test_export_plan_is_read_only_and_redacts_env_shape(self) -> None:
         with self._skip_docker_status():
             with tempfile.TemporaryDirectory() as temp_dir:

@@ -57,6 +57,14 @@ _STRING_SCHEMA_BY_PATH: Dict[str, Dict[str, Any]] = {
         "type": "string",
         "pattern": r"^https?://(?![^/?#]*@)[^?#]*$",
     },
+    "verify.path": {
+        "type": "string",
+        "pattern": r"^/",
+    },
+    "verify.method": {
+        "type": "string",
+        "pattern": r"^[A-Za-z][A-Za-z-]*$",
+    },
 }
 
 # A few dataclass field names are exported under a different YAML key by the

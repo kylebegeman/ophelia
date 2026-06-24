@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+from io import BytesIO
 from pathlib import Path
 from unittest import mock
 
@@ -229,6 +231,106 @@ class VerifyTests(unittest.TestCase):
         assertions = payload["results"][0]["json_assertions"]
         self.assertEqual(["checks.runtime.ok", "status"], [item["path"] for item in assertions])
         self.assertTrue(all(item["ok"] for item in assertions))
+
+    def test_http_error_body_is_redacted(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="json-http-error-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="health",
+                    url="http://example.com/ophelia/health",
+                    expect_status=200,
+                )
+            ],
+            verify_policy=VerificationPolicy(attempts=1, interval=0, timeout=1),
+        )
+        error = urllib.error.HTTPError(
+            url="http://example.com/ophelia/health",
+            code=500,
+            msg="server error",
+            hdrs={},
+            fp=BytesIO(b'{"ok":false,"token":"super-secret","message":"failed"}'),
+        )
+        with mock.patch("ophelia.verify.urllib.request.urlopen", side_effect=error):
+            payload = run_verifications(manifest, wait_for_tls=False)
+
+        self.assertFalse(payload["ok"])
+        result = payload["results"][0]
+        self.assertEqual("http_status", result["error_kind"])
+        self.assertIn("<redacted>", result["error"])
+        self.assertNotIn("super-secret", json.dumps(payload))
+
+    def test_invalid_json_assertion_regex_fails_without_crashing(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="json-regex-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="health",
+                    url="http://example.com/ophelia/health",
+                    json_assertions=[{"path": "$.version", "regex": "["}],
+                )
+            ],
+            verify_policy=VerificationPolicy(attempts=1, interval=0, timeout=1),
+        )
+
+        response = _FakeResponse(b'{"version":"1.2.3"}')
+        with mock.patch("ophelia.verify.urllib.request.urlopen", return_value=response):
+            payload = run_verifications(manifest, wait_for_tls=False)
+
+        self.assertFalse(payload["ok"])
+        assertion = payload["results"][0]["json_assertions"][0]
+        self.assertFalse(assertion["ok"])
+        self.assertIn("Invalid regex", assertion["error"])
+
+    def test_json_assertion_sensitive_path_values_are_redacted(self) -> None:
+        manifest = Manifest(
+            version=1,
+            app="json-secret-path-app",
+            kind="service",
+            environment="staging",
+            profile=None,
+            image="example/app:latest",
+            services={},
+            routes=[],
+            verify=[
+                VerificationCheck(
+                    name="health",
+                    url="http://example.com/ophelia/health",
+                    json_assertions=[
+                        '$.token == "super-secret"',
+                        {"path": "$.api_key", "regex": "secret-[0-9]+"},
+                    ],
+                )
+            ],
+            verify_policy=VerificationPolicy(attempts=1, interval=0, timeout=1),
+        )
+
+        response = _FakeResponse(b'{"token":"super-secret","api_key":"secret-123"}')
+        with mock.patch("ophelia.verify.urllib.request.urlopen", return_value=response):
+            payload = run_verifications(manifest, wait_for_tls=False)
+
+        self.assertTrue(payload["ok"])
+        dumped = json.dumps(payload)
+        self.assertNotIn("super-secret", dumped)
+        self.assertNotIn("secret-123", dumped)
+        self.assertNotIn("secret-[0-9]+", dumped)
+        assertions = payload["results"][0]["json_assertions"]
+        self.assertTrue(all(item["ok"] for item in assertions))
+        self.assertTrue(all(item.get("actual") == "<redacted>" for item in assertions))
 
     def test_command_verification_runs_inside_compose_service_and_asserts_json(self) -> None:
         manifest = Manifest(
