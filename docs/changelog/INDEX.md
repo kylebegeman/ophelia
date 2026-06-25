@@ -75,3 +75,5 @@
 | [0071](0071-release-hardening-040.md) | 2026-06-24 | landed | Release hardening 0.4.0 | release, image-lock, backup, offsite, cutover, cli, docs, tests |
 | [0072](0072-lumen-deploy-ergonomics.md) | 2026-06-25 | landed | Lumen deploy ergonomics | deploy, caddy, verification, docs, tests |
 | [0073](0073-release-041.md) | 2026-06-25 | landed | Release 0.4.1 | release, deploy, caddy, verification, docs, tests |
+| [0074](0074-caddy-envfile-reload.md) | 2026-06-25 | landed | Envfile-aware shared Caddy reload | caddy, deploy, static-sites, tests |
+| [0075](0075-release-042.md) | 2026-06-25 | landed | Release 0.4.2 | release, caddy, deploy, static-sites, docs, tests |

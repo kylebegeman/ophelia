@@ -605,7 +605,9 @@ ship caddy reload --runtime-root ~/ophelia-runtime --ophelia-root ~/ophelia --js
 The command validates config first, prefers the `shared-caddy-1` container, uses
 legacy names only as fallback, and returns structured diagnostics with
 `kind`, `ok`, `container`, `validated`, `reloaded`, `runtime_root`,
-`config_path`, `warnings`, and `errors`.
+`config_path`, `warnings`, and `errors`. Reload adapts the Caddyfile with
+`/etc/caddy/env` into temporary JSON before reloading so `{$OPHELIA_*}`
+placeholders match container startup behavior.
 
 ## Mounts
 

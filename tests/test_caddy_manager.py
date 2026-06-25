@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -10,7 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ophelia.caddy_manager import reload_caddy, validate_caddy  # noqa: E402
+from ophelia.caddy_manager import CADDY_ENVFILE_RELOAD_SCRIPT, reload_caddy, validate_caddy  # noqa: E402
 
 
 class CaddyManagerTests(unittest.TestCase):
@@ -63,7 +64,40 @@ class CaddyManagerTests(unittest.TestCase):
         self.assertEqual("shared-caddy-1", report["container"])
         self.assertEqual("ophelia.edge.reload", report["kind"])
         self.assertEqual(0, report["returncode"])
-        self.assertIn(["docker", "exec", "shared-caddy-1", "caddy"], [call.args[0][:4] for call in run.call_args_list])
+        self.assertIn(["docker", "exec", "shared-caddy-1", "sh", "-ec"], [call.args[0][:5] for call in run.call_args_list])
+        self.assertEqual(["docker", "exec", "shared-caddy-1", "sh", "-ec", CADDY_ENVFILE_RELOAD_SCRIPT], report["command"])
+        self.assertIn("caddy adapt --config /etc/caddy/Caddyfile", report["command"][-1])
+        self.assertIn("--envfile /etc/caddy/env", report["command"][-1])
+        self.assertIn('caddy reload --config "$tmp"', report["command"][-1])
+
+    def test_reload_caddy_report_does_not_include_envfile_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ophelia_root = root / "ophelia"
+            caddy_dir = ophelia_root / "platform" / "shared" / "caddy"
+            caddy_dir.mkdir(parents=True)
+            (caddy_dir / "Caddyfile").write_text("{}\n")
+            runtime_root = root / "runtime"
+            env_file = runtime_root / "caddy" / "env"
+            env_file.parent.mkdir(parents=True)
+            env_file.write_text("OPHELIA_STATIC_ROOT=/srv/private-static\nAPI_TOKEN=super-secret-token\n")
+
+            def fake_run(command, **kwargs):
+                if command[:2] == ["docker", "run"]:
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[:3] == ["docker", "inspect", "--format"]:
+                    return SimpleNamespace(returncode=0, stdout="true\n", stderr="")
+                if command[:2] == ["docker", "exec"]:
+                    return SimpleNamespace(returncode=0, stdout="reloaded\n", stderr="")
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch("ophelia.caddy_manager.subprocess.run", side_effect=fake_run):
+                report = reload_caddy(runtime_root=runtime_root, ophelia_root=ophelia_root)
+
+        serialized = json.dumps(report, sort_keys=True)
+        self.assertTrue(report["ok"])
+        self.assertNotIn("super-secret-token", serialized)
+        self.assertNotIn("/srv/private-static", serialized)
 
     def test_reload_caddy_uses_legacy_container_only_as_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

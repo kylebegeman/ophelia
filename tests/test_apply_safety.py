@@ -173,6 +173,17 @@ class ApplySafetyTests(unittest.TestCase):
             self.assertTrue(caddy_calls)
             for call in caddy_calls:
                 self.assertEqual(str(runtime_root), call.kwargs["env"]["OPHELIA_RUNTIME_ROOT"])
+            reload_commands = [call.args[0] for call in caddy_calls if call.args[0][-3:-1] == ["sh", "-ec"]]
+            self.assertTrue(reload_commands)
+            reload_command = reload_commands[-1]
+            self.assertIn("sh", reload_command)
+            self.assertIn("-ec", reload_command)
+            reload_script = reload_command[-1]
+            self.assertIn("caddy adapt --config /etc/caddy/Caddyfile", reload_script)
+            self.assertIn("--envfile /etc/caddy/env", reload_script)
+            self.assertIn('caddy reload --config "$tmp"', reload_script)
+            command_windows = [reload_command[index : index + 4] for index in range(len(reload_command))]
+            self.assertNotIn(["caddy", "reload", "--config", "/etc/caddy/Caddyfile"], command_windows)
 
     def test_apply_prepares_missing_shared_external_networks(self) -> None:
         from ophelia.manifest import load_manifest

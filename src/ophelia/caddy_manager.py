@@ -18,6 +18,17 @@ SHARED_CADDY_CONTAINER_CANDIDATES = (
     "quark-reverse-proxy-caddy-1",
 )
 
+CADDY_CONTAINER_CONFIG_PATH = "/etc/caddy/Caddyfile"
+CADDY_CONTAINER_ENV_PATH = "/etc/caddy/env"
+CADDY_CONTAINER_ADAPTED_CONFIG_PATH = "/tmp/ophelia-caddy.json"
+CADDY_ENVFILE_RELOAD_SCRIPT = (
+    f"set -eu; tmp={CADDY_CONTAINER_ADAPTED_CONFIG_PATH!r}; "
+    'trap \'rm -f "$tmp"\' EXIT; '
+    f"caddy adapt --config {CADDY_CONTAINER_CONFIG_PATH} "
+    f"--adapter caddyfile --envfile {CADDY_CONTAINER_ENV_PATH} > \"$tmp\"; "
+    'caddy reload --config "$tmp"'
+)
+
 
 def validate_caddy(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
@@ -58,9 +69,9 @@ def validate_caddy(
         "caddy",
         "validate",
         "--config",
-        "/etc/caddy/Caddyfile",
+        CADDY_CONTAINER_CONFIG_PATH,
         "--envfile",
-        "/etc/caddy/env",
+        CADDY_CONTAINER_ENV_PATH,
     ]
     return _run(command, timeout=timeout)
 
@@ -119,12 +130,9 @@ def reload_caddy(
         "docker",
         "exec",
         str(report["container"]),
-        "caddy",
-        "reload",
-        "--config",
-        "/etc/caddy/Caddyfile",
-        "--adapter",
-        "caddyfile",
+        "sh",
+        "-ec",
+        CADDY_ENVFILE_RELOAD_SCRIPT,
     ]
     result = _run(command, timeout=timeout, runtime_root=runtime_root)
     report["command"] = command

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .addons import ensure_addons
+from .caddy_manager import CADDY_ENVFILE_RELOAD_SCRIPT
 from .config import DEFAULT_RUNTIME_ROOT
 from .manifest import Manifest, ManifestError
 from .path_safety import assert_no_external_symlinks
@@ -675,10 +676,9 @@ def apply_local_bundle(
                             "exec",
                             "-T",
                             "caddy",
-                            "caddy",
-                            "reload",
-                            "--config",
-                            "/etc/caddy/Caddyfile",
+                            "sh",
+                            "-ec",
+                            CADDY_ENVFILE_RELOAD_SCRIPT,
                         ],
                         "caddy_reload",
                         env=_runtime_env(runtime_root),
