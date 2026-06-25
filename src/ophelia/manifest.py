@@ -608,11 +608,18 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
                 raise ManifestError(
                     f"`verify[{index}].url` must not contain credentials, query strings, or fragments."
                 )
+        elif check_type == "internal" and url is not None:
+            parsed_url = _parse_internal_loopback_url(url, f"verify[{index}].url")
         elif url is not None:
-            raise ManifestError(f"`verify[{index}].url` is only supported for `type: http` checks.")
+            raise ManifestError(f"`verify[{index}].url` is only supported for `type: http` or loopback `type: internal` checks.")
 
         service = _optional_str(item.get("service"), f"verify[{index}].service")
         path = _optional_path(item.get("path"), f"verify[{index}].path")
+        if check_type == "internal" and url is not None:
+            url_path = parsed_url.path or "/"
+            if path is not None and path != url_path:
+                raise ManifestError(f"`verify[{index}].path` must match the path in `verify[{index}].url`.")
+            path = path or url_path
         method = _optional_http_method(item.get("method"), f"verify[{index}].method") or "GET"
         command = _optional_command(item.get("command"), f"verify[{index}].command")
         if check_type == "command" and (service is None or not command):
@@ -1340,6 +1347,20 @@ def _optional_path(value: Any, field_name: str) -> Optional[str]:
     if not result.startswith("/"):
         raise ManifestError(f"`{field_name}` must start with `/`.")
     return result
+
+
+def _parse_internal_loopback_url(value: str, field_name: str):
+    parsed = urlparse(value)
+    if parsed.scheme != "http":
+        raise ManifestError(f"`{field_name}` for `type: internal` must use `http://` loopback URLs.")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ManifestError(f"`{field_name}` must not contain credentials, query strings, or fragments.")
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ManifestError(f"`{field_name}` for `type: internal` must be a loopback URL or use `path`.")
+    if parsed.path and not parsed.path.startswith("/"):
+        raise ManifestError(f"`{field_name}` path must start with `/`.")
+    return parsed
 
 
 def _optional_http_method(value: Any, field_name: str) -> Optional[str]:

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import Manifest
 from ophelia.remote import _build_remote_stage_script, _sync_bundle
+from ophelia.runtime import DeployMetadata
 
 
 class RemoteTests(unittest.TestCase):
@@ -41,6 +42,11 @@ class RemoteTests(unittest.TestCase):
             verify_interval=2,
             verify_timeout=4,
             verify_failure_mode="warn",
+            deploy_metadata=DeployMetadata(
+                release_id="release-123",
+                commit_sha="abc123",
+                build_time="2026-06-25T12:00:00Z",
+            ),
         )
 
         self.assertIn("--apply --confirm remote-token --verify", script)
@@ -48,6 +54,9 @@ class RemoteTests(unittest.TestCase):
         self.assertIn("--verify-interval 2", script)
         self.assertIn("--verify-timeout 4", script)
         self.assertIn("--verify-failure-mode warn", script)
+        self.assertIn("--release-id release-123", script)
+        self.assertIn("--commit-sha abc123", script)
+        self.assertIn("--build-time 2026-06-25T12:00:00Z", script)
 
     def test_remote_plan_script_uses_remote_app_root_and_json_flag(self) -> None:
         manifest = _manifest(environment="production")
@@ -222,6 +231,9 @@ def _deploy_args(
         verify_timeout=None,
         verify_failure_mode=None,
         ophelia_root=root,
+        release_id=None,
+        commit_sha=None,
+        build_time=None,
     )
 
 

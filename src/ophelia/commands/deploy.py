@@ -8,7 +8,14 @@ from ..manifest import ManifestError, load_manifest
 from ..operation_schema import error_envelope
 from ..planning import deploy_plan, deploy_confirmation_token
 from ..remote import RemoteError, stage_remote_bundle
-from ..runtime import ApplyPhaseError, apply_local_bundle, current_release_id, deploy_bundle, update_current_release_verification
+from ..runtime import (
+    ApplyPhaseError,
+    DeployMetadata,
+    apply_local_bundle,
+    current_release_id,
+    deploy_bundle,
+    update_current_release_verification,
+)
 from ..verify import run_verifications, verification_blocks_release
 
 
@@ -67,6 +74,18 @@ def register(subparsers: _SubParsersAction) -> None:
     parser.add_argument("--verify-timeout", type=float, help="Override manifest verification request timeout in seconds")
     parser.add_argument("--verify-failure-mode", choices=["hard", "warn"], help="Override manifest verification failure mode")
     parser.add_argument(
+        "--release-id",
+        help="App release id to inject as OPHELIA_RELEASE_ID (env fallback: OPHELIA_DEPLOY_RELEASE_ID, OPHELIA_RELEASE_ID)",
+    )
+    parser.add_argument(
+        "--commit-sha",
+        help="App commit SHA to inject as OPHELIA_COMMIT_SHA (env fallback: OPHELIA_DEPLOY_COMMIT_SHA, OPHELIA_COMMIT_SHA, GITHUB_SHA)",
+    )
+    parser.add_argument(
+        "--build-time",
+        help="App build time to inject as OPHELIA_BUILD_TIME (env fallback: OPHELIA_DEPLOY_BUILD_TIME, OPHELIA_BUILD_TIME)",
+    )
+    parser.add_argument(
         "--ophelia-root",
         type=Path,
         default=REPO_ROOT,
@@ -104,6 +123,11 @@ def run(args: Namespace) -> int:
     if args.verify_timeout is not None and args.verify_timeout <= 0:
         print("verification timeout must be greater than 0.")
         return 1
+    deploy_metadata = DeployMetadata(
+        release_id=args.release_id,
+        commit_sha=args.commit_sha,
+        build_time=args.build_time,
+    )
 
     if args.plan:
         if args.host:
@@ -118,6 +142,7 @@ def run(args: Namespace) -> int:
                     apply=False,
                     plan=True,
                     json_output=args.json,
+                    deploy_metadata=deploy_metadata,
                 )
             except RemoteError as exc:
                 print(f"Remote deploy plan failed: {exc}")
@@ -177,6 +202,7 @@ def run(args: Namespace) -> int:
                     apply=False,
                     plan=True,
                     json_output=False,
+                    deploy_metadata=deploy_metadata,
                 )
             except RemoteError as exc:
                 print(f"Remote deploy plan failed: {exc}")
@@ -202,6 +228,7 @@ def run(args: Namespace) -> int:
                 verify_interval=args.verify_interval,
                 verify_timeout=args.verify_timeout,
                 verify_failure_mode=args.verify_failure_mode,
+                deploy_metadata=deploy_metadata,
             )
         except RemoteError as exc:
             print(f"Remote deploy failed: {exc}")
@@ -230,6 +257,7 @@ def run(args: Namespace) -> int:
                 manifest_path=args.manifest,
                 runtime_root=args.runtime_root,
                 ophelia_root=args.ophelia_root,
+                deploy_metadata=deploy_metadata,
             )
         except ApplyPhaseError as exc:
             print(f"Local apply failed during {exc.phase}: {exc}")
@@ -261,7 +289,7 @@ def run(args: Namespace) -> int:
             return 1 if verification_blocks_release(verification) else 0
         return 0
 
-    app_root = deploy_bundle(manifest, args.manifest, args.runtime_root)
+    app_root = deploy_bundle(manifest, args.manifest, args.runtime_root, deploy_metadata=deploy_metadata)
     print(f"Deployed bundle for {manifest.app} into {app_root}")
     print("Use --apply to activate locally, or --host to stage/apply on the VPS.")
     return 0

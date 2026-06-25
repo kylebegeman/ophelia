@@ -17,7 +17,7 @@ reference docs below.
 | --- | --- |
 | [Platform Handbook](platform-handbook.md) | Public operating model, runtime boundaries, and fixture-first workflow. |
 | [Architecture](architecture.md) | Ownership boundaries, runtime shape, deployment model, and API surfaces. |
-| [Roadmap](ROADMAP.md) | Current 0.3.x status, next tasks, and deferred decisions. |
+| [Roadmap](ROADMAP.md) | Current 0.4.x status, next tasks, and deferred decisions. |
 | [LLM Start Here](llm/START_HERE.md) | Agent routing, safe command discovery, and data boundaries. |
 | [0.3.0 Upgrade Prompt](llm/UPGRADE_TO_0_3_0_PROMPT.md) | Copyable prompt for upgrading existing Ophelia checkouts and app repositories. |
 

@@ -8,6 +8,17 @@ from typing import Dict, List, Optional
 from .config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 
 
+SHARED_CADDY_CONTAINER_CANDIDATES = (
+    "shared-caddy-1",
+    "ophelia-shared-caddy-1",
+    "ophelia-caddy-1",
+    "ophelia-caddy",
+    "caddy",
+    "edge-caddy-1",
+    "quark-reverse-proxy-caddy-1",
+)
+
+
 def validate_caddy(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     ophelia_root: Path = REPO_ROOT,
@@ -60,43 +71,132 @@ def reload_caddy(
     timeout: int = 30,
     validate_first: bool = True,
 ) -> Dict[str, object]:
+    runtime_root = runtime_root.expanduser()
+    ophelia_root = ophelia_root.expanduser()
+    config_path = ophelia_root / "platform" / "shared" / "caddy" / "Caddyfile"
+    report: Dict[str, object] = {
+        "kind": "ophelia.edge.reload",
+        "ok": False,
+        "container": None,
+        "validated": False,
+        "reloaded": False,
+        "runtime_root": str(runtime_root),
+        "config_path": str(config_path),
+        "warnings": [],
+        "errors": [],
+        "returncode": 1,
+        "stdout": "",
+        "stderr": "",
+        "command": [],
+    }
     if timeout <= 0:
-        return {"returncode": 1, "stdout": "", "stderr": "timeout must be greater than 0", "command": []}
+        _add_error(report, "timeout_invalid", "timeout must be greater than 0")
+        report["stderr"] = "timeout must be greater than 0"
+        return report
     validation: Optional[Dict[str, object]] = None
     if validate_first:
         validation = validate_caddy(runtime_root=runtime_root, ophelia_root=ophelia_root, timeout=timeout)
+        report["validation"] = _process_summary(validation)
         if validation["returncode"] != 0:
-            return {
-                "returncode": 1,
-                "stdout": "",
-                "stderr": "Caddy validation failed; reload skipped.",
-                "validation": validation,
-            }
+            _add_error(report, "caddy_validation_failed", "Caddy validation failed; reload skipped.")
+            report["stderr"] = "Caddy validation failed; reload skipped."
+            return report
+        report["validated"] = True
+    else:
+        report["warnings"].append({"code": "validation_skipped", "message": "Caddy validation was skipped before reload."})
 
-    compose = ophelia_root / "platform" / "shared" / "compose.yml"
-    env_file = ophelia_root / "platform" / "shared" / ".env"
-    command = ["docker", "compose"]
-    if env_file.exists():
-        command.extend(["--env-file", str(env_file)])
-    command.extend(
-        [
-            "-f",
-            str(compose),
-            "exec",
-            "-T",
-            "caddy",
-            "caddy",
-            "reload",
-            "--config",
-            "/etc/caddy/Caddyfile",
-            "--adapter",
-            "caddyfile",
-        ]
-    )
+    discovery = discover_shared_caddy_container(runtime_root=runtime_root, timeout=timeout)
+    report["container"] = discovery.get("container")
+    warnings = report.get("warnings")
+    if isinstance(warnings, list):
+        warnings.extend(discovery.get("warnings", []))
+    if not report["container"]:
+        _add_error(report, "caddy_container_not_found", "No running shared Caddy container was found.")
+        report["stderr"] = "No running shared Caddy container was found."
+        return report
+
+    command = [
+        "docker",
+        "exec",
+        str(report["container"]),
+        "caddy",
+        "reload",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+    ]
     result = _run(command, timeout=timeout, runtime_root=runtime_root)
-    if validation is not None:
-        result["validation"] = validation
-    return result
+    report["command"] = command
+    report["reload"] = _process_summary(result)
+    report["stdout"] = result.get("stdout", "")
+    report["stderr"] = result.get("stderr", "")
+    report["returncode"] = result.get("returncode", 1)
+    if result.get("returncode") == 0:
+        report["ok"] = True
+        report["reloaded"] = True
+        return report
+
+    _add_error(report, "caddy_reload_failed", "Caddy reload command failed.")
+    return report
+
+
+def discover_shared_caddy_container(
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    timeout: int = 30,
+) -> Dict[str, object]:
+    warnings: List[Dict[str, str]] = []
+    for candidate in SHARED_CADDY_CONTAINER_CANDIDATES:
+        result = _run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", candidate],
+            timeout=timeout,
+            runtime_root=runtime_root,
+        )
+        if result.get("returncode") == 0 and str(result.get("stdout")).strip().lower() == "true":
+            if candidate != SHARED_CADDY_CONTAINER_CANDIDATES[0]:
+                warnings.append(
+                    {
+                        "code": "legacy_caddy_container_name",
+                        "message": f"Using fallback Caddy container `{candidate}`.",
+                    }
+                )
+            return {"container": candidate, "warnings": warnings}
+        if result.get("returncode") == 0:
+            warnings.append({"code": "caddy_container_not_running", "message": f"Caddy container `{candidate}` is not running."})
+
+    listed = _run(["docker", "ps", "--format", "{{.Names}}"], timeout=timeout, runtime_root=runtime_root)
+    if listed.get("returncode") == 0:
+        for name in str(listed.get("stdout") or "").splitlines():
+            if "caddy" in name.lower():
+                warnings.append(
+                    {
+                        "code": "discovered_caddy_container_name",
+                        "message": f"Using discovered Caddy container `{name}`.",
+                    }
+                )
+                return {"container": name, "warnings": warnings}
+    return {"container": None, "warnings": warnings}
+
+
+def _process_summary(report: Dict[str, object]) -> Dict[str, object]:
+    return {
+        "returncode": report.get("returncode", 1),
+        "stdout_excerpt": _excerpt(str(report.get("stdout") or "")),
+        "stderr_excerpt": _excerpt(str(report.get("stderr") or "")),
+        "command": report.get("command", []),
+    }
+
+
+def _add_error(report: Dict[str, object], code: str, message: str) -> None:
+    errors = report.setdefault("errors", [])
+    if isinstance(errors, list):
+        errors.append({"code": code, "message": message})
+
+
+def _excerpt(value: str, limit: int = 1000) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 15] + "...<truncated>"
 
 
 def _run(command: List[str], timeout: int = 30, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, object]:

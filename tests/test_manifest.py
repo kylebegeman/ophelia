@@ -838,6 +838,54 @@ verify:
         self.assertEqual("internal", lock["verify"][0]["type"])
         self.assertEqual("/ophelia/health", lock["verify"][0]["path"])
 
+    def test_internal_verify_accepts_loopback_url_as_path_compatibility(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: internal-loopback
+kind: service
+image: ghcr.io/example/internal-loopback:latest
+services:
+  web:
+    port: 3773
+routes:
+  - domain: internal-loopback.example.com
+    service: web
+verify:
+  - name: loopback-health
+    type: internal
+    service: app
+    url: http://127.0.0.1:3773/ophelia/health
+"""
+        )
+
+        check = manifest.verify[0]
+        self.assertEqual("internal", check.type)
+        self.assertEqual("http://127.0.0.1:3773/ophelia/health", check.url)
+        self.assertEqual("/ophelia/health", check.path)
+
+    def test_internal_verify_rejects_external_url(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "loopback URLs"):
+            self._load(
+                """
+version: 1
+app: internal-external
+kind: service
+image: ghcr.io/example/internal-external:latest
+services:
+  web:
+    port: 3773
+routes:
+  - domain: internal-external.example.com
+    service: web
+verify:
+  - name: bad-internal
+    type: internal
+    service: app
+    url: https://internal-external.example.com/ophelia/health
+"""
+            )
+
     def test_render_compose_injects_release_metadata_env(self) -> None:
         manifest = self._load(
             """

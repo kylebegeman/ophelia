@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 
 from .manifest import Manifest
-from .runtime import materialize_bundle
+from .runtime import DeployMetadata, materialize_bundle
 
 
 class RemoteError(RuntimeError):
@@ -50,6 +50,7 @@ def stage_remote_bundle(
     plan: bool = False,
     json_output: bool = False,
     confirm: str | None = None,
+    deploy_metadata: DeployMetadata | None = None,
 ) -> str:
     remote_runtime_root = _rsync_path(remote_runtime_root)
     with tempfile.TemporaryDirectory(prefix=f"ophelia-{manifest.app}-") as temp_dir:
@@ -71,6 +72,7 @@ def stage_remote_bundle(
         verify_interval=verify_interval,
         verify_timeout=verify_timeout,
         verify_failure_mode=verify_failure_mode,
+        deploy_metadata=deploy_metadata,
     )
     completed = _run(_ssh_command(host, ssh_port, script), capture_output=True)
     return completed.stdout.strip()
@@ -125,6 +127,7 @@ def _build_remote_stage_script(
     plan: bool = False,
     json_output: bool = False,
     confirm: str | None = None,
+    deploy_metadata: DeployMetadata | None = None,
 ) -> str:
     if apply and plan:
         raise ValueError("remote deploy script cannot both plan and apply")
@@ -138,7 +141,7 @@ def _build_remote_stage_script(
     ]
 
     if plan:
-        lines.extend(_build_plan_lines(json_output=json_output))
+        lines.extend(_build_plan_lines(json_output=json_output, deploy_metadata=deploy_metadata))
     elif apply:
         lines.extend(
             _build_apply_lines(
@@ -148,6 +151,7 @@ def _build_remote_stage_script(
                 verify_interval=verify_interval,
                 verify_timeout=verify_timeout,
                 verify_failure_mode=verify_failure_mode,
+                deploy_metadata=deploy_metadata,
             )
         )
     else:
@@ -156,11 +160,12 @@ def _build_remote_stage_script(
     return "\n".join(lines)
 
 
-def _build_plan_lines(json_output: bool = False) -> List[str]:
+def _build_plan_lines(json_output: bool = False, deploy_metadata: DeployMetadata | None = None) -> List[str]:
     command = _remote_deploy_command()
     command.append("--plan")
     if json_output:
         command.append("--json")
+    command.extend(_deploy_metadata_args(deploy_metadata))
     return [
         'cd "$REMOTE_OPHELIA_ROOT"',
         " ".join(command),
@@ -174,6 +179,7 @@ def _build_apply_lines(
     verify_interval: float | None = None,
     verify_timeout: float | None = None,
     verify_failure_mode: str | None = None,
+    deploy_metadata: DeployMetadata | None = None,
 ) -> List[str]:
     command = _remote_deploy_command()
     command.append("--apply")
@@ -189,10 +195,24 @@ def _build_apply_lines(
             command.extend(["--verify-timeout", str(verify_timeout)])
         if verify_failure_mode is not None:
             command.extend(["--verify-failure-mode", shlex.quote(verify_failure_mode)])
+    command.extend(_deploy_metadata_args(deploy_metadata))
     return [
         'cd "$REMOTE_OPHELIA_ROOT"',
         " ".join(command),
     ]
+
+
+def _deploy_metadata_args(deploy_metadata: DeployMetadata | None) -> List[str]:
+    if deploy_metadata is None:
+        return []
+    args: List[str] = []
+    if deploy_metadata.release_id:
+        args.extend(["--release-id", shlex.quote(deploy_metadata.release_id)])
+    if deploy_metadata.commit_sha:
+        args.extend(["--commit-sha", shlex.quote(deploy_metadata.commit_sha)])
+    if deploy_metadata.build_time:
+        args.extend(["--build-time", shlex.quote(deploy_metadata.build_time)])
+    return args
 
 
 def _build_stage_lines(manifest: Manifest, manifest_path: Path, remote_runtime_root: str) -> List[str]:

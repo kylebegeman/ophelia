@@ -47,6 +47,13 @@ class DeploymentRecord:
     verified: bool | None = None
 
 
+@dataclass(frozen=True)
+class DeployMetadata:
+    release_id: str | None = None
+    commit_sha: str | None = None
+    build_time: str | None = None
+
+
 HOST_ON_DEMAND_TLS_GLOBAL = Path("caddy") / "global.d" / "ophelia-on-demand-tls.caddy"
 
 
@@ -223,20 +230,31 @@ def _is_relative_support_path(source: str) -> bool:
     return "/" in source or source.startswith(".")
 
 
-def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Path:
+def deploy_bundle(
+    manifest: Manifest,
+    manifest_path: Path,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    deploy_metadata: DeployMetadata | None = None,
+) -> Path:
     app_root = runtime_root / "apps" / manifest.app
     support_paths = bundle_support_paths(manifest)
     required_support_paths = bundle_support_paths(manifest, required_only=True)
     previous_release_id = current_release_id(runtime_root, manifest.app)
     deployed_at = _utc_now()
-    git_sha = _git_sha()
     base_bundle = render_bundle(manifest)
-    release_id = _release_id(deployed_at, base_bundle)
+    generated_release_id = _release_id(deployed_at, base_bundle)
+    resolved_metadata = _resolve_deploy_metadata(
+        manifest,
+        deployed_at=deployed_at,
+        generated_release_id=generated_release_id,
+        deploy_metadata=deploy_metadata,
+    )
+    release_id = resolved_metadata["release_id"]
     release_metadata = _release_metadata_env(
         manifest,
         release_id=release_id,
-        deployed_at=deployed_at,
-        git_sha=git_sha,
+        commit_sha=resolved_metadata["commit_sha"],
+        build_time=resolved_metadata["build_time"],
     )
     bundle = render_bundle(manifest, release_metadata=release_metadata)
     write_bundle(bundle, app_root)
@@ -271,7 +289,9 @@ def deploy_bundle(manifest: Manifest, manifest_path: Path, runtime_root: Path = 
         "manifest_path": str(manifest_path.resolve()),
         "manifest_hash": _sha256_bytes(manifest_path.read_bytes()) if manifest_path.exists() else None,
         "rendered_bundle_hash": bundle_hash(bundle),
-        "git_sha": git_sha,
+        "commit_sha": resolved_metadata["commit_sha"],
+        "build_time": resolved_metadata["build_time"],
+        "git_sha": resolved_metadata["commit_sha"],
         "images": image_references(manifest),
         "image_digests": image_digests(manifest),
         "runtime_env": release_metadata,
@@ -498,13 +518,14 @@ def apply_local_bundle(
     manifest_path: Path,
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     ophelia_root: Path | None = None,
+    deploy_metadata: DeployMetadata | None = None,
 ) -> Path:
     if manifest.environment == "production" and not manifest.lifecycle.production_apply_allowed:
         raise ApplyPhaseError(
             "lifecycle_policy",
             "Refusing production apply because lifecycle.production_apply_allowed is false.",
         )
-    app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+    app_root = deploy_bundle(manifest, manifest_path, runtime_root, deploy_metadata=deploy_metadata)
     phases: List[Dict[str, str]] = []
 
     def mark_phase(phase: str, status: str) -> None:
@@ -1038,8 +1059,8 @@ def _release_metadata_env(
     manifest: Manifest,
     *,
     release_id: str,
-    deployed_at: str,
-    git_sha: str | None,
+    commit_sha: str,
+    build_time: str,
 ) -> Dict[str, Any]:
     images = image_references(manifest)
     digests = image_digests(manifest)
@@ -1054,10 +1075,53 @@ def _release_metadata_env(
         "environment": manifest.environment or "unknown",
         "app": manifest.app,
         "release_id": release_id,
-        "commit_sha": git_sha or "",
-        "build_time": deployed_at,
+        "commit_sha": commit_sha,
+        "build_time": build_time,
         "services": services,
     }
+
+
+def _resolve_deploy_metadata(
+    manifest: Manifest,
+    *,
+    deployed_at: str,
+    generated_release_id: str,
+    deploy_metadata: DeployMetadata | None,
+) -> Dict[str, str]:
+    metadata = deploy_metadata or DeployMetadata()
+    release_id = _first_nonempty(
+        metadata.release_id,
+        os.environ.get("OPHELIA_DEPLOY_RELEASE_ID"),
+        os.environ.get("OPHELIA_RELEASE_ID"),
+        generated_release_id,
+    )
+    commit_sha = _first_nonempty(
+        metadata.commit_sha,
+        os.environ.get("OPHELIA_DEPLOY_COMMIT_SHA"),
+        os.environ.get("OPHELIA_COMMIT_SHA"),
+        os.environ.get("GITHUB_SHA"),
+        "",
+    )
+    build_time = _first_nonempty(
+        metadata.build_time,
+        os.environ.get("OPHELIA_DEPLOY_BUILD_TIME"),
+        os.environ.get("OPHELIA_BUILD_TIME"),
+        deployed_at,
+    )
+    return {
+        "app": manifest.app,
+        "environment": manifest.environment or "unknown",
+        "release_id": release_id,
+        "commit_sha": commit_sha,
+        "build_time": build_time,
+    }
+
+
+def _first_nonempty(*values: str | None) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _current_generated_files(app_root: Path) -> set[Path]:
@@ -1167,19 +1231,6 @@ def _sha256_bytes(content: bytes) -> str:
     import hashlib
 
     return hashlib.sha256(content).hexdigest()
-
-
-def _git_sha() -> str | None:
-    from .config import REPO_ROOT
-
-    result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
 
 
 def _deployed_by() -> str:

@@ -37,7 +37,7 @@
     {
       "label": "Roadmap",
       "path": "../ROADMAP.md",
-      "purpose": "Current 0.3.x status, next work, adoption flow, and deferred decisions."
+      "purpose": "Current 0.4.x status, next work, adoption flow, and deferred decisions."
     },
     {
       "label": "0.3.0 upgrade prompt",

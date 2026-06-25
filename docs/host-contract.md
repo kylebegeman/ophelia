@@ -56,7 +56,7 @@ Use `ophelia` or `ship`; both invoke the same CLI.
 ./cli/ophelia apps
 ./cli/ophelia status
 ./cli/ophelia caddy validate
-./cli/ophelia caddy reload
+./cli/ophelia caddy reload --json
 ./cli/ophelia host inventory --json
 ./cli/ophelia host readiness local --json
 ./cli/ophelia app health demo-service

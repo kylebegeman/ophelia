@@ -1,6 +1,6 @@
 # Ophelia Roadmap
 
-Status: current after the 0.4.0 minor release
+Status: current after the 0.4.1 patch release
 
 Ophelia 0.3.0 completes the fixture-first foundation: manifest contracts,
 runtime rendering, safety-gated operations, receipts, readiness, synthetic app
@@ -38,7 +38,7 @@ reference doc for the feature being changed.
 
 These are ready to start without changing the product direction:
 
-1. Keep the 0.3.x line stable by fixing bugs found by fixture, docs, or audit
+1. Keep the 0.4.x line stable by fixing bugs found by fixture, docs, or audit
    gates.
 2. Add focused examples when a new app pattern becomes part of the intended
    Ophelia contract.
@@ -106,7 +106,7 @@ app is ready to move onto Ophelia. The expected flow is:
 
 3. Distribution beyond GitHub
 
-   Issue: 0.4.0 is GitHub-only and has no PyPI release path.
+   Issue: the 0.4.x line is GitHub-only and has no PyPI release path.
 
    Proposed direction: keep GitHub-only for the private phase; revisit package
    publishing after public support expectations are clear.

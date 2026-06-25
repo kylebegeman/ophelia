@@ -7,7 +7,7 @@
 **A fixture-first deployment control plane for VPS apps, static sites, safe operations, and agent-readable workflows.**
 
 [![CI](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.4.0-2563EB)
+![Version](https://img.shields.io/badge/version-0.4.1-2563EB)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
@@ -62,7 +62,7 @@ public launch decision is made.
 
 | Item | Status |
 | --- | --- |
-| Current version | `0.4.0` |
+| Current version | `0.4.1` |
 | Stability | Pre-1.0. Core contracts are active, but JSON and CLI surfaces may still evolve deliberately. |
 | Distribution | GitHub only. No PyPI release path is configured. |
 | Runtime state | Kept outside the source checkout, usually under `~/ophelia-runtime` or a configured runtime root. |
@@ -114,7 +114,7 @@ Expected output excerpt:
   "name": "ophelia",
   "schema_version": 1,
   "source": "package_metadata",
-  "version": "0.4.0"
+  "version": "0.4.1"
 }
 ```
 
@@ -272,7 +272,12 @@ Deploy flow:
 ./cli/ship validate ../demo-service/.ophelia.yml
 ./cli/ship explain ../demo-service/.ophelia.yml --json
 ./cli/ship deploy ../demo-service/.ophelia.yml --plan --json
-./cli/ship deploy ../demo-service/.ophelia.yml --apply --verify
+./cli/ship deploy ../demo-service/.ophelia.yml \
+  --apply \
+  --release-id demo-service-v1.2.3 \
+  --commit-sha <app-commit-sha> \
+  --build-time 2026-06-25T12:00:00Z \
+  --verify
 ```
 
 Production apply requires the confirmation token from the matching plan:
@@ -298,6 +303,7 @@ with `--host` so the token is calculated from the staged remote runtime bundle:
 | Preview runtime changes | `ship deploy <manifest> --plan` and `ship diff <manifest>` |
 | Pin production images | `ship release image-lock plan <manifest> --json` then `ship release image-lock apply <manifest> --confirm <token>` |
 | Apply a release | `ship deploy <manifest> --apply --verify` |
+| Reload the shared edge | `ship caddy reload --json` |
 | Inspect runtime | `ship status`, `ship doctor`, `ship releases <app>`, `ship release show <app> active` |
 | Verify after apply | `ship verify <manifest>` or `ship verify <app>` |
 | Roll back | `ship rollback plan <app> <release-id>` then `ship rollback apply <app> <release-id> --confirm <token>` |

@@ -134,7 +134,10 @@ _EXAMPLES_BY_OPERATION: Dict[str, List[str]] = {
         "ship pack init --app demo-static --environment staging --directory ../demo-static --include-manifest --kind static --domain demo-static.example.com --json",
     ],
     "deploy.plan": ["ship deploy examples/portfolio.ophelia.yml --plan --json"],
-    "deploy.apply": ["ship deploy examples/portfolio.ophelia.yml --apply --confirm <token>"],
+    "deploy.apply": [
+        "ship deploy examples/portfolio.ophelia.yml --apply --confirm <token>",
+        "ship deploy examples/portfolio.ophelia.yml --apply --release-id app-v1.2.3 --commit-sha <app-sha> --build-time 2026-06-25T12:00:00Z",
+    ],
     "backup.plan": ["ship backup plan demo-service --json"],
     "backup.status": ["ship backup status demo-service --environment production --json"],
     "backup.create": ["ship backup create demo-service --confirm <token> --json"],

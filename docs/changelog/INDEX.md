@@ -73,3 +73,5 @@
 | [0069](0069-first-class-static-sites-and-readme-polish.md) | 2026-06-24 | landed | First-class static sites and README polish | static-sites, deploy, runtime, planning, app-factory, docs, release |
 | [0070](0070-managed-addon-networking-release.md) | 2026-06-24 | landed | Managed addon networking release | networking, addons, deploy, static-sites, release, docs, tests |
 | [0071](0071-release-hardening-040.md) | 2026-06-24 | landed | Release hardening 0.4.0 | release, image-lock, backup, offsite, cutover, cli, docs, tests |
+| [0072](0072-lumen-deploy-ergonomics.md) | 2026-06-25 | landed | Lumen deploy ergonomics | deploy, caddy, verification, docs, tests |
+| [0073](0073-release-041.md) | 2026-06-25 | landed | Release 0.4.1 | release, deploy, caddy, verification, docs, tests |

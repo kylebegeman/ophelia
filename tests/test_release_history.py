@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import load_manifest
-from ophelia.runtime import apply_local_bundle, current_release_id, deploy_bundle, list_deployments, list_releases, load_release
+from ophelia.runtime import DeployMetadata, apply_local_bundle, current_release_id, deploy_bundle, list_deployments, list_releases, load_release
 
 
 class ReleaseHistoryTests(unittest.TestCase):
@@ -86,6 +86,89 @@ routes:
             (incomplete_app / "release.json").write_text(json.dumps({"app": "incomplete"}))
 
             self.assertEqual([], list_deployments(runtime_root))
+
+    def test_copied_lock_manifest_deploy_uses_app_release_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_runtime = root / "source-runtime"
+            target_runtime = root / "target-runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: copied-release
+environment: staging
+kind: service
+image: ghcr.io/example/copied-release:next
+services:
+  web:
+    port: 3000
+routes:
+  - domain: copied-release.example.com
+    service: web
+""".strip()
+                + "\n"
+            )
+
+            source_root = deploy_bundle(load_manifest(manifest_path), manifest_path, source_runtime)
+            lock_path = source_root / "manifest.lock.json"
+            copied = deploy_bundle(
+                load_manifest(lock_path),
+                lock_path,
+                target_runtime,
+                deploy_metadata=DeployMetadata(
+                    release_id="lumen-v0.9.0",
+                    commit_sha="abc123app",
+                    build_time="2026-06-25T12:00:00Z",
+                ),
+            )
+
+            release = json.loads((copied / "release.json").read_text())
+            compose = (copied / "compose.yml").read_text()
+            self.assertEqual("lumen-v0.9.0", release["release_id"])
+            self.assertEqual("abc123app", release["commit_sha"])
+            self.assertEqual("abc123app", release["git_sha"])
+            self.assertEqual("2026-06-25T12:00:00Z", release["build_time"])
+            self.assertIn('      OPHELIA_RELEASE_ID: "lumen-v0.9.0"', compose)
+            self.assertIn('      OPHELIA_COMMIT_SHA: "abc123app"', compose)
+            self.assertIn('      OPHELIA_BUILD_TIME: "2026-06-25T12:00:00Z"', compose)
+
+    def test_deploy_metadata_env_fallback_uses_app_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: env-release
+environment: staging
+kind: service
+image: ghcr.io/example/env-release:next
+services:
+  web:
+    port: 3000
+routes:
+  - domain: env-release.example.com
+    service: web
+""".strip()
+                + "\n"
+            )
+
+            with unittest.mock.patch.dict(
+                "os.environ",
+                {
+                    "OPHELIA_DEPLOY_RELEASE_ID": "env-release-id",
+                    "OPHELIA_DEPLOY_COMMIT_SHA": "env-app-sha",
+                    "OPHELIA_DEPLOY_BUILD_TIME": "2026-06-25T13:00:00Z",
+                },
+            ):
+                app_root = deploy_bundle(load_manifest(manifest_path), manifest_path, runtime_root)
+
+            release = json.loads((app_root / "release.json").read_text())
+            self.assertEqual("env-release-id", release["release_id"])
+            self.assertEqual("env-app-sha", release["commit_sha"])
+            self.assertEqual("2026-06-25T13:00:00Z", release["build_time"])
 
     def test_load_release_reports_corrupt_record_clearly(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

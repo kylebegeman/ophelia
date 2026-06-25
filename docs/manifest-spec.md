@@ -344,6 +344,24 @@ Ophelia-injected runtime metadata such as `OPHELIA_ENVIRONMENT`,
 required in retained app runtime env files unless the manifest explicitly
 declares it in `required_env`.
 
+`ship deploy` accepts app-owned release metadata so copied manifests and VPS
+deploys do not inherit Ophelia's source checkout identity:
+
+```bash
+ship deploy .ophelia.yml \
+  --apply \
+  --release-id app-v1.2.3 \
+  --commit-sha <app-commit-sha> \
+  --build-time 2026-06-25T12:00:00Z
+```
+
+Precedence is CLI flag, then environment, then generated fallback. Environment
+fallbacks are `OPHELIA_DEPLOY_RELEASE_ID` or `OPHELIA_RELEASE_ID`,
+`OPHELIA_DEPLOY_COMMIT_SHA` or `OPHELIA_COMMIT_SHA` or `GITHUB_SHA`, and
+`OPHELIA_DEPLOY_BUILD_TIME` or `OPHELIA_BUILD_TIME`. If no commit SHA is
+provided, `OPHELIA_COMMIT_SHA` is rendered as an empty string. It is never
+filled from the Ophelia repository checkout.
+
 Portable pack and readiness commands are read-only by default:
 
 ```bash
@@ -447,7 +465,11 @@ Fields:
 - `type`: `http`, `internal`, or `command`. Defaults to `command` when
   `command` is present, `internal` when `path` is present, otherwise `http`.
 - `url`: required `http://` or `https://` URL for `type: http`. URLs cannot
-  contain credentials, query strings, or fragments.
+  contain credentials, query strings, or fragments. For compatibility,
+  `type: internal` may also use an absolute `http://127.0.0.1`,
+  `http://localhost`, or `http://[::1]` URL; Ophelia extracts the path and
+  still runs the probe inside the target service container. External URLs are
+  rejected for internal checks.
 - `path`: required path for `type: internal`. Ophelia runs the check inside the
   target service container against `http://127.0.0.1:<service-port><path>`.
 - `method`: HTTP method for `http` or `internal` checks, default `GET`.
@@ -572,6 +594,18 @@ Compose environment:
 Use these values as the recommended source for app-owned `/ophelia/release`
 responses. They are runtime-owned keys; manifest `env` and service `env` values
 with the same names are ignored during Compose rendering.
+
+After changing shared Caddy files, use the native reload command instead of
+custom container discovery:
+
+```bash
+ship caddy reload --runtime-root ~/ophelia-runtime --ophelia-root ~/ophelia --json
+```
+
+The command validates config first, prefers the `shared-caddy-1` container, uses
+legacy names only as fallback, and returns structured diagnostics with
+`kind`, `ok`, `container`, `validated`, `reloaded`, `runtime_root`,
+`config_path`, `warnings`, and `errors`.
 
 ## Mounts
 
