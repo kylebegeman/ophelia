@@ -1,0 +1,10 @@
+{
+  "environments": {
+    "staging": {
+      "secrets": [
+        {"name": "STORAGE_TOKEN"}
+      ]
+    }
+  }
+}
+
