@@ -1,0 +1,12 @@
+{
+  "environments": {
+    "staging": {
+      "secrets": [
+        {"name": "WORKER_TOKEN"},
+        {"name": "WORKER_MODE"},
+        {"name": "REDIS_URL"}
+      ]
+    }
+  }
+}
+
