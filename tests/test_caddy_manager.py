@@ -68,7 +68,38 @@ class CaddyManagerTests(unittest.TestCase):
         self.assertEqual(["docker", "exec", "shared-caddy-1", "sh", "-ec", CADDY_ENVFILE_RELOAD_SCRIPT], report["command"])
         self.assertIn("caddy adapt --config /etc/caddy/Caddyfile", report["command"][-1])
         self.assertIn("--envfile /etc/caddy/env", report["command"][-1])
+        self.assertIn("managed static root expanded without OPHELIA_STATIC_ROOT", report["command"][-1])
         self.assertIn('caddy reload --config "$tmp"', report["command"][-1])
+
+    def test_reload_caddy_fails_when_static_root_collapses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ophelia_root = root / "ophelia"
+            caddy_dir = ophelia_root / "platform" / "shared" / "caddy"
+            caddy_dir.mkdir(parents=True)
+            (caddy_dir / "Caddyfile").write_text("{}\n")
+            runtime_root = root / "runtime"
+
+            def fake_run(command, **kwargs):
+                if command[:2] == ["docker", "run"]:
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[:3] == ["docker", "inspect", "--format"]:
+                    return SimpleNamespace(returncode=0, stdout="true\n", stderr="")
+                if command[:2] == ["docker", "exec"]:
+                    return SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr="Refusing Caddy reload: managed static root expanded without OPHELIA_STATIC_ROOT.\n",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch("ophelia.caddy_manager.subprocess.run", side_effect=fake_run):
+                report = reload_caddy(runtime_root=runtime_root, ophelia_root=ophelia_root)
+
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["reloaded"])
+        self.assertEqual("caddy_reload_failed", report["errors"][0]["code"])
+        self.assertIn("managed static root expanded without OPHELIA_STATIC_ROOT", report["stderr"])
 
     def test_reload_caddy_report_does_not_include_envfile_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

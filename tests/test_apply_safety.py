@@ -185,6 +185,56 @@ class ApplySafetyTests(unittest.TestCase):
             command_windows = [reload_command[index : index + 4] for index in range(len(reload_command))]
             self.assertNotIn(["caddy", "reload", "--config", "/etc/caddy/Caddyfile"], command_windows)
 
+    def test_apply_uses_envfile_reload_when_caddy_env_changes(self) -> None:
+        from ophelia.caddy_manager import CADDY_ENVFILE_RELOAD_SCRIPT
+        from ophelia.manifest import load_manifest
+        from ophelia.runtime import apply_local_bundle
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "static.ophelia.yml"
+            static_root = root / "static"
+            runtime_root = root / "custom-runtime"
+            ophelia_root = root / "ophelia"
+            static_root.mkdir()
+            (static_root / "index.html").write_text("<h1>Static</h1>\n")
+            (ophelia_root / "platform" / "shared").mkdir(parents=True)
+            (ophelia_root / "platform" / "shared" / "compose.yml").write_text("services: {}\n")
+            manifest_path.write_text(
+                f"""
+version: 1
+app: env-static
+environment: staging
+kind: static
+static_root: {static_root}
+env:
+  EDGE_TOKEN: secret
+routes:
+  - domain: env-static.example.com
+edge:
+  on_demand_tls:
+    ask: http://control.example.com/allow?token={{$EDGE_TOKEN}}
+""".strip()
+                + "\n"
+            )
+            manifest = load_manifest(manifest_path)
+
+            def fake_run(command, **kwargs):
+                if "ps" in command:
+                    return subprocess.CompletedProcess(command, 0, stdout="caddy\n", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with mock.patch("ophelia.runtime._run", side_effect=fake_run) as run:
+                apply_local_bundle(manifest, manifest_path, runtime_root, ophelia_root)
+
+            caddy_calls = [call.args[0] for call in run.call_args_list if "docker" in call.args[0] and "compose" in call.args[0]]
+
+        self.assertTrue(caddy_calls)
+        self.assertFalse(any("--force-recreate" in command for command in caddy_calls))
+        reload_commands = [command for command in caddy_calls if command[-3:-1] == ["sh", "-ec"]]
+        self.assertTrue(reload_commands)
+        self.assertEqual(CADDY_ENVFILE_RELOAD_SCRIPT, reload_commands[-1][-1])
+
     def test_apply_prepares_missing_shared_external_networks(self) -> None:
         from ophelia.manifest import load_manifest
         from ophelia.runtime import ensure_compose_networks

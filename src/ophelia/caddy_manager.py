@@ -26,6 +26,10 @@ CADDY_ENVFILE_RELOAD_SCRIPT = (
     'trap \'rm -f "$tmp"\' EXIT; '
     f"caddy adapt --config {CADDY_CONTAINER_CONFIG_PATH} "
     f"--adapter caddyfile --envfile {CADDY_CONTAINER_ENV_PATH} > \"$tmp\"; "
+    'if grep -Eq \'"root"[[:space:]]*:[[:space:]]*"/[A-Za-z0-9_.-]+/current"\' "$tmp"; then '
+    'echo "Refusing Caddy reload: managed static root expanded without OPHELIA_STATIC_ROOT." >&2; '
+    "exit 1; "
+    "fi; "
     'caddy reload --config "$tmp"'
 )
 

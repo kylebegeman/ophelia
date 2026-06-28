@@ -7,11 +7,13 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.main import main
 from ophelia.self_test import run_self_test
+from ophelia.version import version_info
 
 
 class SelfTestTests(unittest.TestCase):
@@ -69,6 +71,13 @@ class SelfTestTests(unittest.TestCase):
         self.assertEqual(payload["name"], "ophelia")
         self.assertTrue(payload["version"])
 
+    def test_version_prefers_source_pyproject_over_stale_package_metadata(self) -> None:
+        expected = _read_pyproject_version()
+        with mock.patch("ophelia.version.metadata.version", return_value="0.0.0"):
+            payload = version_info()
+        self.assertEqual(payload["source"], "pyproject")
+        self.assertEqual(payload["version"], expected)
+
     def test_global_version_flag_prints_version(self) -> None:
         buffer = io.StringIO()
         with self.assertRaises(SystemExit) as raised:
@@ -77,6 +86,13 @@ class SelfTestTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("ship", buffer.getvalue())
         self.assertIn("0.", buffer.getvalue())
+
+def _read_pyproject_version() -> str:
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    for line in pyproject.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version = "):
+            return line.split('"', 2)[1]
+    raise AssertionError("pyproject.toml is missing a version field")
 
 
 if __name__ == "__main__":

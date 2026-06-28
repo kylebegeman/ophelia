@@ -562,7 +562,7 @@ def apply_local_bundle(
 
         mark_phase("caddy_env_sync", "running")
         try:
-            caddy_env_changed = sync_caddy_env(manifest, app_root, runtime_root)
+            sync_caddy_env(manifest, app_root, runtime_root)
         except RuntimeError as exc:
             raise ApplyPhaseError("caddy_env_sync", str(exc)) from exc
         mark_phase("caddy_env_sync", "ok")
@@ -614,76 +614,40 @@ def apply_local_bundle(
                 env=_runtime_env(runtime_root),
             )
             if result and "caddy" in result.stdout:
-                if caddy_env_changed:
-                    mark_phase("caddy_validate", "running")
-                    _run_apply_phase(
-                        [
-                            *compose_args,
-                            "exec",
-                            "-T",
-                            "caddy",
-                            "caddy",
-                            "validate",
-                            "--config",
-                            "/etc/caddy/Caddyfile",
-                            "--envfile",
-                            "/etc/caddy/env",
-                        ],
-                        "caddy_validate",
-                        env=_runtime_env(runtime_root),
-                    )
-                    mark_phase("caddy_validate", "ok")
+                mark_phase("caddy_validate", "running")
+                _run_apply_phase(
+                    [
+                        *compose_args,
+                        "exec",
+                        "-T",
+                        "caddy",
+                        "caddy",
+                        "validate",
+                        "--config",
+                        "/etc/caddy/Caddyfile",
+                        "--envfile",
+                        "/etc/caddy/env",
+                    ],
+                    "caddy_validate",
+                    env=_runtime_env(runtime_root),
+                )
+                mark_phase("caddy_validate", "ok")
 
-                    mark_phase("caddy_reload", "running")
-                    _run_apply_phase(
-                        [
-                            *compose_args,
-                            "--profile",
-                            "edge",
-                            "up",
-                            "-d",
-                            "--force-recreate",
-                            "caddy",
-                        ],
-                        "caddy_reload",
-                        env=_runtime_env(runtime_root),
-                    )
-                    mark_phase("caddy_reload", "ok")
-                else:
-                    mark_phase("caddy_validate", "running")
-                    _run_apply_phase(
-                        [
-                            *compose_args,
-                            "exec",
-                            "-T",
-                            "caddy",
-                            "caddy",
-                            "validate",
-                            "--config",
-                            "/etc/caddy/Caddyfile",
-                            "--envfile",
-                            "/etc/caddy/env",
-                        ],
-                        "caddy_validate",
-                        env=_runtime_env(runtime_root),
-                    )
-                    mark_phase("caddy_validate", "ok")
-
-                    mark_phase("caddy_reload", "running")
-                    _run_apply_phase(
-                        [
-                            *compose_args,
-                            "exec",
-                            "-T",
-                            "caddy",
-                            "sh",
-                            "-ec",
-                            CADDY_ENVFILE_RELOAD_SCRIPT,
-                        ],
-                        "caddy_reload",
-                        env=_runtime_env(runtime_root),
-                    )
-                    mark_phase("caddy_reload", "ok")
+                mark_phase("caddy_reload", "running")
+                _run_apply_phase(
+                    [
+                        *compose_args,
+                        "exec",
+                        "-T",
+                        "caddy",
+                        "sh",
+                        "-ec",
+                        CADDY_ENVFILE_RELOAD_SCRIPT,
+                    ],
+                    "caddy_reload",
+                    env=_runtime_env(runtime_root),
+                )
+                mark_phase("caddy_reload", "ok")
 
         if static_source_bundle_path(manifest) is not None:
             mark_phase("static_assets_publish", "running")

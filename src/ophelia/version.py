@@ -20,13 +20,19 @@ def package_version() -> str:
 def version_info() -> Dict[str, Any]:
     version: Optional[str] = None
     source = "unknown"
+    location = _package_location()
+    pyproject_version = _pyproject_version()
 
-    try:
-        version = metadata.version("ophelia")
-        source = "package_metadata"
-    except metadata.PackageNotFoundError:
-        version = _pyproject_version()
-        source = "pyproject" if version else "unknown"
+    if pyproject_version and _is_source_checkout_location(location):
+        version = pyproject_version
+        source = "pyproject"
+    else:
+        try:
+            version = metadata.version("ophelia")
+            source = "package_metadata"
+        except metadata.PackageNotFoundError:
+            version = pyproject_version
+            source = "pyproject" if version else "unknown"
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -34,7 +40,7 @@ def version_info() -> Dict[str, Any]:
         "name": "ophelia",
         "version": version,
         "source": source,
-        "location": _package_location(),
+        "location": location,
     }
 
 
@@ -56,3 +62,18 @@ def _pyproject_version() -> Optional[str]:
         return None
     match = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', path.read_text(encoding="utf-8"))
     return match.group(1) if match else None
+
+
+def _is_source_checkout_location(location: Optional[str]) -> bool:
+    if location is None:
+        return False
+
+    from .config import REPO_ROOT
+
+    repo_root = Path(REPO_ROOT).resolve()
+    source_root = repo_root / "src"
+    try:
+        Path(location).resolve().relative_to(source_root)
+    except ValueError:
+        return False
+    return (repo_root / "pyproject.toml").exists()

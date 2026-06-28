@@ -1,6 +1,6 @@
 # Ophelia Roadmap
 
-Status: current after the 0.4.2 patch release
+Status: current after the 0.4.3 patch release
 
 Ophelia 0.3.0 completes the fixture-first foundation: manifest contracts,
 runtime rendering, safety-gated operations, receipts, readiness, synthetic app

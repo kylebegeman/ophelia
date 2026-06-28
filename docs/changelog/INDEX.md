@@ -77,3 +77,4 @@
 | [0073](0073-release-041.md) | 2026-06-25 | landed | Release 0.4.1 | release, deploy, caddy, verification, docs, tests |
 | [0074](0074-caddy-envfile-reload.md) | 2026-06-25 | landed | Envfile-aware shared Caddy reload | caddy, deploy, static-sites, tests |
 | [0075](0075-release-042.md) | 2026-06-25 | landed | Release 0.4.2 | release, caddy, deploy, static-sites, docs, tests |
+| [0076](0076-release-043.md) | 2026-06-28 | landed | Release 0.4.3 | release, caddy, deploy, static-sites, safety, tests |

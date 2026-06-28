@@ -16,7 +16,6 @@ secret.
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -180,15 +179,15 @@ def _check_runtime_root(runtime_root: Path) -> str:
 
 
 def _check_package_version() -> str:
-    from importlib import metadata
+    from .version import version_info
 
-    try:
-        version = metadata.version("ophelia")
-    except metadata.PackageNotFoundError as exc:
+    info = version_info()
+    version = info.get("version")
+    if not version:
         raise _WarnCheck(
             "package metadata not found (editable/PYTHONPATH run); version unknown"
-        ) from exc
-    return f"ophelia {version}"
+        )
+    return f"ophelia {version} ({info.get('source') or 'unknown'})"
 
 
 def _check_docs_paths() -> str:
@@ -235,20 +234,12 @@ def _check_api() -> str:
 
 
 def _package_info() -> Dict[str, Any]:
-    from importlib import metadata
+    from .version import version_info
 
-    location: Optional[str] = None
-    try:
-        spec = importlib.util.find_spec("ophelia")
-        if spec is not None and spec.origin:
-            location = str(Path(spec.origin).resolve().parent)
-    except (ImportError, ValueError):
-        location = None
-
-    version: Optional[str] = None
-    try:
-        version = metadata.version("ophelia")
-    except metadata.PackageNotFoundError:
-        version = None
-
-    return {"name": "ophelia", "version": version, "location": location}
+    info = version_info()
+    return {
+        "name": "ophelia",
+        "version": info.get("version"),
+        "source": info.get("source"),
+        "location": info.get("location"),
+    }
