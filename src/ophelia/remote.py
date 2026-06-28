@@ -17,7 +17,7 @@ class RemoteError(RuntimeError):
 
 def bootstrap_host(
     host: str,
-    ssh_port: int,
+    ssh_port: int | None,
     remote_ophelia_root: str,
     runtime_root: str,
 ) -> None:
@@ -37,7 +37,7 @@ def stage_remote_bundle(
     manifest: Manifest,
     manifest_path: Path,
     host: str,
-    ssh_port: int,
+    ssh_port: int | None,
     remote_runtime_root: str,
     remote_ophelia_root: str,
     apply: bool,
@@ -81,7 +81,7 @@ def stage_remote_bundle(
 def _sync_bundle(
     bundle_root: Path,
     host: str,
-    ssh_port: int,
+    ssh_port: int | None,
     remote_runtime_root: str,
     app: str,
 ) -> None:
@@ -104,11 +104,10 @@ def _sync_bundle(
         "addons.json",
         "--exclude",
         "restore-previews/",
-        "-e",
-        f"ssh -p {ssh_port}",
-        f"{bundle_root}/",
-        remote_app_root,
     ]
+    if ssh_port is not None:
+        command.extend(["-e", f"ssh -p {ssh_port}"])
+    command.extend([f"{bundle_root}/", remote_app_root])
     _run(command)
 
 
@@ -250,14 +249,12 @@ def _remote_deploy_command() -> List[str]:
     ]
 
 
-def _ssh_command(host: str, ssh_port: int, script: str) -> List[str]:
-    return [
-        "ssh",
-        "-p",
-        str(ssh_port),
-        host,
-        f"bash -lc {shlex.quote(script)}",
-    ]
+def _ssh_command(host: str, ssh_port: int | None, script: str) -> List[str]:
+    command = ["ssh"]
+    if ssh_port is not None:
+        command.extend(["-p", str(ssh_port)])
+    command.extend([host, f"bash -lc {shlex.quote(script)}"])
+    return command
 
 
 def _run(command: List[str], capture_output: bool = False) -> subprocess.CompletedProcess:

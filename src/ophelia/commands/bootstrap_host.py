@@ -6,7 +6,7 @@ from ..remote import RemoteError, bootstrap_host
 def register(subparsers: _SubParsersAction) -> None:
     parser = subparsers.add_parser("bootstrap-host", help="Prepare the remote host runtime root and networks")
     parser.add_argument("host", help="SSH target such as operator@example-host")
-    parser.add_argument("--ssh-port", type=int, default=22022, help="SSH port")
+    parser.add_argument("--ssh-port", type=int, default=None, help="SSH port; omit to use SSH config/default port")
     parser.add_argument(
         "--remote-ophelia-root",
         default="~/ophelia",

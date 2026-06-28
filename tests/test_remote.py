@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import Manifest
-from ophelia.remote import _build_remote_stage_script, _sync_bundle
+from ophelia.remote import _build_remote_stage_script, _ssh_command, _sync_bundle
 from ophelia.runtime import DeployMetadata
 
 
@@ -99,9 +99,10 @@ class RemoteTests(unittest.TestCase):
             bundle_root.mkdir()
 
             with patch("ophelia.remote._run") as run:
-                _sync_bundle(bundle_root, "deploy@example.com", 22022, "~/ophelia-runtime", "remote-app")
+                _sync_bundle(bundle_root, "deploy@example.com", None, "~/ophelia-runtime", "remote-app")
 
             command = run.call_args.args[0]
+            self.assertNotIn("-e", command)
             self.assertIn("env", _excluded_paths(command))
             self.assertIn("release.json", _excluded_paths(command))
             self.assertIn("active_release.json", _excluded_paths(command))
@@ -109,6 +110,31 @@ class RemoteTests(unittest.TestCase):
             self.assertIn("release-bundles/", _excluded_paths(command))
             self.assertIn("addons.json", _excluded_paths(command))
             self.assertIn("restore-previews/", _excluded_paths(command))
+
+    def test_remote_bundle_sync_uses_explicit_ssh_port_when_provided(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_root = Path(temp_dir) / "remote-app"
+            bundle_root.mkdir()
+
+            with patch("ophelia.remote._run") as run:
+                _sync_bundle(bundle_root, "deploy@example.com", 22022, "~/ophelia-runtime", "remote-app")
+
+            command = run.call_args.args[0]
+            self.assertIn("-e", command)
+            self.assertIn("ssh -p 22022", command)
+
+    def test_ssh_command_uses_ssh_config_when_port_is_omitted(self) -> None:
+        command = _ssh_command("deploy@example.com", None, "echo ok")
+
+        self.assertEqual("ssh", command[0])
+        self.assertNotIn("-p", command)
+        self.assertIn("deploy@example.com", command)
+
+    def test_ssh_command_uses_explicit_port_when_provided(self) -> None:
+        command = _ssh_command("deploy@example.com", 22022, "echo ok")
+
+        self.assertEqual(["ssh", "-p", "22022"], command[:3])
+        self.assertIn("deploy@example.com", command)
 
     def test_host_plan_runs_remote_plan_not_local_plan(self) -> None:
         from ophelia.commands import deploy
@@ -217,7 +243,7 @@ def _deploy_args(
         manifest=manifest_path,
         runtime_root=root / "local-runtime",
         host=host,
-        ssh_port=22022,
+        ssh_port=None,
         remote_runtime_root="~/ophelia-runtime",
         remote_ophelia_root="~/ophelia",
         apply=apply,

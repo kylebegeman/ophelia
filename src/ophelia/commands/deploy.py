@@ -32,7 +32,7 @@ def register(subparsers: _SubParsersAction) -> None:
         help="Runtime root to deploy into",
     )
     parser.add_argument("--host", help="SSH target such as operator@example-host")
-    parser.add_argument("--ssh-port", type=int, default=22022, help="SSH port")
+    parser.add_argument("--ssh-port", type=int, default=None, help="SSH port; omit to use SSH config/default port")
     parser.add_argument(
         "--remote-runtime-root",
         default="~/ophelia-runtime",
