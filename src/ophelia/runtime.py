@@ -53,6 +53,7 @@ class DeployMetadata:
     release_id: str | None = None
     commit_sha: str | None = None
     build_time: str | None = None
+    locked: bool = False
 
 
 HOST_ON_DEMAND_TLS_GLOBAL = Path("caddy") / "global.d" / "ophelia-on-demand-tls.caddy"
@@ -1053,6 +1054,16 @@ def _resolve_deploy_metadata(
     deploy_metadata: DeployMetadata | None,
 ) -> Dict[str, str]:
     metadata = deploy_metadata or DeployMetadata()
+    if metadata.locked:
+        if not metadata.release_id or not metadata.build_time:
+            raise ValueError("Locked deploy metadata requires release_id and build_time.")
+        return {
+            "app": manifest.app,
+            "environment": manifest.environment or "unknown",
+            "release_id": metadata.release_id,
+            "commit_sha": metadata.commit_sha or "",
+            "build_time": metadata.build_time,
+        }
     release_id = _first_nonempty(
         metadata.release_id,
         os.environ.get("OPHELIA_DEPLOY_RELEASE_ID"),

@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import json
 import subprocess
-from argparse import Namespace, _SubParsersAction
+from argparse import SUPPRESS, Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from ..execution.staging import ConfirmedStaging, StagingError, find_confirmed_staging
 from ..manifest import ManifestError, load_manifest
 from ..operation_schema import error_envelope
 from ..planning import deploy_plan, deploy_confirmation_token
@@ -58,7 +61,12 @@ def register(subparsers: _SubParsersAction) -> None:
         "--artifacts-dir",
         type=Path,
         default=None,
-        help="Directory to write redacted plan diff artifacts into (defaults under the runtime root)",
+        help="Compatibility option restricted to the operation staging tree",
+    )
+    parser.add_argument(
+        "--plan-operation-id",
+        default=None,
+        help=SUPPRESS,
     )
     parser.add_argument(
         "--confirm",
@@ -95,6 +103,25 @@ def register(subparsers: _SubParsersAction) -> None:
 
 
 def run(args: Namespace) -> int:
+    requested_metadata = DeployMetadata(
+        release_id=args.release_id,
+        commit_sha=args.commit_sha,
+        build_time=args.build_time,
+    )
+    confirmed: ConfirmedStaging | None = None
+    confirmed_app = _confirmed_app_reference(args.manifest)
+    if confirmed_app is not None:
+        if not args.apply or not args.confirm:
+            print("Confirmed staging references require `--apply --confirm <token>`.")
+            return 1
+        try:
+            confirmed = find_confirmed_staging(args.runtime_root, confirmed_app, args.confirm)
+            requested_metadata = _locked_confirmed_metadata(confirmed, requested_metadata)
+        except StagingError as exc:
+            print(f"Production confirmation rejected: {exc}")
+            return 1
+        args.manifest = confirmed.manifest_path
+
     try:
         manifest = load_manifest(args.manifest)
     except ManifestError as exc:
@@ -123,11 +150,7 @@ def run(args: Namespace) -> int:
     if args.verify_timeout is not None and args.verify_timeout <= 0:
         print("verification timeout must be greater than 0.")
         return 1
-    deploy_metadata = DeployMetadata(
-        release_id=args.release_id,
-        commit_sha=args.commit_sha,
-        build_time=args.build_time,
-    )
+    deploy_metadata = requested_metadata
 
     if args.plan:
         if args.host:
@@ -151,7 +174,21 @@ def run(args: Namespace) -> int:
                 print(result)
             return 0
 
-        plan = deploy_plan(manifest, args.manifest, args.runtime_root, artifacts_dir=args.artifacts_dir)
+        try:
+            plan = deploy_plan(
+                manifest,
+                args.manifest,
+                args.runtime_root,
+                artifacts_dir=args.artifacts_dir,
+                plan_operation_id=getattr(args, "plan_operation_id", None),
+                deploy_metadata=deploy_metadata,
+            )
+        except StagingError as exc:
+            if args.json:
+                print(json.dumps(error_envelope(str(exc), "plan_staging_failed"), indent=2, sort_keys=True))
+            else:
+                print(f"Deploy plan failed: {exc}")
+            return 1
         if args.json:
             print(json.dumps(plan, indent=2, sort_keys=True))
         else:
@@ -240,15 +277,35 @@ def run(args: Namespace) -> int:
             print(result)
         return 0
 
-    plan = deploy_plan(manifest, args.manifest, args.runtime_root)
-    if args.apply and plan["confirmation_required"]:
-        expected = deploy_confirmation_token(plan)
-        if args.confirm != expected:
-            print(
-                "Production apply requires confirmation token "
-                f"{expected}. Run `ship deploy {args.manifest} --plan` first."
+    plan = None
+    if args.apply and manifest.environment == "production" and args.confirm:
+        if confirmed is None:
+            try:
+                confirmed = find_confirmed_staging(args.runtime_root, manifest.app, args.confirm)
+                deploy_metadata = _locked_confirmed_metadata(confirmed, deploy_metadata)
+                args.manifest = confirmed.manifest_path
+                manifest = load_manifest(args.manifest)
+            except (StagingError, ManifestError) as exc:
+                print(f"Production confirmation rejected: {exc}")
+                return 1
+    else:
+        try:
+            plan = deploy_plan(
+                manifest,
+                args.manifest,
+                args.runtime_root,
+                deploy_metadata=deploy_metadata,
             )
+        except StagingError as exc:
+            print(f"Deploy plan failed: {exc}")
             return 1
+    if args.apply and manifest.environment == "production" and not args.confirm:
+        expected = deploy_confirmation_token(plan) if plan is not None else "unknown"
+        print(
+            "Production apply requires confirmation token "
+            f"{expected}. Run `ship deploy {args.manifest} --plan` first."
+        )
+        return 1
 
     if args.apply:
         try:
@@ -293,6 +350,34 @@ def run(args: Namespace) -> int:
     print(f"Deployed bundle for {manifest.app} into {app_root}")
     print("Use --apply to activate locally, or --host to stage/apply on the VPS.")
     return 0
+
+
+def _confirmed_app_reference(path: Path) -> str | None:
+    value = str(path)
+    prefix = "@confirmed:"
+    if not value.startswith(prefix):
+        return None
+    app = value[len(prefix) :]
+    return app or None
+
+
+def _locked_confirmed_metadata(
+    confirmed: ConfirmedStaging,
+    requested: DeployMetadata,
+) -> DeployMetadata:
+    payload = confirmed.binding.get("deploy_metadata")
+    if not isinstance(payload, dict):
+        raise StagingError("Confirmed plan deploy metadata is missing.")
+    values: dict[str, str] = {}
+    for field in ("release_id", "commit_sha", "build_time"):
+        bound = payload.get(field)
+        if not isinstance(bound, str):
+            raise StagingError(f"Confirmed plan deploy metadata is invalid: {field}")
+        requested_value = getattr(requested, field)
+        if requested_value and requested_value != bound:
+            raise StagingError(f"Confirmed plan deploy metadata does not match --{field.replace('_', '-')}.")
+        values[field] = bound
+    return DeployMetadata(**values, locked=True)
 
 
 def _run_verification(manifest, args: Namespace):

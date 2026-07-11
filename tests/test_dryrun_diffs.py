@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ophelia.execution.staging import StagingError
 from ophelia.manifest import load_manifest
 from ophelia.planning import deploy_plan
 from ophelia.portability import traffic_plan
@@ -96,7 +97,7 @@ class DeployDiffArtifactTests(unittest.TestCase):
             self.assertTrue(all("change" in change and "path" in change for change in plan["changes"]))
             self.assertNotIn("super-secret-value", json.dumps(plan["changes"]))
 
-    def test_artifacts_dir_override_is_used(self) -> None:
+    def test_artifacts_dir_override_cannot_escape_operation_staging(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
@@ -105,9 +106,9 @@ class DeployDiffArtifactTests(unittest.TestCase):
             manifest_path.write_text(_service_manifest("super-secret-value"))
             manifest = load_manifest(manifest_path)
 
-            plan = deploy_plan(manifest, manifest_path, runtime_root, artifacts_dir=artifacts_dir)
-            compose_artifact = next(a for a in plan["artifacts"] if a["name"] == "compose-diff")
-            self.assertEqual(str(artifacts_dir), str(Path(compose_artifact["path"]).parent))
+            with self.assertRaisesRegex(StagingError, "restricted to the operation staging tree"):
+                deploy_plan(manifest, manifest_path, runtime_root, artifacts_dir=artifacts_dir)
+            self.assertFalse(artifacts_dir.exists())
 
     def test_no_compose_diff_when_compose_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -120,7 +121,8 @@ class DeployDiffArtifactTests(unittest.TestCase):
 
             plan = deploy_plan(manifest, manifest_path, runtime_root)
             self.assertEqual([], plan["compose_changes"])
-            self.assertEqual([], plan["artifacts"])
+            self.assertNotIn("compose-diff", {item["name"] for item in plan["artifacts"]})
+            self.assertIn("plan-evidence", {item["name"] for item in plan["artifacts"]})
 
 
 class TrafficProviderChangeTests(unittest.TestCase):
