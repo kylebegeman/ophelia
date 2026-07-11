@@ -13,7 +13,13 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import Manifest
-from ophelia.remote import _build_remote_stage_script, _ssh_command, _sync_bundle
+from ophelia.remote import (
+    _build_remote_stage_script,
+    _ssh_command,
+    _sync_bundle,
+    _sync_plan_candidate,
+    stage_remote_bundle,
+)
 from ophelia.runtime import DeployMetadata
 
 
@@ -69,12 +75,18 @@ class RemoteTests(unittest.TestCase):
             apply=False,
             plan=True,
             json_output=True,
+            plan_operation_id="deploy-plan.remote-app.fixture",
         )
 
+        self.assertIn(
+            'APP_ROOT=$HOME/ophelia-runtime/staging/deploy-plan.remote-app.fixture/candidate',
+            script,
+        )
         self.assertIn('deploy "$APP_ROOT/manifest.lock.json"', script)
         self.assertIn("--runtime-root \"$REMOTE_RUNTIME_ROOT\"", script)
         self.assertIn("--ophelia-root \"$REMOTE_OPHELIA_ROOT\"", script)
         self.assertIn("--plan --json", script)
+        self.assertIn("--plan-operation-id deploy-plan.remote-app.fixture", script)
         self.assertNotIn("--apply", script)
 
     def test_remote_stage_script_preserves_stage_metadata_and_caddy_sync(self) -> None:
@@ -92,6 +104,62 @@ class RemoteTests(unittest.TestCase):
         self.assertIn('"mode": "staged"', script)
         self.assertIn('CADDY_TARGET="$REMOTE_RUNTIME_ROOT/caddy/sites.d/remote-app.caddy"', script)
         self.assertIn('cp "$APP_ROOT/caddy/remote-app.caddy" "$CADDY_TARGET"', script)
+
+    def test_remote_plan_sync_targets_candidate_without_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_root = Path(temp_dir) / "remote-app"
+            bundle_root.mkdir()
+
+            with patch("ophelia.remote._run") as run:
+                _sync_plan_candidate(
+                    bundle_root,
+                    "deploy@example.com",
+                    None,
+                    "~/ophelia-runtime",
+                    "deploy-plan.remote-app.fixture",
+                )
+
+            command = run.call_args.args[0]
+            self.assertNotIn("--delete", command)
+            self.assertIn("--chmod=Du+rwx,Dgo-rwx,Fu+rw,Fgo-rwx", command)
+            destination = command[-1]
+            self.assertIn("/staging/deploy-plan.remote-app.fixture/candidate/", destination)
+            self.assertNotIn("/apps/", destination)
+
+    def test_remote_plan_never_calls_live_bundle_sync(self) -> None:
+        manifest = _manifest(environment="production")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "remote-app.ophelia.yml"
+            manifest_path.write_text(_manifest_text(environment="production"))
+            completed = unittest.mock.MagicMock(stdout='{"planned": true}')
+            with (
+                patch("ophelia.remote._run", return_value=completed) as run,
+                patch("ophelia.remote._sync_bundle", side_effect=AssertionError("live rsync")),
+            ):
+                output = stage_remote_bundle(
+                    manifest,
+                    manifest_path,
+                    "deploy@example.com",
+                    None,
+                    "~/ophelia-runtime",
+                    "~/ophelia",
+                    apply=False,
+                    plan=True,
+                    json_output=True,
+                )
+
+            self.assertEqual('{"planned": true}', output)
+            commands = [call.args[0] for call in run.call_args_list]
+            prepare_script = commands[0][-1]
+            self.assertIn("umask 077", prepare_script)
+            self.assertIn("chmod 700", prepare_script)
+            rsync = next(command for command in commands if command[0] == "rsync")
+            self.assertNotIn("--delete", rsync)
+            self.assertIn("/staging/", rsync[-1])
+            self.assertNotIn("/apps/", rsync[-1])
+            remote_script = commands[-1][-1]
+            self.assertIn("/staging/", remote_script)
 
     def test_remote_bundle_sync_preserves_runtime_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
