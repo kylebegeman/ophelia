@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ophelia.execution import ExecutionFence, RevisionArtifactRef
 from ophelia.domain import (
     ApprovedPlanRef,
     AuthorizationKind,
@@ -511,6 +512,33 @@ class KernelContractTests(unittest.TestCase):
         self.assertIsNone(receipt.active_revision_id)
         with self.assertRaisesRegex(ContractValidationError, "together"):
             dataclasses.replace(compensation, restored_revision_id="rev_partial")
+
+
+    def test_execution_fence_and_artifact_root_contracts_fail_closed(self) -> None:
+        fence = ExecutionFence(
+            operation_id="operation_example-1",
+            owner_id="executor-a",
+            fencing_token=1,
+            expires_at=100.0,
+        )
+        artifact = RevisionArtifactRef(
+            revision_id="rev_example-1",
+            revision_digest=D1,
+            relative_root="revisions/example/public",
+            artifact_digest=D2,
+        )
+
+        self.assertEqual("ophelia.kernel.execution_fence", fence.to_dict()["kind"])
+        self.assertEqual(
+            "ophelia.kernel.revision_artifact_ref", artifact.to_dict()["kind"]
+        )
+        for root in ("/absolute", "../escape", "a/../escape", ".", "a\\b"):
+            with self.subTest(root=root):
+                with self.assertRaises(ContractValidationError):
+                    dataclasses.replace(artifact, relative_root=root)
+        for expires_at in (float("nan"), float("inf"), float("-inf")):
+            with self.assertRaises(ContractValidationError):
+                dataclasses.replace(fence, expires_at=expires_at)
 
 
 if __name__ == "__main__":

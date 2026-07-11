@@ -35,18 +35,24 @@ from ophelia.domain import (
     PlanStep,
     ReceiptEffect,
     ReceiptOutcome,
+    Revision,
+    RevisionState,
     TerminalReceipt,
     VerificationCheck,
     VerificationResult,
     VerificationStatus,
+    Workload,
+    WorkloadKind,
     canonical_digest,
 )
 from ophelia.execution import (
     DEFAULT_OPERATION_DB_RELATIVE_PATH,
+    ExecutionInput,
     IdempotencyConflict,
     IntegrityError,
     LeaseConflict,
     OperationConflict,
+    RevisionArtifactRef,
     SQLiteOperationJournal,
 )
 
@@ -61,6 +67,7 @@ CREATED = "2026-07-11T17:00:00Z"
 APPROVED = "2026-07-11T17:05:00Z"
 EXPIRES = "2026-07-11T19:00:00Z"
 NOW = datetime(2026, 7, 11, 17, 10, tzinfo=timezone.utc).timestamp()
+DEADLINE = "2026-07-11T18:30:00Z"
 
 
 def _actor(actor_id: str = "actor_kyle") -> Actor:
@@ -124,6 +131,64 @@ def _approval(
         expires_at=EXPIRES,
         approval_nonce="raw-one-time-nonce-that-must-not-be-stored",
     )
+
+
+def _execution_bundle(
+    *,
+    request_id: str = "request_input-1",
+    idempotency_key: str = "deploy-input",
+    decision_id: str = "decision_input-1",
+):
+    revision = Revision(
+        revision_id="rev_static-1",
+        app="demo-service",
+        environment="production",
+        manifest_digest=D2,
+        artifact_digests=(D3, D4),
+        renderer_version="ophelia-test",
+        workloads=(
+            Workload(
+                workload_id="site",
+                workload_kind=WorkloadKind.STATIC,
+                artifact_digest=D3,
+                route_ids=("public",),
+            ),
+        ),
+        created_at=CREATED,
+    )
+    request = _request(
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        revision_id=revision.revision_id,
+        revision_digest=revision.content_digest(),
+    )
+    plan = _plan(request)
+    approval = ApprovedPlanRef.bind(
+        plan,
+        actor_id="actor_kyle",
+        decision_id=decision_id,
+        authorization_kind=AuthorizationKind.LUMEN_DECISION,
+        issuer="fixture-control-plane",
+        audience=request.host_id,
+        approved_at=APPROVED,
+        expires_at=EXPIRES,
+        approval_nonce="raw-input-nonce-that-must-not-be-stored",
+    )
+    artifact_ref = RevisionArtifactRef(
+        revision_id=revision.revision_id,
+        revision_digest=revision.content_digest(),
+        relative_root="revisions/static-1/public",
+        artifact_digest=D3,
+    )
+    execution_input = ExecutionInput.bind(
+        request=request,
+        plan=plan,
+        approved_plan=approval,
+        revision=revision,
+        artifact_ref=artifact_ref,
+        deadline=DEADLINE,
+    )
+    return request, approval, execution_input
 
 
 def _event(
@@ -228,7 +293,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         try:
             self.assertEqual("wal", connection.execute("PRAGMA journal_mode").fetchone()[0])
             self.assertEqual(2, connection.execute("PRAGMA synchronous").fetchone()[0])
-            self.assertEqual(1, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(2, connection.execute("PRAGMA user_version").fetchone()[0])
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -246,6 +311,11 @@ class SQLiteOperationJournalTests(unittest.TestCase):
                 "idempotency_keys",
                 "operation_leases",
                 "terminal_receipts",
+                "operation_inputs",
+                "operation_controls",
+                "revision_lifecycle",
+                "active_revisions",
+                "atomic_success_commits",
             }.issubset(tables)
         )
         self.store.integrity_check()
@@ -283,7 +353,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         connection = reopened._connect()
         try:
             self.assertEqual(
-                1, connection.execute("PRAGMA user_version").fetchone()[0]
+                2, connection.execute("PRAGMA user_version").fetchone()[0]
             )
         finally:
             connection.close()
@@ -1105,6 +1175,220 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         self.assertEqual(
             OperationState.ACCEPTED, self.store.get(operation.operation_id).state
         )
+
+
+    def test_execution_input_is_atomic_recoverable_and_idempotent(self) -> None:
+        request, approval, execution_input = _execution_bundle()
+        operation = self.store.accept(
+            _actor(),
+            request,
+            approval,
+            execution_input=execution_input,
+        )
+
+        self.assertEqual(
+            execution_input, self.store.load_execution_input(operation.operation_id)
+        )
+        self.assertEqual((operation,), self.store.list_recoverable())
+        retry = dataclasses.replace(request, request_id="request_input-2")
+        self.assertEqual(
+            operation.operation_id,
+            self.store.accept(
+                _actor(),
+                retry,
+                approval,
+                execution_input=execution_input,
+            ).operation_id,
+        )
+        with self.assertRaises(IdempotencyConflict):
+            self.store.accept(_actor(), retry, approval)
+
+        database_bytes = self.store.database_path.read_bytes()
+        wal_path = Path(str(self.store.database_path) + "-wal")
+        if wal_path.exists():
+            database_bytes += wal_path.read_bytes()
+        self.assertNotIn(b"raw-input-nonce-that-must-not-be-stored", database_bytes)
+
+    def test_execution_input_tampering_with_recomputed_digest_is_detected(self) -> None:
+        request, approval, execution_input = _execution_bundle()
+        operation = self.store.accept(
+            _actor(), request, approval, execution_input=execution_input
+        )
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM operation_inputs WHERE operation_id = ?",
+                    (operation.operation_id,),
+                ).fetchone()[0]
+            )
+            payload["plan"]["host_id"] = "host_attacker"
+            binding = dict(payload)
+            binding.pop("input_digest")
+            payload["input_digest"] = canonical_digest(binding)
+            payload_json = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            connection.execute(
+                """
+                UPDATE operation_inputs SET input_digest = ?, payload_json = ?
+                WHERE operation_id = ?
+                """,
+                (payload["input_digest"], payload_json, operation.operation_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.store.load_execution_input(operation.operation_id)
+        with self.assertRaises(IntegrityError):
+            self.store.integrity_check()
+
+    def test_cancellation_control_and_recovery_listing_are_durable(self) -> None:
+        request, approval, execution_input = _execution_bundle()
+        operation = self.store.accept(
+            _actor(), request, approval, execution_input=execution_input
+        )
+        self.assertEqual(DEADLINE, self.store.control(operation.operation_id).deadline)
+        self.assertFalse(self.store.cancellation_requested(operation.operation_id))
+
+        first = self.store.request_cancellation(operation.operation_id, _actor())
+        retry = self.store.request_cancellation(
+            operation.operation_id, _actor("actor_other")
+        )
+        self.assertTrue(first.cancellation_requested)
+        self.assertEqual(first, retry)
+        self.assertEqual("actor_kyle", retry.cancellation_actor.actor_id)
+
+        lease = self.store.acquire_fence(operation.operation_id, "executor-a", 10)
+        self.assertEqual((), self.store.list_recoverable())
+        self.now[0] = lease.expires_at
+        self.assertEqual((operation,), self.store.list_recoverable())
+        for invalid in (0, -1, True, 1001):
+            with self.assertRaises(ContractValidationError):
+                self.store.list_recoverable(invalid)
+
+    def test_revision_lifecycle_rejects_invalid_transition_and_stale_fence(self) -> None:
+        request, approval, execution_input = _execution_bundle()
+        operation = self.store.accept(
+            _actor(), request, approval, execution_input=execution_input
+        )
+        first = self.store.acquire_fence(operation.operation_id, "executor-a", 10)
+        created = self.store.append_revision_state(
+            operation.operation_id, RevisionState.CREATED, fence=first
+        )
+        self.assertEqual(1, created.sequence)
+        with self.assertRaises(OperationConflict):
+            self.store.append_revision_state(
+                operation.operation_id, RevisionState.READY, fence=first
+            )
+        self.assertEqual((created,), self.store.revision_history(operation.operation_id))
+
+        self.now[0] += 11
+        second = self.store.acquire_fence(operation.operation_id, "executor-b", 10)
+        with self.assertRaises(LeaseConflict):
+            self.store.append_revision_state(
+                operation.operation_id, RevisionState.STAGED, fence=first
+            )
+        staged = self.store.append_revision_state(
+            operation.operation_id, RevisionState.STAGED, fence=second
+        )
+        self.assertEqual(2, staged.sequence)
+
+    def _ready_input_operation(self):
+        request, approval, execution_input = _execution_bundle()
+        operation = self.store.accept(
+            _actor(), request, approval, execution_input=execution_input
+        )
+        fence = self.store.acquire_fence(
+            operation.operation_id, "executor-success", 100
+        )
+        for state in (
+            RevisionState.CREATED,
+            RevisionState.STAGED,
+            RevisionState.PREFLIGHT_PASSED,
+            RevisionState.STARTING,
+            RevisionState.READY,
+        ):
+            self.store.append_revision_state(
+                operation.operation_id, state, fence=fence
+            )
+        return operation, request, approval, execution_input, fence
+
+    def test_active_cas_conflict_rolls_back_lifecycle_and_pointer(self) -> None:
+        operation, _, _, _, fence = self._ready_input_operation()
+        before = self.store.revision_history(operation.operation_id)
+
+        with self.assertRaises(OperationConflict):
+            self.store.compare_and_swap_active_revision(
+                operation.operation_id, D6, fence=fence
+            )
+
+        self.assertEqual(before, self.store.revision_history(operation.operation_id))
+        self.assertIsNone(
+            self.store.active_revision(
+                "host_example-1", "demo-service", "production"
+            )
+        )
+
+    def test_atomic_success_commits_active_lifecycle_event_and_receipt(self) -> None:
+        operation, request, approval, _, fence = self._ready_input_operation()
+        receipt = _receipt(operation.operation_id, request, approval)
+
+        active = self.store.commit_success(receipt, None, fence=fence)
+
+        self.assertEqual(request.revision_digest, active.revision_digest)
+        self.assertEqual(
+            RevisionState.ACTIVE,
+            self.store.revision_history(operation.operation_id)[-1].state,
+        )
+        self.assertEqual(
+            active,
+            self.store.active_revision(
+                request.host_id, request.app, request.environment
+            ),
+        )
+        self.assertEqual(
+            OperationState.SUCCEEDED, self.store.get(operation.operation_id).state
+        )
+        self.assertEqual(
+            receipt.receipt_id,
+            self.store.receipt_payload(operation.operation_id)["receipt_id"],
+        )
+        self.store.integrity_check()
+
+    def test_v1_to_v2_migration_preserves_existing_operation(self) -> None:
+        operation, _, _ = self._accept()
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            connection.execute("DROP INDEX operations_recovery_lookup")
+            connection.execute("DROP INDEX revision_lifecycle_latest")
+            for table in (
+                "atomic_success_commits",
+                "active_revisions",
+                "revision_lifecycle",
+                "operation_controls",
+                "operation_inputs",
+            ):
+                connection.execute("DROP TABLE " + table)
+            connection.execute("PRAGMA user_version = 1")
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = SQLiteOperationJournal(
+            self.store.database_path, clock=lambda: self.now[0]
+        )
+        self.assertEqual(operation, migrated.get(operation.operation_id))
+        migrated.integrity_check()
+        connection = migrated._connect()
+        try:
+            self.assertEqual(
+                2, connection.execute("PRAGMA user_version").fetchone()[0]
+            )
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":
