@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import os
 import sqlite3
 import stat
@@ -334,14 +335,15 @@ class SQLiteOperationJournal:
                     state=OperationState(existing["state"]),
                 )
 
+            now = self._clock_sample()
             if approved_plan.expired(
-                datetime.fromtimestamp(self._clock(), timezone.utc)
+                datetime.fromtimestamp(now, timezone.utc)
             ):
                 raise OperationConflict("Approval has expired.")
 
             operation_id = "operation_" + uuid.uuid4().hex
             accepted_at = datetime.fromtimestamp(
-                self._clock(), timezone.utc
+                now, timezone.utc
             ).isoformat().replace("+00:00", "Z")
             connection.execute(
                 """
@@ -584,11 +586,21 @@ class SQLiteOperationJournal:
         operation_id: str,
     ) -> Tuple[OperationEvent, ...]:
         operation = connection.execute(
-            "SELECT state FROM operations WHERE operation_id = ?",
+            """
+            SELECT o.*, a.plan_id, a.actor_id AS approval_actor_id,
+                   a.approval_digest, a.payload_json AS approval_json,
+                   p.plan_digest, p.request_digest AS plan_request_digest,
+                   p.payload_json AS plan_json
+            FROM operations AS o
+            JOIN approvals AS a ON a.decision_id = o.decision_id
+            JOIN plans AS p ON p.plan_id = a.plan_id
+            WHERE o.operation_id = ?
+            """,
             (operation_id,),
         ).fetchone()
         if operation is None:
             raise IntegrityError("Event history references an unknown operation.")
+        plan_claims, approval_claims = cls._verified_acceptance_claims(operation)
 
         rows = connection.execute(
             """
@@ -613,6 +625,13 @@ class SQLiteOperationJournal:
                 or event.sequence != expected_sequence
                 or event.operation_id != operation_id
                 or event.event_id != row["event_id"]
+                or event.host_id != operation["host_id"]
+                or event.app != operation["app"]
+                or event.environment != operation["environment"]
+                or (
+                    event.revision_id is not None
+                    and event.revision_id != operation["revision_id"]
+                )
                 or row["event_digest"] != calculated_digest
                 or event.previous_event_digest != previous_digest
                 or canonical_json(event) != row["payload_json"]
@@ -649,7 +668,7 @@ class SQLiteOperationJournal:
         try:
             receipt_payload = json.loads(receipt["payload_json"])
             receipt_contract = cls._receipt_from_payload(receipt_payload)
-        except (TypeError, ValueError) as exc:
+        except Exception as exc:
             raise IntegrityError("Terminal receipt payload is invalid.") from exc
         if (
             canonical_json(receipt_contract) != receipt["payload_json"]
@@ -657,6 +676,19 @@ class SQLiteOperationJournal:
             or receipt_payload.get("receipt_id") != receipt["receipt_id"]
             or receipt_payload.get("operation_id") != operation_id
             or receipt_payload.get("outcome") != receipt["outcome"]
+            or receipt_contract.operation != operation["operation_class"]
+            or receipt_contract.plan_id != operation["plan_id"]
+            or receipt_contract.plan_digest != operation["plan_digest"]
+            or receipt_contract.decision_id != operation["decision_id"]
+            or receipt_contract.host_id != operation["host_id"]
+            or receipt_contract.app != operation["app"]
+            or receipt_contract.environment != operation["environment"]
+            or receipt_contract.desired_revision_id != operation["revision_id"]
+            or receipt_contract.desired_revision_digest
+            != plan_claims["revision_digest"]
+            or list(receipt_contract.artifact_digests)
+            != plan_claims["artifact_digests"]
+            or approval_claims["decision_id"] != receipt_contract.decision_id
             or not state.terminal
             or receipt["outcome"] != state.value
             or len(terminal_events) != 1
@@ -669,6 +701,76 @@ class SQLiteOperationJournal:
                 "Terminal event, operation state, and receipt do not reconcile."
             )
         return tuple(events)
+
+    @staticmethod
+    def _verified_acceptance_claims(
+        operation: sqlite3.Row,
+    ) -> Tuple[dict, dict]:
+        try:
+            request_claims = json.loads(operation["request_json"])
+            actor_claims = json.loads(operation["actor_json"])
+            plan_claims = json.loads(operation["plan_json"])
+            approval_claims = json.loads(operation["approval_json"])
+            approval_binding = dict(approval_claims)
+            approval_binding.pop("approval_digest")
+        except Exception as exc:
+            raise IntegrityError("Accepted operation payload is invalid.") from exc
+
+        mappings = (request_claims, actor_claims, plan_claims, approval_claims)
+        if not all(isinstance(value, dict) for value in mappings):
+            raise IntegrityError("Accepted operation payload is invalid.")
+        shared_plan_claims = (
+            "plan_id",
+            "plan_digest",
+            "request_digest",
+            "host_id",
+            "app",
+            "environment",
+            "revision_id",
+            "revision_digest",
+            "manifest_digest",
+            "artifact_digests",
+            "observed_state_digest",
+            "policy_digest",
+        )
+        if (
+            canonical_json(request_claims) != operation["request_json"]
+            or canonical_json(actor_claims) != operation["actor_json"]
+            or canonical_json(plan_claims) != operation["plan_json"]
+            or canonical_json(approval_claims) != operation["approval_json"]
+            or request_claims.get("request_id") != operation["request_id"]
+            or request_claims.get("operation") != operation["operation_class"]
+            or request_claims.get("host_id") != operation["host_id"]
+            or request_claims.get("app") != operation["app"]
+            or request_claims.get("environment") != operation["environment"]
+            or request_claims.get("revision_id") != operation["revision_id"]
+            or actor_claims.get("actor_id") != operation["actor_id"]
+            or plan_claims.get("plan_id") != operation["plan_id"]
+            or plan_claims.get("plan_digest") != operation["plan_digest"]
+            or plan_claims.get("request_digest") != operation["plan_request_digest"]
+            or operation["request_digest"] != operation["plan_request_digest"]
+            or plan_claims.get("host_id") != operation["host_id"]
+            or plan_claims.get("app") != operation["app"]
+            or plan_claims.get("environment") != operation["environment"]
+            or plan_claims.get("revision_id") != operation["revision_id"]
+            or plan_claims.get("revision_digest")
+            != request_claims.get("revision_digest")
+            or approval_claims.get("decision_id") != operation["decision_id"]
+            or approval_claims.get("actor_id") != operation["approval_actor_id"]
+            or approval_claims.get("approval_digest")
+            != operation["approval_digest"]
+            or not hmac.compare_digest(
+                operation["approval_digest"], canonical_digest(approval_binding)
+            )
+            or any(
+                approval_claims.get(key) != plan_claims.get(key)
+                for key in shared_plan_claims
+            )
+        ):
+            raise IntegrityError(
+                "Accepted operation, plan, and approval claims do not reconcile."
+            )
+        return plan_claims, approval_claims
 
     @staticmethod
     def _receipt_from_payload(payload: object) -> TerminalReceipt:
@@ -765,7 +867,7 @@ class SQLiteOperationJournal:
         self._validate_lease_input(owner_id, ttl_seconds)
         with self._transaction() as connection:
             self._require_nonterminal_operation(connection, operation_id)
-            now = self._clock()
+            now = self._clock_sample()
             row = connection.execute(
                 """
                 SELECT owner_id, fencing_token, expires_at
@@ -808,7 +910,7 @@ class SQLiteOperationJournal:
     ) -> OperationLease:
         self._validate_lease_input(owner_id, ttl_seconds)
         with self._transaction() as connection:
-            now = self._clock()
+            now = self._clock_sample()
             row = self._active_lease(
                 connection, operation_id, owner_id, fencing_token, now
             )
@@ -828,7 +930,7 @@ class SQLiteOperationJournal:
         fencing_token: int,
     ) -> None:
         with self._transaction() as connection:
-            now = self._clock()
+            now = self._clock_sample()
             self._active_lease(connection, operation_id, owner_id, fencing_token, now)
             connection.execute(
                 """
@@ -845,12 +947,23 @@ class SQLiteOperationJournal:
         if (
             isinstance(ttl_seconds, bool)
             or not isinstance(ttl_seconds, (int, float))
+            or not math.isfinite(ttl_seconds)
             or ttl_seconds <= 0
             or ttl_seconds > 86400
         ):
             raise ContractValidationError(
                 "ttl_seconds must be greater than zero and no more than 86400."
             )
+
+    def _clock_sample(self) -> float:
+        now = self._clock()
+        if (
+            isinstance(now, bool)
+            or not isinstance(now, (int, float))
+            or not math.isfinite(now)
+        ):
+            raise IntegrityError("Operation journal clock returned a non-finite sample.")
+        return float(now)
 
     @staticmethod
     def _require_nonterminal_operation(
@@ -906,7 +1019,7 @@ class SQLiteOperationJournal:
         if owner_id is None or fencing_token is None:
             raise LeaseConflict("A leased operation requires its owner and fencing token.")
         self._active_lease(
-            connection, operation_id, owner_id, fencing_token, self._clock()
+            connection, operation_id, owner_id, fencing_token, self._clock_sample()
         )
 
     def commit_receipt(
@@ -929,6 +1042,7 @@ class SQLiteOperationJournal:
                 (validated.operation_id,),
             ).fetchone()
             if existing is not None:
+                self._verified_events(connection, validated.operation_id)
                 if existing["payload_json"] == receipt_json:
                     return
                 raise OperationConflict("Operation already has a different terminal receipt.")
@@ -1027,9 +1141,18 @@ class SQLiteOperationJournal:
                 "SELECT payload_json FROM terminal_receipts WHERE operation_id = ?",
                 (operation_id,),
             ).fetchone()
+            if row is not None:
+                self._verified_events(connection, operation_id)
+                try:
+                    payload = json.loads(row["payload_json"])
+                except Exception as exc:
+                    raise IntegrityError("Terminal receipt payload is invalid.") from exc
+                if not isinstance(payload, dict):
+                    raise IntegrityError("Terminal receipt payload is invalid.")
+                return payload
+            return None
         finally:
             connection.close()
-        return None if row is None else json.loads(row["payload_json"])
 
     def integrity_check(self) -> None:
         connection = self._connect()
