@@ -1,0 +1,9 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+ophelia_runtime/
+_worktrees/
