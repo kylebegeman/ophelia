@@ -58,6 +58,19 @@ class DeployMetadata:
     locked: bool = False
 
 
+@dataclass(frozen=True)
+class ConfirmedCandidatePreflight:
+    """Validated, read-only bindings for an exact confirmed candidate."""
+
+    candidate_root: Path
+    bundle: Dict[Path, str]
+    support_paths: frozenset[Path]
+    required_support_paths: frozenset[Path]
+    static_source: Path | None
+    env_source: Path
+    release_id: str
+
+
 HOST_ON_DEMAND_TLS_GLOBAL = Path("caddy") / "global.d" / "ophelia-on-demand-tls.caddy"
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
@@ -325,7 +338,7 @@ def deploy_bundle(
     return app_root
 
 
-def deploy_confirmed_candidate(
+def preflight_confirmed_candidate(
     manifest: Manifest,
     manifest_path: Path,
     candidate_root: Path,
@@ -336,17 +349,17 @@ def deploy_confirmed_candidate(
     expected_candidate_digest: str,
     expected_bundle_hash: str,
     expected_baseline_digest: str,
-) -> Path:
-    """Materialize the exact bytes from a reviewed production candidate."""
+) -> ConfirmedCandidatePreflight:
+    """Validate all confirmed-candidate bindings without writing live state."""
 
     if deploy_metadata is None or not deploy_metadata.locked:
         raise ValueError("Confirmed candidate deployment requires locked deploy metadata.")
     if candidate_root.is_symlink():
-        raise ValueError(f"Confirmed candidate root must not be a symlink: {candidate_root}")
+        raise ValueError("Confirmed candidate root must not be a symlink.")
     try:
         candidate_root = candidate_root.resolve(strict=True)
     except OSError as exc:
-        raise ValueError(f"Confirmed candidate root is unavailable: {candidate_root}") from exc
+        raise ValueError("Confirmed candidate root is unavailable.") from exc
     if manifest_path.resolve(strict=False) != candidate_root / "manifest.lock.json":
         raise ValueError("Confirmed manifest must be the candidate manifest.lock.json.")
 
@@ -376,36 +389,94 @@ def deploy_confirmed_candidate(
     required_support_paths = bundle_support_paths(manifest, required_only=True)
     _preflight_candidate_support(candidate_root, support_paths, required_support_paths)
     relative_static = static_source_bundle_path(manifest)
-    if relative_static is not None:
-        static_source = candidate_root / relative_static
+    static_source = candidate_root / relative_static if relative_static is not None else None
+    if static_source is not None:
         if not static_source.exists():
-            raise FileNotFoundError(f"Static asset source not found: {static_source}")
+            raise FileNotFoundError("Static asset source is missing from the confirmed candidate.")
         if not static_source.is_dir():
-            raise NotADirectoryError(f"Static asset source must be a directory: {static_source}")
+            raise NotADirectoryError("Static asset source must be a directory.")
         _assert_static_source_safe(static_source)
 
     app_root = runtime_root / "apps" / manifest.app
     live_env = app_root / "env"
     if live_env.is_symlink():
-        raise ApplyPhaseError("env_validation", f"Expected a regular env file: {live_env}")
+        raise ApplyPhaseError("env_validation", "Expected a regular live env file.")
     env_source = live_env if live_env.exists() else candidate_root / "env.example"
     if env_source.is_symlink() or not env_source.is_file():
-        raise ApplyPhaseError("env_validation", f"Expected a regular env file: {env_source}")
+        raise ApplyPhaseError("env_validation", "Expected a regular env file.")
     missing_required_keys = missing_required_env_keys(manifest, env_source)
     if missing_required_keys:
         joined = ", ".join(missing_required_keys)
         raise ApplyPhaseError(
             "env_validation",
-            f"Refusing to apply with missing required env keys in {env_source}: {joined}",
+            f"Refusing to apply with missing required env keys: {joined}",
         )
     placeholder_keys = placeholder_env_keys(env_source)
     if placeholder_keys:
         joined = ", ".join(placeholder_keys)
         raise ApplyPhaseError(
             "env_validation",
-            f"Refusing to apply with placeholder env values in {env_source}: {joined}",
+            f"Refusing to apply with placeholder env values: {joined}",
         )
 
+    resolved_metadata = _resolve_deploy_metadata(
+        manifest,
+        deployed_at=_utc_now(),
+        generated_release_id="",
+        deploy_metadata=deploy_metadata,
+    )
+    release_id = resolved_metadata["release_id"]
+    for destination in (
+        app_root / "release-bundles" / release_id,
+        static_runtime_root(runtime_root, manifest) / "releases" / release_id,
+    ):
+        if destination.is_symlink():
+            raise ValueError("Immutable release destination must not be a symlink.")
+        if destination.exists() and not destination.is_dir():
+            raise ValueError("Immutable release destination must be a directory.")
+
+    return ConfirmedCandidatePreflight(
+        candidate_root=candidate_root,
+        bundle=bundle,
+        support_paths=frozenset(support_paths),
+        required_support_paths=frozenset(required_support_paths),
+        static_source=static_source,
+        env_source=env_source,
+        release_id=release_id,
+    )
+
+
+def deploy_confirmed_candidate(
+    manifest: Manifest,
+    manifest_path: Path,
+    candidate_root: Path,
+    generated_files: List[Path],
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    deploy_metadata: DeployMetadata | None = None,
+    *,
+    expected_candidate_digest: str,
+    expected_bundle_hash: str,
+    expected_baseline_digest: str,
+) -> Path:
+    """Materialize the exact bytes from a reviewed production candidate."""
+
+    checked = preflight_confirmed_candidate(
+        manifest,
+        manifest_path,
+        candidate_root,
+        generated_files,
+        runtime_root,
+        deploy_metadata,
+        expected_candidate_digest=expected_candidate_digest,
+        expected_bundle_hash=expected_bundle_hash,
+        expected_baseline_digest=expected_baseline_digest,
+    )
+    candidate_root = checked.candidate_root
+    bundle = checked.bundle
+    support_paths = set(checked.support_paths)
+    required_support_paths = set(checked.required_support_paths)
+
+    app_root = runtime_root / "apps" / manifest.app
     previous_release_id = current_release_id(runtime_root, manifest.app)
     previous_support_files = _declared_support_files(app_root) | _support_files_under(app_root)
     deployed_at = _utc_now()
