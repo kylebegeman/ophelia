@@ -1,5 +1,15 @@
 """Protocol seams for Ophelia's canonical kernel executor."""
 
+from .operation_store import (
+    DEFAULT_OPERATION_DB_RELATIVE_PATH,
+    IdempotencyConflict,
+    IntegrityError,
+    LeaseConflict,
+    OperationConflict,
+    OperationLease,
+    OperationStoreError,
+    SQLiteOperationJournal,
+)
 from .contracts import (
     CandidateVerifier,
     CanonicalExecutor,
@@ -19,6 +29,14 @@ from .contracts import (
 )
 
 __all__ = [
+    "DEFAULT_OPERATION_DB_RELATIVE_PATH",
+    "IdempotencyConflict",
+    "IntegrityError",
+    "LeaseConflict",
+    "OperationConflict",
+    "OperationLease",
+    "OperationStoreError",
+    "SQLiteOperationJournal",
     "CandidateVerifier",
     "CanonicalExecutor",
     "Compensator",
