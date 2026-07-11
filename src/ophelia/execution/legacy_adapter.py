@@ -26,6 +26,7 @@ from ..domain import (
 )
 from ..domain._contracts import require_digest, require_entity_id
 from ..manifest import Manifest
+from .contracts import ExecutionInput, RevisionArtifactRef
 from .staging import ConfirmedStaging, StagingError
 
 
@@ -43,6 +44,8 @@ class LegacyExecutionBundle:
     revision: Revision
     artifact_relative_root: str
     artifact_tree_digest: str
+    artifact_ref: RevisionArtifactRef
+    execution_input: ExecutionInput
 
 
 def local_host_id(machine_identity: str | None = None) -> str:
@@ -171,6 +174,20 @@ def build_legacy_static_execution(
         relative_root = confirmed.staging.candidate.relative_to(runtime_root).as_posix()
     except ValueError as exc:
         raise StagingError("Confirmed candidate is outside its runtime root.") from exc
+    artifact_ref = RevisionArtifactRef(
+        revision_id=revision.revision_id,
+        revision_digest=revision_digest,
+        relative_root=relative_root,
+        artifact_digest=artifact_tree_digest,
+    )
+    execution_input = ExecutionInput.bind(
+        request=request,
+        plan=plan,
+        approved_plan=approval,
+        revision=revision,
+        artifact_ref=artifact_ref,
+        deadline=expires_at,
+    )
     return LegacyExecutionBundle(
         actor=actor,
         request=request,
@@ -179,6 +196,8 @@ def build_legacy_static_execution(
         revision=revision,
         artifact_relative_root=relative_root,
         artifact_tree_digest=artifact_tree_digest,
+        artifact_ref=artifact_ref,
+        execution_input=execution_input,
     )
 
 
