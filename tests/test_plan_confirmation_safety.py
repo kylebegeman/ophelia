@@ -115,6 +115,20 @@ class PlanConfirmationSafetyTests(unittest.TestCase):
                 )
             self.assertFalse((root / "rejected-runtime").exists())
 
+            for unsafe_release_id in ("../escape", "/absolute", "nested/release", ".hidden"):
+                with self.subTest(release_id=unsafe_release_id):
+                    with self.assertRaisesRegex(StagingError, "safe filename component"):
+                        deploy_plan(
+                            manifest,
+                            manifest_path,
+                            root / ("rejected-" + unsafe_release_id.replace("/", "_")),
+                            deploy_metadata=DeployMetadata(
+                                release_id=unsafe_release_id,
+                                commit_sha="abc123",
+                                build_time=METADATA.build_time,
+                            ),
+                        )
+
     def test_local_command_requires_exact_binding_before_apply(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

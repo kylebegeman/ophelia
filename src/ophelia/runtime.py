@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -58,6 +59,7 @@ class DeployMetadata:
 
 
 HOST_ON_DEMAND_TLS_GLOBAL = Path("caddy") / "global.d" / "ophelia-on-demand-tls.caddy"
+_RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 
 def render_bundle(manifest: Manifest, release_metadata: Dict[str, Any] | None = None) -> Dict[Path, str]:
@@ -1396,6 +1398,7 @@ def _resolve_deploy_metadata(
     if metadata.locked:
         if not metadata.release_id or not metadata.build_time:
             raise ValueError("Locked deploy metadata requires release_id and build_time.")
+        _validate_release_id(metadata.release_id)
         return {
             "app": manifest.app,
             "environment": manifest.environment or "unknown",
@@ -1422,6 +1425,7 @@ def _resolve_deploy_metadata(
         os.environ.get("OPHELIA_BUILD_TIME"),
         deployed_at,
     )
+    _validate_release_id(release_id)
     return {
         "app": manifest.app,
         "environment": manifest.environment or "unknown",
@@ -1429,6 +1433,11 @@ def _resolve_deploy_metadata(
         "commit_sha": commit_sha,
         "build_time": build_time,
     }
+
+
+def _validate_release_id(release_id: str) -> None:
+    if not _RELEASE_ID.fullmatch(release_id):
+        raise ValueError("release_id must be one safe filename component.")
 
 
 def _first_nonempty(*values: str | None) -> str:

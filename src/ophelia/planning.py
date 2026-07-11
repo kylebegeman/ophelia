@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,7 @@ from .verify import verification_checks
 
 
 _CONFIRMATION_TTL_SECONDS = 15 * 60
+_RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 
 def deploy_plan(
@@ -460,6 +462,10 @@ def _planned_deploy_metadata(
             raise StagingError(
                 f"Deploy metadata {field} contains controls or exceeds {maximum} characters."
             )
+    if not _RELEASE_ID.fullmatch(release_id):
+        raise StagingError(
+            "Deploy metadata release_id must be one safe filename component."
+        )
     return metadata
 
 

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -74,6 +75,33 @@ routes:
             second_id = json.loads((second / "release.json").read_text())["release_id"]
 
             self.assertNotEqual(first_id, second_id)
+
+    def test_direct_deploy_rejects_release_id_path_components_before_app_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(
+                """
+version: 1
+app: release-boundary
+kind: static
+static_root: /tmp/release-boundary
+routes:
+  - domain: release-boundary.example.com
+""".strip()
+                + "\n"
+            )
+
+            with self.assertRaisesRegex(ValueError, "safe filename component"):
+                deploy_bundle(
+                    load_manifest(manifest_path),
+                    manifest_path,
+                    runtime_root,
+                    deploy_metadata=DeployMetadata(release_id="../escape"),
+                )
+
+            self.assertFalse((runtime_root / "apps" / "release-boundary").exists())
 
     def test_corrupt_release_records_do_not_break_deployment_listing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -155,7 +183,7 @@ routes:
                 + "\n"
             )
 
-            with unittest.mock.patch.dict(
+            with mock.patch.dict(
                 "os.environ",
                 {
                     "OPHELIA_DEPLOY_RELEASE_ID": "env-release-id",
