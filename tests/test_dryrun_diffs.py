@@ -14,7 +14,7 @@ from ophelia.execution.staging import StagingError
 from ophelia.manifest import load_manifest
 from ophelia.planning import deploy_plan
 from ophelia.portability import traffic_plan
-from ophelia.runtime import deploy_bundle
+from ophelia.runtime import DeployMetadata, deploy_bundle
 
 
 def _service_manifest(secret_value: str) -> str:
@@ -110,19 +110,45 @@ class DeployDiffArtifactTests(unittest.TestCase):
                 deploy_plan(manifest, manifest_path, runtime_root, artifacts_dir=artifacts_dir)
             self.assertFalse(artifacts_dir.exists())
 
-    def test_no_compose_diff_when_compose_unchanged(self) -> None:
+    def test_no_compose_diff_when_manifest_and_release_metadata_are_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runtime_root = root / "runtime"
             manifest_path = root / "app.ophelia.yml"
             manifest_path.write_text(_service_manifest("replace-me"))
             manifest = load_manifest(manifest_path)
-            deploy_bundle(manifest, manifest_path, runtime_root)
+            app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+            release = json.loads((app_root / "release.json").read_text())
+            metadata = DeployMetadata(
+                release_id=release["release_id"],
+                commit_sha=release["commit_sha"],
+                build_time=release["build_time"],
+            )
 
-            plan = deploy_plan(manifest, manifest_path, runtime_root)
+            plan = deploy_plan(
+                manifest,
+                manifest_path,
+                runtime_root,
+                deploy_metadata=metadata,
+            )
             self.assertEqual([], plan["compose_changes"])
             self.assertNotIn("compose-diff", {item["name"] for item in plan["artifacts"]})
             self.assertIn("plan-evidence", {item["name"] for item in plan["artifacts"]})
+
+    def test_new_plan_uses_a_distinct_release_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(_service_manifest("replace-me"))
+            manifest = load_manifest(manifest_path)
+            app_root = deploy_bundle(manifest, manifest_path, runtime_root)
+            current = json.loads((app_root / "release.json").read_text())
+
+            plan = deploy_plan(manifest, manifest_path, runtime_root)
+
+            self.assertNotEqual(current["release_id"], plan["deploy_metadata"]["release_id"])
+            self.assertTrue(plan["compose_changes"])
 
 
 class TrafficProviderChangeTests(unittest.TestCase):
