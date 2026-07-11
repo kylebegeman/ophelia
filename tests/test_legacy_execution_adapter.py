@@ -46,6 +46,13 @@ class LegacyExecutionAdapterTests(unittest.TestCase):
             self.assertEqual(bundle.revision.content_digest(), bundle.request.revision_digest)
             self.assertEqual(bundle.plan.plan_digest(), bundle.approval.plan_digest)
             self.assertTrue(bundle.approval.matches(bundle.plan))
+            self.assertEqual(bundle.plan, bundle.execution_input.plan)
+            self.assertEqual(bundle.approval, bundle.execution_input.approved_plan)
+            self.assertEqual(bundle.revision, bundle.execution_input.revision)
+            self.assertEqual(bundle.artifact_ref, bundle.execution_input.artifact_ref)
+            self.assertEqual(
+                bundle.approval.expires_at, bundle.execution_input.deadline
+            )
             self.assertEqual(
                 AuthorizationKind.LEGACY_CONFIRMATION_ADAPTER,
                 bundle.approval.authorization_kind,
@@ -76,6 +83,7 @@ class LegacyExecutionAdapterTests(unittest.TestCase):
                     "plan": bundle.plan.to_dict(),
                     "approval": bundle.approval.to_dict(),
                     "revision": bundle.revision.to_dict(),
+                    "execution_input": bundle.execution_input.to_dict(),
                 },
                 sort_keys=True,
             )
