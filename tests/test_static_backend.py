@@ -145,11 +145,12 @@ class StaticBackendTests(unittest.TestCase):
             self.assertFalse(backend.static_release.exists())
             self.assertFalse(backend.revision_record.exists())
 
-    def test_atomic_activate_and_first_deploy_deactivate(self) -> None:
+    def test_transactional_activate_reports_non_atomic_switch_and_deactivates(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             backend, revision = _backend(Path(temp))
             handle = backend.start(revision)
             activated = backend.activate(handle, None)
+            self.assertFalse(activated.committed_atomically)
             self.assertEqual(revision.content_digest(), activated.active_revision_digest)
             self.assertEqual(
                 backend.caddy_source.read_bytes(), backend.caddy_live.read_bytes()
@@ -158,9 +159,65 @@ class StaticBackendTests(unittest.TestCase):
                 Path("releases") / backend.release_id, backend.static_current.readlink()
             )
 
-            backend.deactivate(handle)
+            deactivated = backend.deactivate(handle)
+            self.assertFalse(deactivated.committed_atomically)
             self.assertFalse(backend.caddy_live.exists())
             self.assertFalse(backend.static_current.exists())
+
+    def test_cleanup_never_deletes_an_inactive_release_without_operation_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first, first_revision = _backend(root)
+            first_handle = first.start(first_revision)
+            bundle_bytes = (first.bundle_release / "public" / "index.html").read_bytes()
+            static_bytes = (first.static_release / "index.html").read_bytes()
+            record_bytes = first.revision_record.read_bytes()
+
+            second, second_revision = _backend(
+                root,
+                operation_id="operation_two",
+                token=2,
+            )
+            with self.assertRaises(StaticBackendError):
+                second.start(second_revision)
+
+            second.remove(second.handle_for(second_revision))
+            self.assertEqual(
+                bundle_bytes,
+                (first.bundle_release / "public" / "index.html").read_bytes(),
+            )
+            self.assertEqual(
+                static_bytes,
+                (first.static_release / "index.html").read_bytes(),
+            )
+            self.assertEqual(record_bytes, first.revision_record.read_bytes())
+            self.assertTrue(first.inspect(first_handle).workloads[0].ready)
+
+    def test_untracked_live_static_state_is_never_treated_as_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            backend, revision = _backend(root)
+            legacy_release = backend.static_root / "releases" / "legacy-release"
+            legacy_release.mkdir(parents=True)
+            (legacy_release / "index.html").write_text("legacy\n")
+            backend.static_current.symlink_to(
+                Path("releases") / "legacy-release",
+                target_is_directory=True,
+            )
+            backend.caddy_live.parent.mkdir(parents=True)
+            backend.caddy_live.write_text("legacy caddy\n")
+
+            preflight = backend.preflight(revision)
+            self.assertFalse(preflight.ok)
+            with self.assertRaisesRegex(
+                StaticBackendError, "expected predecessor"
+            ):
+                backend.deactivate(backend.handle_for(revision))
+            self.assertEqual(
+                Path("releases") / "legacy-release",
+                backend.static_current.readlink(),
+            )
+            self.assertEqual("legacy caddy\n", backend.caddy_live.read_text())
 
     def test_activate_retry_after_success_is_idempotent_and_live_verifiable(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -178,6 +235,42 @@ class StaticBackendTests(unittest.TestCase):
             self.assertEqual(
                 "failed", backend.verify_active(revision, handle).status.value
             )
+
+    def test_traffic_committer_runs_on_activation_replay_and_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            commits = []
+            evidence = _digest(b"caddy-reloaded")
+
+            def commit_traffic() -> str:
+                commits.append("committed")
+                return evidence
+
+            backend, revision = _backend(
+                Path(temp), traffic_committer=commit_traffic
+            )
+            handle = backend.start(revision)
+            activated = backend.activate(handle, None)
+            replayed = backend.activate(handle, None)
+            restored = backend.deactivate(handle)
+
+            self.assertEqual(3, len(commits))
+            self.assertIn(evidence, activated.evidence_digests)
+            self.assertIn(evidence, replayed.evidence_digests)
+            self.assertIn(evidence, restored.evidence_digests)
+
+    def test_traffic_commit_failure_restores_first_deploy_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            def fail_commit() -> str:
+                raise StaticBackendError("traffic commit failed")
+
+            backend, revision = _backend(
+                Path(temp), traffic_committer=fail_commit
+            )
+            handle = backend.start(revision)
+            with self.assertRaisesRegex(StaticBackendError, "traffic commit"):
+                backend.activate(handle, None)
+            self.assertFalse(backend.caddy_live.exists())
+            self.assertFalse(backend.static_current.exists())
 
     def test_restore_reinstates_predecessor_caddy_and_static_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -228,7 +321,9 @@ class StaticBackendTests(unittest.TestCase):
                 first_revision.content_digest(), restored.active_revision_digest
             )
             self.assertEqual(b"first\n", (second.static_current / "index.html").read_bytes())
-            self.assertFalse(second.activation_record.exists())
+            self.assertFalse(
+                (second.activation_record / "predecessor.json").exists()
+            )
 
     def test_restore_crash_boundaries_are_idempotently_recoverable(self) -> None:
         for boundary in ("after_caddy_restore", "after_static_restore"):
@@ -340,6 +435,8 @@ def _backend(
     release_id: str = "release-one",
     content: str = "reviewed\n",
     operation_id: str = "operation_one",
+    traffic_committer=None,
+    external_verifier=None,
 ):
     runtime_root = root / "runtime"
     public = root / "public"
@@ -399,6 +496,8 @@ routes:
         owner_id="worker_one",
         fencing_token=token,
         fault_injector=fault_injector,
+        traffic_committer=traffic_committer,
+        external_verifier=external_verifier,
     )
     return backend, revision
 
