@@ -10,7 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ophelia.execution import ExecutionFence, RevisionArtifactRef
+from ophelia.execution import (
+    ExecutionFence,
+    RevisionArtifactRef,
+    TrafficActivationResult,
+)
 from ophelia.domain import (
     ApprovedPlanRef,
     AuthorizationKind,
@@ -298,6 +302,17 @@ class KernelContractTests(unittest.TestCase):
                 artifact_digest=D1,
                 route_ids=("public",),
             )
+
+    def test_traffic_result_can_truthfully_report_a_compensating_switch(self) -> None:
+        result = TrafficActivationResult(
+            committed_atomically=False,
+            previous_revision_digest=D1,
+            active_revision_digest=D2,
+            observed_state_digest=D3,
+            evidence_digests=(D4,),
+        )
+
+        self.assertFalse(result.committed_atomically)
 
     def test_revision_requires_every_workload_artifact(self) -> None:
         workload = Workload(

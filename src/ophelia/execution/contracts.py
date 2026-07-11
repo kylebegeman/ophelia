@@ -381,14 +381,16 @@ class TrafficActivationResult(Contract):
     evidence_digests: Tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.committed_atomically, bool):
+            raise ContractValidationError(
+                "committed_atomically must be a boolean observation."
+            )
         if self.previous_revision_digest is not None:
             require_digest(self.previous_revision_digest, "previous_revision_digest")
         if self.active_revision_digest is not None:
             require_digest(self.active_revision_digest, "active_revision_digest")
         require_digest(self.observed_state_digest, "observed_state_digest")
         require_digests(self.evidence_digests, "evidence_digests")
-        if not self.committed_atomically:
-            raise ContractValidationError("Traffic activation results must describe an atomic commit.")
 
 
 class ReadOnlyPlanner(Protocol):

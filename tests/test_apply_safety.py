@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -13,13 +15,94 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class ApplySafetyTests(unittest.TestCase):
+    def test_journaled_static_gate_excludes_unmodeled_and_legacy_state(self) -> None:
+        from ophelia.execution.legacy_static_runner import supports_journaled_static
+        from ophelia.manifest import load_manifest
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            manifest_path = root / "static.ophelia.yml"
+            manifest_path.write_text(
+                _static_manifest(Path("static"), environment="production")
+            )
+            manifest = load_manifest(manifest_path)
+            self.assertTrue(
+                supports_journaled_static(manifest, runtime_root)
+            )
+
+            on_demand_path = root / "on-demand.ophelia.yml"
+            on_demand_path.write_text(
+                _static_manifest(Path("static"), environment="production")
+                + "edge:\n"
+                + "  on_demand_tls:\n"
+                + "    ask: https://control.example.com/allow\n"
+            )
+            self.assertFalse(
+                supports_journaled_static(
+                    load_manifest(on_demand_path), runtime_root
+                )
+            )
+
+            legacy_release = (
+                runtime_root
+                / "static"
+                / manifest.app
+                / "releases"
+                / "legacy-release"
+            )
+            legacy_release.mkdir(parents=True)
+            current = legacy_release.parents[1] / "current"
+            current.symlink_to(
+                Path("releases") / "legacy-release",
+                target_is_directory=True,
+            )
+            caddy = (
+                runtime_root
+                / "caddy"
+                / "sites.d"
+                / f"{manifest.app}.caddy"
+            )
+            caddy.parent.mkdir(parents=True)
+            caddy.write_text("legacy\n")
+            self.assertFalse(
+                supports_journaled_static(manifest, runtime_root)
+            )
+
+            record = (
+                runtime_root
+                / "apps"
+                / manifest.app
+                / "static-revisions"
+                / "legacy-release.json"
+            )
+            record.parent.mkdir(parents=True)
+            record.write_text("{}\n")
+            self.assertFalse(
+                supports_journaled_static(manifest, runtime_root)
+            )
+
+            global_caddy = (
+                runtime_root
+                / "caddy"
+                / "global.d"
+                / "ophelia-on-demand-tls.caddy"
+            )
+            global_caddy.parent.mkdir(parents=True)
+            global_caddy.write_text("on_demand_tls {}\n")
+            self.assertFalse(
+                supports_journaled_static(manifest, runtime_root)
+            )
+
     def test_production_apply_requires_confirmation_token(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             manifest_path = root / "static.ophelia.yml"
             static_root = root / "static"
             static_root.mkdir()
-            manifest_path.write_text(_static_manifest(static_root, environment="production"))
+            manifest_path.write_text(
+                _static_manifest(Path("static"), environment="production")
+            )
             runtime_root = root / "runtime"
             repo = Path(__file__).resolve().parents[1]
 
@@ -53,6 +136,22 @@ class ApplySafetyTests(unittest.TestCase):
                 check=True,
             )
             token = json.loads(plan.stdout)["confirmation_token"]
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_docker = fake_bin / "docker"
+            fake_docker.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"inspect\" ]; then echo true; fi\n"
+                "exit 0\n"
+            )
+            fake_docker.chmod(0o755)
+            caddy_root = root / "platform" / "shared" / "caddy"
+            caddy_root.mkdir(parents=True)
+            (caddy_root / "Caddyfile").write_text(
+                "import /runtime/caddy/sites.d/*.caddy\n"
+            )
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
 
             applied = subprocess.run(
                 [
@@ -69,13 +168,46 @@ class ApplySafetyTests(unittest.TestCase):
                 ],
                 text=True,
                 capture_output=True,
-                check=True,
+                env=environment,
+            )
+            failure_detail = ""
+            database_path = runtime_root / "host-state" / "operations.db"
+            if applied.returncode and database_path.exists():
+                diagnostic = sqlite3.connect(database_path)
+                try:
+                    row = diagnostic.execute(
+                        "SELECT payload_json FROM terminal_receipts"
+                    ).fetchone()
+                    failure_detail = "" if row is None else row[0]
+                finally:
+                    diagnostic.close()
+            self.assertEqual(
+                0,
+                applied.returncode,
+                applied.stdout + applied.stderr + failure_detail,
             )
             self.assertIn("Apply result:", applied.stdout)
-            release = json.loads((runtime_root / "apps" / "safe-static" / "release.json").read_text())
-            self.assertTrue(release["applied"])
-            self.assertIsNone(release["verified"])
-            self.assertEqual("applied", release["apply"]["status"])
+            self.assertIn("Kernel receipt:", applied.stdout)
+            current = runtime_root / "static" / "safe-static" / "current"
+            self.assertTrue(current.is_symlink())
+            connection = sqlite3.connect(
+                runtime_root / "host-state" / "operations.db"
+            )
+            try:
+                self.assertEqual(
+                    "succeeded",
+                    connection.execute(
+                        "SELECT outcome FROM terminal_receipts"
+                    ).fetchone()[0],
+                )
+                self.assertEqual(
+                    "safe-static",
+                    connection.execute(
+                        "SELECT app FROM active_revisions"
+                    ).fetchone()[0],
+                )
+            finally:
+                connection.close()
 
     def test_apply_rejects_placeholder_env_values_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

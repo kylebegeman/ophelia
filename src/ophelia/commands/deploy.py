@@ -6,6 +6,11 @@ from argparse import SUPPRESS, Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from ..domain import ReceiptOutcome
+from ..execution.legacy_static_runner import (
+    execute_confirmed_static,
+    supports_journaled_static,
+)
 from ..execution.staging import (
     ConfirmedStaging,
     StagingError,
@@ -326,28 +331,56 @@ def run(args: Namespace) -> int:
         )
         return 1
 
+    journaled_static = None
     if args.apply:
         try:
-            app_root = apply_local_bundle(
-                manifest=manifest,
-                manifest_path=args.manifest,
-                runtime_root=args.runtime_root,
-                ophelia_root=args.ophelia_root,
-                deploy_metadata=deploy_metadata,
-                candidate_root=confirmed.staging.candidate if confirmed is not None else None,
-                candidate_generated_files=(
-                    list(confirmed.generated_files) if confirmed is not None else None
-                ),
-                expected_candidate_digest=(
-                    confirmed.candidate_digest if confirmed is not None else None
-                ),
-                expected_bundle_hash=(
-                    confirmed.rendered_bundle_hash if confirmed is not None else None
-                ),
-                expected_baseline_digest=(
-                    confirmed.baseline_digest if confirmed is not None else None
-                ),
-            )
+            if (
+                confirmed is not None
+                and supports_journaled_static(manifest, args.runtime_root)
+            ):
+                journaled_static = execute_confirmed_static(
+                    confirmed=confirmed,
+                    manifest=manifest,
+                    confirmation_token=args.confirm,
+                    runtime_root=args.runtime_root,
+                    ophelia_root=args.ophelia_root,
+                    deploy_metadata=deploy_metadata,
+                    external_verifier=(
+                        (lambda: _run_verification(manifest, args))
+                        if args.verify
+                        else None
+                    ),
+                )
+                app_root = journaled_static.app_root
+                if journaled_static.receipt.outcome is not ReceiptOutcome.SUCCEEDED:
+                    print(
+                        "Local apply reached terminal failure: "
+                        f"operation={journaled_static.operation.operation_id} "
+                        f"receipt={journaled_static.receipt.receipt_id} "
+                        f"outcome={journaled_static.receipt.outcome.value}."
+                    )
+                    return 1
+            else:
+                app_root = apply_local_bundle(
+                    manifest=manifest,
+                    manifest_path=args.manifest,
+                    runtime_root=args.runtime_root,
+                    ophelia_root=args.ophelia_root,
+                    deploy_metadata=deploy_metadata,
+                    candidate_root=confirmed.staging.candidate if confirmed is not None else None,
+                    candidate_generated_files=(
+                        list(confirmed.generated_files) if confirmed is not None else None
+                    ),
+                    expected_candidate_digest=(
+                        confirmed.candidate_digest if confirmed is not None else None
+                    ),
+                    expected_bundle_hash=(
+                        confirmed.rendered_bundle_hash if confirmed is not None else None
+                    ),
+                    expected_baseline_digest=(
+                        confirmed.baseline_digest if confirmed is not None else None
+                    ),
+                )
         except ApplyPhaseError as exc:
             print(f"Local apply failed during {exc.phase}: {exc}")
             return 1
@@ -361,9 +394,26 @@ def run(args: Namespace) -> int:
                 print(f"Apply succeeded, but confirmation consumption failed: {exc}")
                 return 1
         print(f"Applied bundle for {manifest.app} into {app_root}")
-        release_id = current_release_id(args.runtime_root, manifest.app) or "unknown"
-        verified = "not_run"
+        release_id = (
+            journaled_static.release_id
+            if journaled_static is not None
+            else current_release_id(args.runtime_root, manifest.app) or "unknown"
+        )
+        verified = "true" if journaled_static is not None and args.verify else "not_run"
         print(f"Apply result: app={manifest.app} release={release_id} applied=true verified={verified} runtime={app_root}")
+        if journaled_static is not None:
+            print(
+                "Kernel receipt: "
+                f"operation={journaled_static.operation.operation_id} "
+                f"receipt={journaled_static.receipt.receipt_id} "
+                f"outcome={journaled_static.receipt.outcome.value}"
+            )
+            if args.verify:
+                print(
+                    f"Verify result: app={manifest.app} release={release_id} "
+                    "applied=true verified=true"
+                )
+                return 0
         if args.verify:
             try:
                 verification = _run_verification(manifest, args)
