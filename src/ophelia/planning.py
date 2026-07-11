@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .execution.staging import OperationStaging, StagingError
 from .manifest import Manifest
 from .operation_schema import attach_digest, diff_artifact, operation_id
 from .policy import policy_check_entry
@@ -19,10 +20,33 @@ def deploy_plan(
     manifest_path: Path,
     runtime_root: Path,
     artifacts_dir: Optional[Path] = None,
+    *,
+    plan_operation_id: Optional[str] = None,
 ) -> Dict[str, object]:
     bundle = _render_bundle_for_runtime(manifest, runtime_root)
     diff = bundle_diff(manifest, runtime_root)
     static_assets = static_asset_plan(manifest, manifest_path, runtime_root)
+    uploaded_operation_id = plan_operation_id
+    plan_operation_id = plan_operation_id or operation_id(
+        "deploy.plan", manifest.app, getattr(manifest, "environment", None)
+    )
+    staging = (
+        OperationStaging.open_uploaded(runtime_root, plan_operation_id)
+        if uploaded_operation_id is not None
+        else OperationStaging.create(runtime_root, plan_operation_id)
+    )
+    _validate_artifacts_dir(artifacts_dir, runtime_root, staging)
+    if uploaded_operation_id is not None:
+        if manifest_path.parent.resolve(strict=False) != staging.candidate.resolve(strict=False):
+            raise StagingError("Uploaded plan manifest must be inside its candidate staging directory.")
+        candidate_digest = staging.finalize_uploaded_candidate(bundle)
+    else:
+        candidate_digest = staging.stage_candidate(
+            manifest,
+            manifest_path,
+            bundle,
+            stage_static=static_assets.get("change") != "blocked",
+        )
     env_requirements = _env_requirements(bundle.get(Path("env.example"), ""))
     checks = verification_checks(manifest)
     verify_policy = manifest.verify_policy
@@ -43,6 +67,13 @@ def deploy_plan(
     plan = {
         "app": manifest.app,
         "environment": getattr(manifest, "environment", None),
+        "operation_id": plan_operation_id,
+        "staging": {
+            "root": str(staging.root),
+            "candidate": str(staging.candidate),
+            "evidence": str(staging.evidence),
+        },
+        "candidate_digest": candidate_digest,
         "kind": manifest.kind,
         "profile": manifest.profile,
         "manifest_path": str(manifest_path),
@@ -111,10 +142,9 @@ def deploy_plan(
             manifest,
             bundle,
             runtime_root,
-            artifacts_dir,
+            staging,
         )
-        if artifact_entry is not None:
-            plan["artifacts"] = [artifact_entry]
+        plan["artifacts"] = [artifact_entry]
     return attach_digest(plan, operation="deploy.plan", risk="high" if plan["confirmation_required"] else "medium")
 
 
@@ -171,17 +201,15 @@ def _write_compose_diff_artifact(
     manifest: Manifest,
     bundle: Dict[Path, str],
     runtime_root: Path,
-    artifacts_dir: Optional[Path],
-) -> Optional[Dict[str, object]]:
+    staging: OperationStaging,
+) -> Dict[str, object]:
     """Write a redacted unified diff of current vs desired ``compose.yml``.
 
     Both sides are routed through :func:`redacted_compose_text` *before* the diff
-    is computed, so the artifact file can never contain a secret value. Writing
-    is best-effort: any OSError skips the artifact rather than failing the plan.
+    is computed, so the artifact file can never contain a secret value. Evidence
+    writes are operation-scoped and failures abort planning explicitly.
     """
-    desired_compose = bundle.get(Path("compose.yml"))
-    if desired_compose is None:
-        return None
+    desired_compose = bundle.get(Path("compose.yml"), "")
     current_path = runtime_root / "apps" / manifest.app / "compose.yml"
     try:
         current_compose = current_path.read_text() if current_path.exists() else ""
@@ -198,15 +226,7 @@ def _write_compose_diff_artifact(
     )
     diff_text = "".join(diff_lines)
 
-    target_dir = artifacts_dir or (
-        runtime_root / "plans" / operation_id("deploy.plan", manifest.app, getattr(manifest, "environment", None))
-    )
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        diff_path = target_dir / "compose-diff.diff"
-        diff_path.write_text(diff_text)
-    except OSError:
-        return None
+    diff_path = staging.write_evidence("compose-diff.diff", diff_text)
     return diff_artifact(
         "compose-diff",
         diff_path,
@@ -285,6 +305,7 @@ def deploy_confirmation_token(plan: Dict[str, object]) -> str:
         "changed_files": plan.get("changed_files"),
         "removed_files": plan.get("removed_files"),
         "static_assets": plan.get("static_assets"),
+        "candidate_digest": plan.get("candidate_digest"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:20]
@@ -367,6 +388,23 @@ def _summary(
         f"with {len(images)} image reference(s), {len(diff['caddy_changes'])} Caddy change(s), "
         f"{secret_count} placeholder env key(s), {len(checks)} verification check(s){static_detail}."
     )
+
+
+def _validate_artifacts_dir(
+    artifacts_dir: Optional[Path],
+    runtime_root: Path,
+    staging: OperationStaging,
+) -> None:
+    if artifacts_dir is None:
+        return
+    requested = artifacts_dir.resolve(strict=False)
+    staging_base = (runtime_root / "staging").resolve(strict=False)
+    operation_root = staging.root.resolve(strict=False)
+    if requested not in {staging_base, operation_root, staging.evidence.resolve(strict=False)}:
+        raise StagingError(
+            "--artifacts-dir is restricted to the operation staging tree; "
+            f"use {staging.evidence}"
+        )
 
 
 def _file_hash(path: Path) -> str | None:

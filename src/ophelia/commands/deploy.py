@@ -1,9 +1,10 @@
 import json
 import subprocess
-from argparse import Namespace, _SubParsersAction
+from argparse import SUPPRESS, Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
+from ..execution.staging import StagingError
 from ..manifest import ManifestError, load_manifest
 from ..operation_schema import error_envelope
 from ..planning import deploy_plan, deploy_confirmation_token
@@ -58,7 +59,12 @@ def register(subparsers: _SubParsersAction) -> None:
         "--artifacts-dir",
         type=Path,
         default=None,
-        help="Directory to write redacted plan diff artifacts into (defaults under the runtime root)",
+        help="Compatibility option restricted to the operation staging tree",
+    )
+    parser.add_argument(
+        "--plan-operation-id",
+        default=None,
+        help=SUPPRESS,
     )
     parser.add_argument(
         "--confirm",
@@ -151,7 +157,20 @@ def run(args: Namespace) -> int:
                 print(result)
             return 0
 
-        plan = deploy_plan(manifest, args.manifest, args.runtime_root, artifacts_dir=args.artifacts_dir)
+        try:
+            plan = deploy_plan(
+                manifest,
+                args.manifest,
+                args.runtime_root,
+                artifacts_dir=args.artifacts_dir,
+                plan_operation_id=getattr(args, "plan_operation_id", None),
+            )
+        except StagingError as exc:
+            if args.json:
+                print(json.dumps(error_envelope(str(exc), "plan_staging_failed"), indent=2, sort_keys=True))
+            else:
+                print(f"Deploy plan failed: {exc}")
+            return 1
         if args.json:
             print(json.dumps(plan, indent=2, sort_keys=True))
         else:
@@ -240,7 +259,11 @@ def run(args: Namespace) -> int:
             print(result)
         return 0
 
-    plan = deploy_plan(manifest, args.manifest, args.runtime_root)
+    try:
+        plan = deploy_plan(manifest, args.manifest, args.runtime_root)
+    except StagingError as exc:
+        print(f"Deploy plan failed: {exc}")
+        return 1
     if args.apply and plan["confirmation_required"]:
         expected = deploy_confirmation_token(plan)
         if args.confirm != expected:

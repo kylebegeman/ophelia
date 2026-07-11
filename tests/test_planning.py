@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.manifest import load_manifest
 from ophelia.planning import bundle_diff, deploy_plan
-from ophelia.runtime import apply_local_bundle, deploy_bundle
+from ophelia.runtime import apply_local_bundle, deploy_bundle, materialize_bundle
 
 
 class PlanningTests(unittest.TestCase):
@@ -33,6 +34,43 @@ class PlanningTests(unittest.TestCase):
             self.assertEqual("medium", plan["digest"]["risk"])
             self.assertIn("SECRET_TOKEN", {item["key"] for item in plan["env_requirements"]})
             self.assertNotIn("super-secret-value", json.dumps(plan))
+
+    def test_uploaded_remote_candidate_binds_same_token_as_apply_preplan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            source_manifest = root / "app.ophelia.yml"
+            source_manifest.write_text(
+                _manifest("replace-me").replace(
+                    "app: plan-test\n", "app: plan-test\nenvironment: production\n", 1
+                )
+            )
+            manifest = load_manifest(source_manifest)
+
+            operation_id = "deploy-plan.plan-test.production.fixture"
+            uploaded = runtime_root / "staging" / operation_id / "candidate"
+            materialize_bundle(manifest, source_manifest, uploaded)
+
+            app_root = runtime_root / "apps" / manifest.app
+            shutil.copytree(uploaded, app_root)
+            (app_root / "release.json").write_text(
+                json.dumps({"runtime_env": {"OPHELIA_RELEASE_ID": "release-123"}}) + "\n"
+            )
+
+            remote_plan = deploy_plan(
+                load_manifest(uploaded / "manifest.lock.json"),
+                uploaded / "manifest.lock.json",
+                runtime_root,
+                plan_operation_id=operation_id,
+            )
+            apply_preplan = deploy_plan(
+                load_manifest(app_root / "manifest.lock.json"),
+                app_root / "manifest.lock.json",
+                runtime_root,
+            )
+
+            self.assertEqual(remote_plan["candidate_digest"], apply_preplan["candidate_digest"])
+            self.assertEqual(remote_plan["confirmation_token"], apply_preplan["confirmation_token"])
 
     def test_deploy_plan_reports_required_env_without_compose_override(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

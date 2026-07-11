@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List
 
 from .manifest import Manifest
+from .operation_schema import operation_id
 from .runtime import DeployMetadata, materialize_bundle
 
 
@@ -53,10 +54,28 @@ def stage_remote_bundle(
     deploy_metadata: DeployMetadata | None = None,
 ) -> str:
     remote_runtime_root = _rsync_path(remote_runtime_root)
+    plan_operation_id = (
+        operation_id("deploy.plan", manifest.app, getattr(manifest, "environment", None))
+        if plan
+        else None
+    )
     with tempfile.TemporaryDirectory(prefix=f"ophelia-{manifest.app}-") as temp_dir:
         bundle_root = Path(temp_dir) / manifest.app
         materialize_bundle(manifest, manifest_path, bundle_root)
-        _sync_bundle(bundle_root, host, ssh_port, remote_runtime_root, manifest.app)
+        if plan_operation_id is not None:
+            _prepare_remote_plan_staging(
+                host, ssh_port, remote_runtime_root, plan_operation_id
+            )
+            _sync_plan_candidate(
+                bundle_root,
+                host,
+                ssh_port,
+                remote_runtime_root,
+                plan_operation_id,
+            )
+        else:
+            # Legacy stage/apply transport intentionally remains isolated from plans.
+            _sync_bundle(bundle_root, host, ssh_port, remote_runtime_root, manifest.app)
 
     script = _build_remote_stage_script(
         manifest=manifest,
@@ -73,9 +92,47 @@ def stage_remote_bundle(
         verify_timeout=verify_timeout,
         verify_failure_mode=verify_failure_mode,
         deploy_metadata=deploy_metadata,
+        plan_operation_id=plan_operation_id,
     )
     completed = _run(_ssh_command(host, ssh_port, script), capture_output=True)
     return completed.stdout.strip()
+
+
+def _prepare_remote_plan_staging(
+    host: str,
+    ssh_port: int | None,
+    remote_runtime_root: str,
+    plan_operation_id: str,
+) -> None:
+    staging_base = f"{_shell_ref(remote_runtime_root)}/staging"
+    operation_root = f"{staging_base}/{shlex.quote(plan_operation_id)}"
+    candidate = f"{operation_root}/candidate"
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"mkdir -p {staging_base}",
+            f"mkdir {operation_root}",
+            f"mkdir {candidate}",
+        ]
+    )
+    _run(_ssh_command(host, ssh_port, script))
+
+
+def _sync_plan_candidate(
+    bundle_root: Path,
+    host: str,
+    ssh_port: int | None,
+    remote_runtime_root: str,
+    plan_operation_id: str,
+) -> None:
+    remote_candidate = (
+        f"{host}:{remote_runtime_root}/staging/{plan_operation_id}/candidate/"
+    )
+    command = ["rsync", "-az"]
+    if ssh_port is not None:
+        command.extend(["-e", f"ssh -p {ssh_port}"])
+    command.extend([f"{bundle_root}/", remote_candidate])
+    _run(command)
 
 
 def _sync_bundle(
@@ -127,10 +184,21 @@ def _build_remote_stage_script(
     json_output: bool = False,
     confirm: str | None = None,
     deploy_metadata: DeployMetadata | None = None,
+    plan_operation_id: str | None = None,
 ) -> str:
     if apply and plan:
         raise ValueError("remote deploy script cannot both plan and apply")
-    app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
+    if plan:
+        if plan_operation_id is None:
+            plan_operation_id = operation_id(
+                "deploy.plan", manifest.app, getattr(manifest, "environment", None)
+            )
+        app_root = (
+            f"{_shell_ref(remote_runtime_root)}/staging/"
+            f"{shlex.quote(plan_operation_id)}/candidate"
+        )
+    else:
+        app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
 
     lines: List[str] = [
         "set -euo pipefail",
@@ -140,7 +208,13 @@ def _build_remote_stage_script(
     ]
 
     if plan:
-        lines.extend(_build_plan_lines(json_output=json_output, deploy_metadata=deploy_metadata))
+        lines.extend(
+            _build_plan_lines(
+                json_output=json_output,
+                deploy_metadata=deploy_metadata,
+                plan_operation_id=plan_operation_id,
+            )
+        )
     elif apply:
         lines.extend(
             _build_apply_lines(
@@ -159,11 +233,17 @@ def _build_remote_stage_script(
     return "\n".join(lines)
 
 
-def _build_plan_lines(json_output: bool = False, deploy_metadata: DeployMetadata | None = None) -> List[str]:
+def _build_plan_lines(
+    json_output: bool = False,
+    deploy_metadata: DeployMetadata | None = None,
+    plan_operation_id: str | None = None,
+) -> List[str]:
     command = _remote_deploy_command()
     command.append("--plan")
     if json_output:
         command.append("--json")
+    if plan_operation_id is not None:
+        command.extend(["--plan-operation-id", shlex.quote(plan_operation_id)])
     command.extend(_deploy_metadata_args(deploy_metadata))
     return [
         'cd "$REMOTE_OPHELIA_ROOT"',
