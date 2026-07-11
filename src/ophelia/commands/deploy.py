@@ -6,7 +6,12 @@ from argparse import SUPPRESS, Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
-from ..execution.staging import ConfirmedStaging, StagingError, find_confirmed_staging
+from ..execution.staging import (
+    ConfirmedStaging,
+    StagingError,
+    consume_confirmed_staging,
+    find_confirmed_staging,
+)
 from ..manifest import ManifestError, load_manifest
 from ..operation_schema import error_envelope
 from ..planning import deploy_plan, deploy_confirmation_token
@@ -315,6 +320,19 @@ def run(args: Namespace) -> int:
                 runtime_root=args.runtime_root,
                 ophelia_root=args.ophelia_root,
                 deploy_metadata=deploy_metadata,
+                candidate_root=confirmed.staging.candidate if confirmed is not None else None,
+                candidate_generated_files=(
+                    list(confirmed.generated_files) if confirmed is not None else None
+                ),
+                expected_candidate_digest=(
+                    confirmed.candidate_digest if confirmed is not None else None
+                ),
+                expected_bundle_hash=(
+                    confirmed.rendered_bundle_hash if confirmed is not None else None
+                ),
+                expected_baseline_digest=(
+                    confirmed.baseline_digest if confirmed is not None else None
+                ),
             )
         except ApplyPhaseError as exc:
             print(f"Local apply failed during {exc.phase}: {exc}")
@@ -322,6 +340,12 @@ def run(args: Namespace) -> int:
         except (RuntimeError, subprocess.CalledProcessError) as exc:
             print(f"Local apply failed: {exc}")
             return 1
+        if confirmed is not None:
+            try:
+                consume_confirmed_staging(confirmed)
+            except StagingError as exc:
+                print(f"Apply succeeded, but confirmation consumption failed: {exc}")
+                return 1
         print(f"Applied bundle for {manifest.app} into {app_root}")
         release_id = current_release_id(args.runtime_root, manifest.app) or "unknown"
         verified = "not_run"

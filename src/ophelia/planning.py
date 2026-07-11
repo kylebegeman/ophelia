@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -23,12 +23,16 @@ from .runtime import (
     _release_metadata_env,
     active_release,
     bundle_hash,
+    deployment_baseline_digest,
     image_digests,
     image_references,
     render_bundle,
     static_asset_plan,
 )
 from .verify import verification_checks
+
+
+_CONFIRMATION_TTL_SECONDS = 15 * 60
 
 
 def deploy_plan(
@@ -66,6 +70,19 @@ def deploy_plan(
     }
     diff = bundle_diff(manifest, runtime_root, desired_bundle=bundle)
     static_assets = static_asset_plan(manifest, manifest_path, runtime_root)
+    if manifest.environment == "production" and static_assets.get("managed"):
+        if (
+            not static_assets.get("source_exists")
+            or not static_assets.get("source_is_dir")
+            or static_assets.get("unsafe_symlinks")
+        ):
+            raise StagingError(
+                "Production plan requires a complete, safe static asset source before confirmation."
+            )
+    baseline_digest = deployment_baseline_digest(manifest, runtime_root)
+    confirmation_created = datetime.now(timezone.utc).replace(microsecond=0)
+    confirmation_expires = confirmation_created + timedelta(seconds=_CONFIRMATION_TTL_SECONDS)
+    generated_files = [str(path) for path in sorted(bundle)]
     staging = (
         OperationStaging.open_uploaded(runtime_root, plan_operation_id)
         if uploaded_operation_id is not None
@@ -118,6 +135,7 @@ def deploy_plan(
         "app": manifest.app,
         "environment": getattr(manifest, "environment", None),
         "candidate_digest": candidate_digest,
+        "baseline_digest": baseline_digest,
         "deploy_metadata": effective_metadata,
         "rendered_bundle_hash": bundle_hash(bundle),
         "changed_files": diff["changed_files"],
@@ -152,8 +170,11 @@ def deploy_plan(
             "evidence": str(staging.evidence),
         },
         "candidate_digest": candidate_digest,
+        "baseline_digest": baseline_digest,
         "evidence_digests": evidence_digests,
         "deploy_metadata": effective_metadata,
+        "confirmation_created_at": confirmation_created.isoformat(),
+        "confirmation_expires_at": confirmation_expires.isoformat(),
         "kind": manifest.kind,
         "profile": manifest.profile,
         "manifest_path": str(manifest_path),
@@ -168,7 +189,7 @@ def deploy_plan(
             "postgres": manifest.addons.postgres,
             "redis": manifest.addons.redis,
         },
-        "generated_files": [str(path) for path in sorted(bundle)],
+        "generated_files": generated_files,
         "static_assets": static_assets,
         "changed_files": diff["changed_files"],
         "removed_files": diff["removed_files"],
@@ -223,12 +244,14 @@ def deploy_plan(
     if finalized["confirmation_required"]:
         staging.write_binding(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "ophelia.deploy-plan-binding",
                 "operation_id": plan_operation_id,
                 "app": manifest.app,
                 "environment": getattr(manifest, "environment", None),
                 "candidate_digest": candidate_digest,
+                "baseline_digest": baseline_digest,
+                "generated_files": generated_files,
                 "evidence": evidence_bindings,
                 "deploy_metadata": effective_metadata,
                 "confirmation_payload": deploy_confirmation_payload(finalized),
@@ -393,7 +416,6 @@ def _planned_deploy_metadata(
         requested.release_id,
         os.environ.get("OPHELIA_DEPLOY_RELEASE_ID"),
         os.environ.get("OPHELIA_RELEASE_ID"),
-        runtime_env.get("release_id"),
         "plan-" + hashlib.sha256(plan_operation_id.encode("utf-8")).hexdigest()[:16],
     )
     commit_sha = first(
@@ -459,8 +481,12 @@ def deploy_confirmation_payload(plan: Dict[str, object]) -> Dict[str, object]:
         "removed_files": plan.get("removed_files"),
         "static_assets": plan.get("static_assets"),
         "candidate_digest": plan.get("candidate_digest"),
+        "baseline_digest": plan.get("baseline_digest"),
         "evidence_digests": plan.get("evidence_digests"),
         "deploy_metadata": plan.get("deploy_metadata"),
+        "generated_files": plan.get("generated_files"),
+        "confirmation_created_at": plan.get("confirmation_created_at"),
+        "confirmation_expires_at": plan.get("confirmation_expires_at"),
     }
 
 
