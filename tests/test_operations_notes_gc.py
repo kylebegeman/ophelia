@@ -50,20 +50,49 @@ class OperationsNotesGCTests(unittest.TestCase):
             self.assertEqual("tester", note["author"])
             self.assertEqual(1, len(list_notes(runtime_root, "release", "rel-1")))
 
-            old_static_version = runtime_root / "static" / "gc-test" / "versions" / "20250101T000000Z"
-            old_static_version.mkdir(parents=True)
-            (old_static_version / "index.html").write_text("old")
+            old_static_release = runtime_root / "static" / "gc-test" / "releases" / "20250101T000000Z"
+            old_static_release.mkdir(parents=True)
+            (old_static_release / "index.html").write_text("old")
             for index in range(5):
-                version = runtime_root / "static" / "gc-test" / "versions" / f"2025010{index + 2}T000000Z"
-                version.mkdir(parents=True)
+                release = runtime_root / "static" / "gc-test" / "releases" / f"2025010{index + 2}T000000Z"
+                release.mkdir(parents=True)
 
             cleanup = gc_plan(runtime_root)
             self.assertTrue(cleanup["candidates"])
-            self.assertIn(str(old_static_version), {item["path"] for item in cleanup["candidates"]})
+            self.assertIn(str(old_static_release), {item["path"] for item in cleanup["candidates"]})
             report = apply_gc(runtime_root, str(cleanup["confirmation_token"]))
             self.assertTrue(report["deleted"])
-            self.assertFalse(old_static_version.exists())
+            self.assertFalse(old_static_release.exists())
             self.assertTrue((runtime_root / "apps" / "gc-test" / "env").exists())
+
+    def test_gc_uses_static_releases_and_never_deletes_current_pointer_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            static_root = runtime_root / "static" / "static-app"
+            releases_root = static_root / "releases"
+            for index in range(1, 8):
+                release = releases_root / f"release-{index}"
+                release.mkdir(parents=True)
+                (release / "index.html").write_text(str(index))
+            (static_root / "current").symlink_to(
+                Path("releases") / "release-1",
+                target_is_directory=True,
+            )
+            legacy = static_root / "versions" / "legacy-version"
+            legacy.mkdir(parents=True)
+
+            plan = gc_plan(runtime_root, keep_releases=5)
+            static_candidates = {
+                Path(str(item["path"])).name
+                for item in plan["candidates"]
+                if item["reason"] == "old static release"
+            }
+
+            self.assertEqual({"release-2"}, static_candidates)
+            self.assertNotIn("release-1", static_candidates)
+            self.assertNotIn(str(legacy), {item["path"] for item in plan["candidates"]})
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                gc_plan(runtime_root, keep_releases=0)
 
     def test_list_operations_has_envelope_keys(self) -> None:
         report = list_operations()
