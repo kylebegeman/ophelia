@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List
 
 from .manifest import Manifest
+from .operation_schema import operation_id
 from .runtime import DeployMetadata, materialize_bundle
 
 
@@ -21,8 +22,10 @@ def bootstrap_host(
     remote_ophelia_root: str,
     runtime_root: str,
 ) -> None:
-    remote_ophelia_root = _shell_path(remote_ophelia_root)
-    runtime_root = _shell_path(runtime_root)
+    remote_ophelia_root = _shell_path(
+        _validate_remote_root(remote_ophelia_root, "remote Ophelia root")
+    )
+    runtime_root = _shell_path(_validate_remote_root(runtime_root, "remote runtime root"))
     script = "\n".join(
         [
             "set -euo pipefail",
@@ -52,11 +55,52 @@ def stage_remote_bundle(
     confirm: str | None = None,
     deploy_metadata: DeployMetadata | None = None,
 ) -> str:
+    remote_runtime_root = _validate_remote_root(remote_runtime_root, "remote runtime root")
+    remote_ophelia_root = _validate_remote_root(remote_ophelia_root, "remote Ophelia root")
     remote_runtime_root = _rsync_path(remote_runtime_root)
+    if apply and manifest.environment == "production":
+        if not confirm:
+            raise RemoteError("Remote production apply requires a confirmed staged plan.")
+        script = _build_remote_stage_script(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            remote_runtime_root=remote_runtime_root,
+            remote_ophelia_root=remote_ophelia_root,
+            apply=True,
+            confirm=confirm,
+            verify=verify,
+            verify_attempts=verify_attempts,
+            verify_interval=verify_interval,
+            verify_timeout=verify_timeout,
+            verify_failure_mode=verify_failure_mode,
+            deploy_metadata=deploy_metadata,
+            confirmed_apply=True,
+        )
+        completed = _run(_ssh_command(host, ssh_port, script), capture_output=True)
+        return completed.stdout.strip()
+
+    plan_operation_id = (
+        operation_id("deploy.plan", manifest.app, getattr(manifest, "environment", None))
+        if plan
+        else None
+    )
     with tempfile.TemporaryDirectory(prefix=f"ophelia-{manifest.app}-") as temp_dir:
         bundle_root = Path(temp_dir) / manifest.app
         materialize_bundle(manifest, manifest_path, bundle_root)
-        _sync_bundle(bundle_root, host, ssh_port, remote_runtime_root, manifest.app)
+        if plan_operation_id is not None:
+            _prepare_remote_plan_staging(
+                host, ssh_port, remote_runtime_root, plan_operation_id
+            )
+            _sync_plan_candidate(
+                bundle_root,
+                host,
+                ssh_port,
+                remote_runtime_root,
+                plan_operation_id,
+            )
+        else:
+            # Legacy stage/apply transport intentionally remains isolated from plans.
+            _sync_bundle(bundle_root, host, ssh_port, remote_runtime_root, manifest.app)
 
     script = _build_remote_stage_script(
         manifest=manifest,
@@ -73,9 +117,53 @@ def stage_remote_bundle(
         verify_timeout=verify_timeout,
         verify_failure_mode=verify_failure_mode,
         deploy_metadata=deploy_metadata,
+        plan_operation_id=plan_operation_id,
     )
     completed = _run(_ssh_command(host, ssh_port, script), capture_output=True)
     return completed.stdout.strip()
+
+
+def _prepare_remote_plan_staging(
+    host: str,
+    ssh_port: int | None,
+    remote_runtime_root: str,
+    plan_operation_id: str,
+) -> None:
+    staging_base = f"{_shell_ref(remote_runtime_root)}/staging"
+    operation_root = f"{staging_base}/{shlex.quote(plan_operation_id)}"
+    candidate = f"{operation_root}/candidate"
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            "umask 077",
+            f"mkdir -p -m 700 {staging_base}",
+            f"chmod 700 {staging_base}",
+            f"mkdir -m 700 {operation_root}",
+            f"mkdir -m 700 {candidate}",
+        ]
+    )
+    _run(_ssh_command(host, ssh_port, script))
+
+
+def _sync_plan_candidate(
+    bundle_root: Path,
+    host: str,
+    ssh_port: int | None,
+    remote_runtime_root: str,
+    plan_operation_id: str,
+) -> None:
+    remote_candidate = (
+        f"{host}:{remote_runtime_root}/staging/{plan_operation_id}/candidate/"
+    )
+    command = [
+        "rsync",
+        "-az",
+        "--chmod=Du+rwx,Dgo-rwx,Fu+rw,Fgo-rwx",
+    ]
+    if ssh_port is not None:
+        command.extend(["-e", f"ssh -p {ssh_port}"])
+    command.extend([f"{bundle_root}/", remote_candidate])
+    _run(command)
 
 
 def _sync_bundle(
@@ -127,10 +215,22 @@ def _build_remote_stage_script(
     json_output: bool = False,
     confirm: str | None = None,
     deploy_metadata: DeployMetadata | None = None,
+    plan_operation_id: str | None = None,
+    confirmed_apply: bool = False,
 ) -> str:
     if apply and plan:
         raise ValueError("remote deploy script cannot both plan and apply")
-    app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
+    if plan:
+        if plan_operation_id is None:
+            plan_operation_id = operation_id(
+                "deploy.plan", manifest.app, getattr(manifest, "environment", None)
+            )
+        app_root = (
+            f"{_shell_ref(remote_runtime_root)}/staging/"
+            f"{shlex.quote(plan_operation_id)}/candidate"
+        )
+    else:
+        app_root = f"{_shell_ref(remote_runtime_root)}/apps/{manifest.app}"
 
     lines: List[str] = [
         "set -euo pipefail",
@@ -140,7 +240,13 @@ def _build_remote_stage_script(
     ]
 
     if plan:
-        lines.extend(_build_plan_lines(json_output=json_output, deploy_metadata=deploy_metadata))
+        lines.extend(
+            _build_plan_lines(
+                json_output=json_output,
+                deploy_metadata=deploy_metadata,
+                plan_operation_id=plan_operation_id,
+            )
+        )
     elif apply:
         lines.extend(
             _build_apply_lines(
@@ -151,6 +257,7 @@ def _build_remote_stage_script(
                 verify_timeout=verify_timeout,
                 verify_failure_mode=verify_failure_mode,
                 deploy_metadata=deploy_metadata,
+                confirmed_app=manifest.app if confirmed_apply else None,
             )
         )
     else:
@@ -159,11 +266,17 @@ def _build_remote_stage_script(
     return "\n".join(lines)
 
 
-def _build_plan_lines(json_output: bool = False, deploy_metadata: DeployMetadata | None = None) -> List[str]:
+def _build_plan_lines(
+    json_output: bool = False,
+    deploy_metadata: DeployMetadata | None = None,
+    plan_operation_id: str | None = None,
+) -> List[str]:
     command = _remote_deploy_command()
     command.append("--plan")
     if json_output:
         command.append("--json")
+    if plan_operation_id is not None:
+        command.extend(["--plan-operation-id", shlex.quote(plan_operation_id)])
     command.extend(_deploy_metadata_args(deploy_metadata))
     return [
         'cd "$REMOTE_OPHELIA_ROOT"',
@@ -179,8 +292,11 @@ def _build_apply_lines(
     verify_timeout: float | None = None,
     verify_failure_mode: str | None = None,
     deploy_metadata: DeployMetadata | None = None,
+    confirmed_app: str | None = None,
 ) -> List[str]:
-    command = _remote_deploy_command()
+    command = _remote_deploy_command(
+        shlex.quote(f"@confirmed:{confirmed_app}") if confirmed_app else None
+    )
     command.append("--apply")
     if confirm:
         command.extend(["--confirm", shlex.quote(confirm)])
@@ -237,11 +353,11 @@ def _build_stage_lines(manifest: Manifest, manifest_path: Path, remote_runtime_r
     ]
 
 
-def _remote_deploy_command() -> List[str]:
+def _remote_deploy_command(manifest_ref: str | None = None) -> List[str]:
     return [
         "./cli/ship",
         "deploy",
-        '"$APP_ROOT/manifest.lock.json"',
+        manifest_ref or '"$APP_ROOT/manifest.lock.json"',
         "--runtime-root",
         '"$REMOTE_RUNTIME_ROOT"',
         "--ophelia-root",
@@ -278,6 +394,22 @@ def _utc_now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _validate_remote_root(path: str, label: str) -> str:
+    if path == "~":
+        return path
+    if path.startswith("~/"):
+        suffix = path[2:]
+    elif path.startswith("/"):
+        suffix = path[1:]
+    else:
+        raise RemoteError(f"{label} must be an absolute path or start with ~/.")
+    if not suffix or any(part in {"", ".", ".."} for part in suffix.split("/")):
+        raise RemoteError(f"{label} contains an unsafe path segment.")
+    if any(not (character.isalnum() or character in "._-/") for character in suffix):
+        raise RemoteError(f"{label} contains unsafe characters.")
+    return path
 
 
 def _shell_path(path: str) -> str:

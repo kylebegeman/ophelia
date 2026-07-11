@@ -3,14 +3,31 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
+import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .execution.staging import (
+    OperationStaging,
+    StagingError,
+    confirmation_token,
+)
 from .manifest import Manifest
 from .operation_schema import attach_digest, diff_artifact, operation_id
 from .policy import policy_check_entry
 from .redaction import redact_url, redacted_compose_text
-from .runtime import active_release, bundle_hash, image_digests, image_references, render_bundle, static_asset_plan
+from .runtime import (
+    DeployMetadata,
+    _release_metadata_env,
+    active_release,
+    bundle_hash,
+    image_digests,
+    image_references,
+    render_bundle,
+    static_asset_plan,
+)
 from .verify import verification_checks
 
 
@@ -19,10 +36,54 @@ def deploy_plan(
     manifest_path: Path,
     runtime_root: Path,
     artifacts_dir: Optional[Path] = None,
+    *,
+    plan_operation_id: Optional[str] = None,
+    deploy_metadata: DeployMetadata | None = None,
 ) -> Dict[str, object]:
-    bundle = _render_bundle_for_runtime(manifest, runtime_root)
-    diff = bundle_diff(manifest, runtime_root)
+    uploaded_operation_id = plan_operation_id
+    plan_operation_id = plan_operation_id or operation_id(
+        "deploy.plan", manifest.app, getattr(manifest, "environment", None)
+    )
+    effective_metadata = _planned_deploy_metadata(
+        manifest,
+        runtime_root,
+        deploy_metadata,
+        plan_operation_id,
+    )
+    release_metadata = _release_metadata_env(
+        manifest,
+        release_id=effective_metadata["release_id"],
+        commit_sha=effective_metadata["commit_sha"],
+        build_time=effective_metadata["build_time"],
+    )
+    bundle = render_bundle(manifest, release_metadata=release_metadata)
+    candidate_bundle = {
+        **bundle,
+        Path("deploy-metadata.json"): json.dumps(
+            effective_metadata, indent=2, sort_keys=True
+        )
+        + "\n",
+    }
+    diff = bundle_diff(manifest, runtime_root, desired_bundle=bundle)
     static_assets = static_asset_plan(manifest, manifest_path, runtime_root)
+    staging = (
+        OperationStaging.open_uploaded(runtime_root, plan_operation_id)
+        if uploaded_operation_id is not None
+        else OperationStaging.create(runtime_root, plan_operation_id)
+    )
+    _validate_artifacts_dir(artifacts_dir, runtime_root, staging)
+    if uploaded_operation_id is not None:
+        if manifest_path.parent.resolve(strict=False) != staging.candidate.resolve(strict=False):
+            raise StagingError("Uploaded plan manifest must be inside its candidate staging directory.")
+        candidate_digest = staging.finalize_uploaded_candidate(candidate_bundle)
+    else:
+        candidate_digest = staging.stage_candidate(
+            manifest,
+            manifest_path,
+            candidate_bundle,
+            stage_static=static_assets.get("change") != "blocked",
+        )
+
     env_requirements = _env_requirements(bundle.get(Path("env.example"), ""))
     checks = verification_checks(manifest)
     verify_policy = manifest.verify_policy
@@ -40,9 +101,59 @@ def deploy_plan(
     ]
     risk_notes = _risk_notes(manifest, env_requirements, diff, static_assets)
 
+    artifacts: List[Dict[str, object]] = []
+    evidence_bindings: List[Dict[str, str]] = []
+    if diff["compose_changes"]:
+        compose_artifact, compose_binding = _write_compose_diff_artifact(
+            manifest,
+            bundle,
+            runtime_root,
+            staging,
+        )
+        artifacts.append(compose_artifact)
+        evidence_bindings.append(compose_binding)
+
+    evidence_payload = {
+        "operation_id": plan_operation_id,
+        "app": manifest.app,
+        "environment": getattr(manifest, "environment", None),
+        "candidate_digest": candidate_digest,
+        "deploy_metadata": effective_metadata,
+        "rendered_bundle_hash": bundle_hash(bundle),
+        "changed_files": diff["changed_files"],
+        "removed_files": diff["removed_files"],
+        "static_assets": static_assets,
+        "artifact_digests": sorted(item["sha256"] for item in evidence_bindings),
+    }
+    evidence_path, evidence_digest = staging.write_evidence(
+        "plan-evidence.json",
+        json.dumps(evidence_payload, indent=2, sort_keys=True) + "\n",
+    )
+    evidence_bindings.append({"name": evidence_path.name, "sha256": evidence_digest})
+    artifacts.append(
+        {
+            "name": "plan-evidence",
+            "kind": "ophelia.artifact.plan-evidence",
+            "media_type": "application/json",
+            "path": str(evidence_path),
+            "sha256": evidence_digest,
+            "redacted": True,
+        }
+    )
+    evidence_digests = sorted(item["sha256"] for item in evidence_bindings)
+
     plan = {
         "app": manifest.app,
         "environment": getattr(manifest, "environment", None),
+        "operation_id": plan_operation_id,
+        "staging": {
+            "root": str(staging.root),
+            "candidate": str(staging.candidate),
+            "evidence": str(staging.evidence),
+        },
+        "candidate_digest": candidate_digest,
+        "evidence_digests": evidence_digests,
+        "deploy_metadata": effective_metadata,
         "kind": manifest.kind,
         "profile": manifest.profile,
         "manifest_path": str(manifest_path),
@@ -80,15 +191,11 @@ def deploy_plan(
         },
         "risk_notes": risk_notes,
         "changes": _deploy_changes(diff, static_assets),
-        "artifacts": [],
+        "artifacts": artifacts,
         "summary": _summary(manifest, images, diff, env_requirements, checks, static_assets),
     }
     plan["confirmation_required"] = plan["environment"] == "production"
-    plan["confirmation_token"] = deploy_confirmation_token(plan) if plan["confirmation_required"] else None
 
-    # Additive, best-effort policy evaluation surfaced under `checks` only. The
-    # deploy plan does not otherwise carry a `checks` list, so this seeds it; the
-    # policy result never feeds the plan's top-level blockers/status.
     image_digest_pinned = bool(images) and all("@sha256:" in image for image in images.values())
     policy_context = {
         "confirmation_required": bool(plan["confirmation_required"]),
@@ -105,17 +212,30 @@ def deploy_plan(
             runtime_root=runtime_root,
         )
     ]
-
-    if diff["compose_changes"]:
-        artifact_entry = _write_compose_diff_artifact(
-            manifest,
-            bundle,
-            runtime_root,
-            artifacts_dir,
+    plan["confirmation_token"] = (
+        deploy_confirmation_token(plan) if plan["confirmation_required"] else None
+    )
+    finalized = attach_digest(
+        plan,
+        operation="deploy.plan",
+        risk="high" if plan["confirmation_required"] else "medium",
+    )
+    if finalized["confirmation_required"]:
+        staging.write_binding(
+            {
+                "schema_version": 1,
+                "kind": "ophelia.deploy-plan-binding",
+                "operation_id": plan_operation_id,
+                "app": manifest.app,
+                "environment": getattr(manifest, "environment", None),
+                "candidate_digest": candidate_digest,
+                "evidence": evidence_bindings,
+                "deploy_metadata": effective_metadata,
+                "confirmation_payload": deploy_confirmation_payload(finalized),
+                "confirmation_token": finalized["confirmation_token"],
+            }
         )
-        if artifact_entry is not None:
-            plan["artifacts"] = [artifact_entry]
-    return attach_digest(plan, operation="deploy.plan", risk="high" if plan["confirmation_required"] else "medium")
+    return finalized
 
 
 def _classify_target(path: str) -> str:
@@ -171,17 +291,15 @@ def _write_compose_diff_artifact(
     manifest: Manifest,
     bundle: Dict[Path, str],
     runtime_root: Path,
-    artifacts_dir: Optional[Path],
-) -> Optional[Dict[str, object]]:
+    staging: OperationStaging,
+) -> tuple[Dict[str, object], Dict[str, str]]:
     """Write a redacted unified diff of current vs desired ``compose.yml``.
 
     Both sides are routed through :func:`redacted_compose_text` *before* the diff
-    is computed, so the artifact file can never contain a secret value. Writing
-    is best-effort: any OSError skips the artifact rather than failing the plan.
+    is computed, so the artifact file can never contain a secret value. Evidence
+    writes are operation-scoped and failures abort planning explicitly.
     """
-    desired_compose = bundle.get(Path("compose.yml"))
-    if desired_compose is None:
-        return None
+    desired_compose = bundle.get(Path("compose.yml"), "")
     current_path = runtime_root / "apps" / manifest.app / "compose.yml"
     try:
         current_compose = current_path.read_text() if current_path.exists() else ""
@@ -198,24 +316,22 @@ def _write_compose_diff_artifact(
     )
     diff_text = "".join(diff_lines)
 
-    target_dir = artifacts_dir or (
-        runtime_root / "plans" / operation_id("deploy.plan", manifest.app, getattr(manifest, "environment", None))
-    )
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        diff_path = target_dir / "compose-diff.diff"
-        diff_path.write_text(diff_text)
-    except OSError:
-        return None
-    return diff_artifact(
+    diff_path, digest = staging.write_evidence("compose-diff.diff", diff_text)
+    artifact = diff_artifact(
         "compose-diff",
         diff_path,
         "Rendered Compose diff with env values redacted.",
     )
+    artifact["sha256"] = digest
+    return artifact, {"name": diff_path.name, "sha256": digest}
 
 
-def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:
-    bundle = _render_bundle_for_runtime(manifest, runtime_root)
+def bundle_diff(
+    manifest: Manifest,
+    runtime_root: Path,
+    desired_bundle: Dict[Path, str] | None = None,
+) -> Dict[str, object]:
+    bundle = desired_bundle or _render_bundle_for_runtime(manifest, runtime_root)
     app_root = runtime_root / "apps" / manifest.app
     changed_files = []
     for relative_path, desired_content in sorted(bundle.items()):
@@ -255,6 +371,64 @@ def bundle_diff(manifest: Manifest, runtime_root: Path) -> Dict[str, object]:
     }
 
 
+def _planned_deploy_metadata(
+    manifest: Manifest,
+    runtime_root: Path,
+    requested: DeployMetadata | None,
+    plan_operation_id: str,
+) -> Dict[str, str]:
+    requested = requested or DeployMetadata()
+    release = active_release(runtime_root, manifest.app) or _latest_release(runtime_root, manifest.app)
+    runtime_env = release.get("runtime_env") if isinstance(release, dict) else None
+    if not isinstance(runtime_env, dict):
+        runtime_env = {}
+
+    def first(*values: object) -> str:
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    release_id = first(
+        requested.release_id,
+        os.environ.get("OPHELIA_DEPLOY_RELEASE_ID"),
+        os.environ.get("OPHELIA_RELEASE_ID"),
+        runtime_env.get("release_id"),
+        "plan-" + hashlib.sha256(plan_operation_id.encode("utf-8")).hexdigest()[:16],
+    )
+    commit_sha = first(
+        requested.commit_sha,
+        os.environ.get("OPHELIA_DEPLOY_COMMIT_SHA"),
+        os.environ.get("OPHELIA_COMMIT_SHA"),
+        os.environ.get("GITHUB_SHA"),
+        runtime_env.get("commit_sha"),
+    )
+    build_time = first(
+        requested.build_time,
+        os.environ.get("OPHELIA_DEPLOY_BUILD_TIME"),
+        os.environ.get("OPHELIA_BUILD_TIME"),
+        runtime_env.get("build_time"),
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    )
+    metadata = {
+        "release_id": release_id,
+        "commit_sha": commit_sha,
+        "build_time": build_time,
+    }
+    for field, value, maximum in (
+        ("release_id", release_id, 255),
+        ("commit_sha", commit_sha, 255),
+        ("build_time", build_time, 128),
+    ):
+        if len(value) > maximum or any(
+            unicodedata.category(character) == "Cc" for character in value
+        ):
+            raise StagingError(
+                f"Deploy metadata {field} contains controls or exceeds {maximum} characters."
+            )
+    return metadata
+
+
 def _render_bundle_for_runtime(manifest: Manifest, runtime_root: Path) -> Dict[Path, str]:
     release = active_release(runtime_root, manifest.app) or _latest_release(runtime_root, manifest.app)
     release_metadata = release.get("runtime_env") if isinstance(release, dict) else None
@@ -274,20 +448,24 @@ def _latest_release(runtime_root: Path, app: str) -> Dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def deploy_confirmation_token(plan: Dict[str, object]) -> str:
-    import json
-
-    payload = {
+def deploy_confirmation_payload(plan: Dict[str, object]) -> Dict[str, object]:
+    return {
         "action": "deploy.apply",
+        "operation_id": plan.get("operation_id"),
         "app": plan.get("app"),
         "environment": plan.get("environment"),
         "rendered_bundle_hash": plan.get("rendered_bundle_hash"),
         "changed_files": plan.get("changed_files"),
         "removed_files": plan.get("removed_files"),
         "static_assets": plan.get("static_assets"),
+        "candidate_digest": plan.get("candidate_digest"),
+        "evidence_digests": plan.get("evidence_digests"),
+        "deploy_metadata": plan.get("deploy_metadata"),
     }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:20]
+
+
+def deploy_confirmation_token(plan: Dict[str, object]) -> str:
+    return confirmation_token(deploy_confirmation_payload(plan))
 
 
 def _current_generated_files(app_root: Path) -> set[Path]:
@@ -367,6 +545,23 @@ def _summary(
         f"with {len(images)} image reference(s), {len(diff['caddy_changes'])} Caddy change(s), "
         f"{secret_count} placeholder env key(s), {len(checks)} verification check(s){static_detail}."
     )
+
+
+def _validate_artifacts_dir(
+    artifacts_dir: Optional[Path],
+    runtime_root: Path,
+    staging: OperationStaging,
+) -> None:
+    if artifacts_dir is None:
+        return
+    requested = artifacts_dir.resolve(strict=False)
+    staging_base = (runtime_root / "staging").resolve(strict=False)
+    operation_root = staging.root.resolve(strict=False)
+    if requested not in {staging_base, operation_root, staging.evidence.resolve(strict=False)}:
+        raise StagingError(
+            "--artifacts-dir is restricted to the operation staging tree; "
+            f"use {staging.evidence}"
+        )
 
 
 def _file_hash(path: Path) -> str | None:
