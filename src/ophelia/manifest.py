@@ -3,12 +3,43 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 import shlex
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
+
+from .validation import (
+    CanonicalValidationError,
+    HostPathCapability,
+    HTTPPathKind,
+    SourceRoot,
+    parse_domain,
+    parse_environment,
+    parse_http_path,
+    parse_identifier,
+    resolve_host_path,
+    resolve_source_path,
+)
 
 
 class ManifestError(ValueError):
     """Raised when a manifest is invalid."""
+
+
+@dataclass(frozen=True)
+class ManifestDiagnostic:
+    """Immutable compatibility diagnostic attached to a loaded manifest."""
+
+    severity: str
+    code: str
+    field: str
+    message: str
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "field": self.field,
+            "message": self.message,
+        }
 
 
 @dataclass
@@ -282,6 +313,7 @@ class Manifest:
     deployment_order: Optional[int] = None
     migration_before: List[str] = field(default_factory=list)
     verify_before_next: bool = False
+    diagnostics: Tuple[ManifestDiagnostic, ...] = field(default_factory=tuple)
 
     def service_alias(self, service_name: str) -> str:
         return f"{self.app}-{service_name}"
@@ -290,7 +322,12 @@ class Manifest:
         return _export_manifest_value(self)
 
 
-def load_manifest(path: Path) -> Manifest:
+def load_manifest(
+    path: Path,
+    source_root: Optional[Union[Path, SourceRoot]] = None,
+    host_path_capability: Optional[HostPathCapability] = None,
+) -> Manifest:
+    path = Path(path).expanduser()
     yaml = _load_yaml()
 
     try:
@@ -307,7 +344,13 @@ def load_manifest(path: Path) -> Manifest:
         raise ManifestError("Manifest root must be a mapping.")
 
     version = _require_int(raw, "version")
-    app = _require_str(raw, "app")
+    if version != 1:
+        raise ManifestError(
+            f"Unsupported manifest version `{version}`; only version 1 is supported."
+        )
+
+    diagnostics = _collect_unknown_key_diagnostics(raw)
+    app = _identifier_value(raw.get("app"), "app")
     kind = _require_str(raw, "kind")
     environment = _optional_environment(raw.get("environment"))
     profile = _optional_profile(raw.get("profile"))
@@ -361,16 +404,313 @@ def load_manifest(path: Path) -> Manifest:
         hooks=hooks,
         observability=observability,
         lifecycle=lifecycle,
-        depends_on=_string_list(raw.get("depends_on", []), "depends_on"),
+        depends_on=_identifier_list(raw.get("depends_on", []), "depends_on"),
         deployment_order=_optional_int(raw.get("deployment_order"), "deployment_order"),
         migration_before=_string_list(raw.get("migration_before", []), "migration_before"),
         verify_before_next=_as_bool(raw.get("verify_before_next", False), "verify_before_next"),
+        diagnostics=diagnostics,
     )
 
     _validate_manifest(manifest)
-    if path.suffix != ".json":
-        _validate_source_paths(manifest, path.parent)
+    # Generated locks reopen canonical render state after source files have been
+    # staged into a release bundle. Only that exact filename skips source
+    # authority checks; ordinary JSON manifests are validated like YAML.
+    if path.name != "manifest.lock.json":
+        authority = _source_root(source_root, path)
+        _validate_source_paths(
+            manifest,
+            path.parent.resolve(strict=False),
+            authority,
+            host_path_capability,
+        )
     return manifest
+
+
+_TOP_LEVEL_KEYS = frozenset(
+    {
+        "version",
+        "app",
+        "kind",
+        "environment",
+        "profile",
+        "image",
+        "services",
+        "routes",
+        "addons",
+        "resources",
+        "env",
+        "required_env",
+        "env_files",
+        "edge",
+        "static_root",
+        "tunnel_target",
+        "redirect_to",
+        "redirect_status",
+        "verify",
+        "verify_policy",
+        "console",
+        "pack",
+        "host_requirements",
+        "networking",
+        "data",
+        "hooks",
+        "observability",
+        "lifecycle",
+        "depends_on",
+        "deployment_order",
+        "migration_before",
+        "verify_before_next",
+    }
+)
+
+_FIXED_MAPPING_KEYS = {
+    "addons": frozenset({"postgres", "redis"}),
+    "resources": frozenset({"memory"}),
+    "edge": frozenset({"on_demand_tls", "tls", "catch_all"}),
+    "edge.on_demand_tls": frozenset({"ask"}),
+    "edge.tls": frozenset({"mode", "cert_file", "key_file"}),
+    "edge.catch_all": frozenset(
+        {"service", "upstream", "http_redirect", "http_redirect_status"}
+    ),
+    "verify_policy": frozenset({"attempts", "interval", "timeout", "failure_mode"}),
+    "console": frozenset({"admin_domain", "console_asset_path", "surface"}),
+    "pack": frozenset({"portability", "owner", "description", "deploy_binding_file"}),
+    "host_requirements": frozenset(
+        {"arch", "min_memory", "min_disk_free", "requires_edge", "requires_docker"}
+    ),
+    "networking": frozenset({"edge", "internal"}),
+    "data": frozenset(
+        {
+            "postgres",
+            "redis",
+            "volumes",
+            "object_storage",
+            "static_assets",
+            "external_services",
+            "backups",
+        }
+    ),
+    "data.backups": frozenset(
+        {"required", "restore_drill_required", "offsite_required", "offsite"}
+    ),
+    "data.backups.offsite": frozenset(
+        {
+            "provider",
+            "target",
+            "retention_days",
+            "encryption_required",
+            "restore_rehearsal_cadence_days",
+            "last_rehearsal_ref",
+        }
+    ),
+    "hooks": frozenset(
+        {"pre_export", "freeze", "unfreeze", "post_import", "post_cutover"}
+    ),
+    "observability": frozenset({"health", "metrics", "logs"}),
+    "observability.health": frozenset({"url", "expect_status"}),
+    "observability.metrics": frozenset({"url", "format", "auth"}),
+    "observability.logs": frozenset({"containers", "retain_days"}),
+    "lifecycle": frozenset(
+        {"live", "data_can_be_reset", "production_apply_allowed"}
+    ),
+}
+
+_SERVICE_KEYS = frozenset(
+    {"port", "host_port", "image", "command", "env", "env_files", "mounts", "healthcheck"}
+)
+_HEALTHCHECK_KEYS = frozenset({"path", "interval", "timeout", "retries", "command"})
+_MOUNT_KEYS = frozenset({"source", "target", "read_only", "bind"})
+_ROUTE_KEYS = frozenset(
+    {
+        "domain",
+        "service",
+        "upstream",
+        "path",
+        "path_prefix",
+        "strip_prefix",
+        "rewrite_prefix",
+    }
+)
+_VERIFY_KEYS = frozenset(
+    {
+        "url",
+        "path",
+        "method",
+        "expect_status",
+        "contains",
+        "name",
+        "type",
+        "service",
+        "command",
+        "expect_exit",
+        "expect_json",
+        "json_assertions",
+    }
+)
+_DATA_SERVICE_KEYS = frozenset(
+    {
+        "mode",
+        "inferred_from_addon",
+        "database",
+        "service",
+        "class",
+        "durable",
+        "export",
+        "import",
+        "verify",
+    }
+)
+_DATA_VOLUME_KEYS = frozenset(
+    {"name", "mount", "source", "service", "class", "export", "import", "verify"}
+)
+
+
+def _collect_unknown_key_diagnostics(
+    raw: Dict[str, Any],
+) -> Tuple[ManifestDiagnostic, ...]:
+    diagnostics: List[ManifestDiagnostic] = []
+    _diagnose_mapping(raw, _TOP_LEVEL_KEYS, "", diagnostics)
+
+    for field_name, known in _FIXED_MAPPING_KEYS.items():
+        value = _mapping_at_path(raw, field_name)
+        _diagnose_mapping(value, known, field_name, diagnostics)
+
+    services = raw.get("services")
+    if isinstance(services, dict):
+        for service_name, service_raw in services.items():
+            prefix = f"services.{service_name}"
+            _diagnose_mapping(service_raw, _SERVICE_KEYS, prefix, diagnostics)
+            if not isinstance(service_raw, dict):
+                continue
+            _diagnose_mapping(
+                service_raw.get("healthcheck"),
+                _HEALTHCHECK_KEYS,
+                f"{prefix}.healthcheck",
+                diagnostics,
+            )
+            mounts = service_raw.get("mounts")
+            if isinstance(mounts, list):
+                for index, mount in enumerate(mounts):
+                    _diagnose_mapping(
+                        mount,
+                        _MOUNT_KEYS,
+                        f"{prefix}.mounts[{index}]",
+                        diagnostics,
+                    )
+
+    routes = raw.get("routes")
+    if isinstance(routes, list):
+        for index, route in enumerate(routes):
+            _diagnose_mapping(route, _ROUTE_KEYS, f"routes[{index}]", diagnostics)
+
+    verify = raw.get("verify")
+    if isinstance(verify, list):
+        for index, check in enumerate(verify):
+            _diagnose_mapping(check, _VERIFY_KEYS, f"verify[{index}]", diagnostics)
+
+    data = raw.get("data")
+    if isinstance(data, dict):
+        for name in ("postgres", "redis"):
+            _diagnose_mapping(
+                data.get(name),
+                _DATA_SERVICE_KEYS,
+                f"data.{name}",
+                diagnostics,
+            )
+        volumes = data.get("volumes")
+        if isinstance(volumes, list):
+            for index, volume in enumerate(volumes):
+                _diagnose_mapping(
+                    volume,
+                    _DATA_VOLUME_KEYS,
+                    f"data.volumes[{index}]",
+                    diagnostics,
+                )
+
+    return tuple(
+        sorted(
+            diagnostics,
+            key=lambda item: (item.field, item.code, item.message),
+        )
+    )
+
+
+def _mapping_at_path(raw: Dict[str, Any], path: str) -> Any:
+    value: Any = raw
+    for component in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(component)
+    return value
+
+
+def _diagnose_mapping(
+    raw: Any,
+    known: frozenset,
+    prefix: str,
+    diagnostics: List[ManifestDiagnostic],
+) -> None:
+    if not isinstance(raw, dict):
+        return
+    for key in raw:
+        if not isinstance(key, str) or key in known:
+            continue
+        field_name = f"{prefix}.{key}" if prefix else key
+        diagnostics.append(
+            ManifestDiagnostic(
+                severity="warning",
+                code="unknown_key",
+                field=field_name,
+                message=f"`{field_name}` is not recognized by manifest version 1; no v1 behavior is implied.",
+            )
+        )
+
+
+def _identifier_value(value: Any, field_name: str) -> str:
+    try:
+        return parse_identifier(value, field=field_name).value
+    except CanonicalValidationError as exc:
+        raise ManifestError(exc.issue.message) from exc
+
+
+def _identifier_list(value: Any, field_name: str) -> List[str]:
+    return [
+        _identifier_value(item, f"{field_name}[{index}]")
+        for index, item in enumerate(_string_list(value, field_name))
+    ]
+
+
+def _optional_identifier(value: Any, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _identifier_value(value, field_name)
+
+
+def _optional_domain(value: Any, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _domain_value(value, field_name)
+
+
+def _domain_value(value: Any, field_name: str) -> str:
+    try:
+        return parse_domain(value, field=field_name).value
+    except CanonicalValidationError as exc:
+        raise ManifestError(exc.issue.message) from exc
+
+
+def _optional_http_path(
+    value: Any,
+    field_name: str,
+    *,
+    kind: HTTPPathKind = HTTPPathKind.EXACT,
+) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return parse_http_path(value, field=field_name, kind=kind).value
+    except CanonicalValidationError as exc:
+        raise ManifestError(exc.issue.message) from exc
 
 
 def _load_yaml():
@@ -394,20 +734,24 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
 
     services: Dict[str, ServiceConfig] = {}
     for name, service_raw in raw.items():
+        service_name = _identifier_value(name, "services.%s" % name)
         if not isinstance(service_raw, dict):
-            raise ManifestError(f"Service `{name}` must be a mapping.")
+            raise ManifestError(f"Service `{service_name}` must be a mapping.")
 
-        port = _require_int(service_raw, "port", prefix=f"services.{name}")
-        host_port = _optional_int(service_raw.get("host_port"), f"services.{name}.host_port")
-        image = _optional_str(service_raw.get("image"), f"services.{name}.image")
-        command = _string_list(service_raw.get("command", []), f"services.{name}.command")
-        env = _mapping_as_str_dict(service_raw.get("env", {}), f"services.{name}.env")
-        env_files = _string_list(service_raw.get("env_files", []), f"services.{name}.env_files")
-        mounts = _parse_mounts(service_raw.get("mounts", []), name)
-        health = _parse_healthcheck(service_raw.get("healthcheck", {}), name)
+        prefix = "services.%s" % service_name
+        port = _require_int(service_raw, "port", prefix=prefix)
+        host_port = _optional_int(service_raw.get("host_port"), prefix + ".host_port")
+        image = _optional_str(service_raw.get("image"), prefix + ".image")
+        command = _string_list(service_raw.get("command", []), prefix + ".command")
+        env = _mapping_as_str_dict(service_raw.get("env", {}), prefix + ".env")
+        env_files = _string_list(
+            service_raw.get("env_files", []), prefix + ".env_files"
+        )
+        mounts = _parse_mounts(service_raw.get("mounts", []), service_name)
+        health = _parse_healthcheck(service_raw.get("healthcheck", {}), service_name)
 
-        services[name] = ServiceConfig(
-            name=name,
+        services[service_name] = ServiceConfig(
+            name=service_name,
             port=port,
             host_port=host_port,
             image=image,
@@ -419,15 +763,12 @@ def _parse_services(raw: Any) -> Dict[str, ServiceConfig]:
         )
     return services
 
-
 def _optional_environment(value: Any) -> Optional[str]:
-    environment = _optional_str(value, "environment")
-    if environment is None:
-        return None
-    if environment not in {"dev", "staging", "production"}:
-        raise ManifestError("`environment` must be one of `dev`, `staging`, or `production`.")
-    return environment
-
+    try:
+        parsed = parse_environment(value, field="environment")
+    except CanonicalValidationError as exc:
+        raise ManifestError(exc.issue.message) from exc
+    return parsed.value if parsed is not None else None
 
 def _parse_routes(raw: Any) -> List[RouteConfig]:
     if not isinstance(raw, list) or not raw:
@@ -436,27 +777,33 @@ def _parse_routes(raw: Any) -> List[RouteConfig]:
     routes: List[RouteConfig] = []
     for index, route_raw in enumerate(raw):
         if not isinstance(route_raw, dict):
-            raise ManifestError(f"Route at index {index} must be a mapping.")
+            raise ManifestError("Route at index %s must be a mapping." % index)
 
+        prefix = "routes[%s]" % index
         routes.append(
             RouteConfig(
-                domain=_require_str(route_raw, "domain", prefix=f"routes[{index}]"),
-                service=_optional_str(route_raw.get("service"), f"routes[{index}].service"),
-                upstream=_optional_str(route_raw.get("upstream"), f"routes[{index}].upstream"),
-                path=_optional_path(route_raw.get("path"), f"routes[{index}].path"),
-                path_prefix=_optional_path(
-                    route_raw.get("path_prefix"), f"routes[{index}].path_prefix"
+                domain=_domain_value(route_raw.get("domain"), prefix + ".domain"),
+                service=_optional_identifier(
+                    route_raw.get("service"), prefix + ".service"
                 ),
-                strip_prefix=_optional_path(
-                    route_raw.get("strip_prefix"), f"routes[{index}].strip_prefix"
+                upstream=_optional_str(route_raw.get("upstream"), prefix + ".upstream"),
+                path=_optional_http_path(route_raw.get("path"), prefix + ".path"),
+                path_prefix=_optional_http_path(
+                    route_raw.get("path_prefix"),
+                    prefix + ".path_prefix",
+                    kind=HTTPPathKind.PREFIX,
                 ),
-                rewrite_prefix=_optional_path(
-                    route_raw.get("rewrite_prefix"), f"routes[{index}].rewrite_prefix"
+                strip_prefix=_optional_http_path(
+                    route_raw.get("strip_prefix"),
+                    prefix + ".strip_prefix",
+                    kind=HTTPPathKind.PREFIX,
+                ),
+                rewrite_prefix=_optional_http_path(
+                    route_raw.get("rewrite_prefix"), prefix + ".rewrite_prefix"
                 ),
             )
         )
     return routes
-
 
 def _parse_addons(raw: Any) -> Addons:
     if raw is None:
@@ -528,7 +875,7 @@ def _parse_catch_all_edge(raw: Any) -> Optional[CatchAllEdgeConfig]:
 
     status = _optional_int(raw.get("http_redirect_status"), "edge.catch_all.http_redirect_status") or 308
     return CatchAllEdgeConfig(
-        service=_optional_str(raw.get("service"), "edge.catch_all.service"),
+        service=_optional_identifier(raw.get("service"), "edge.catch_all.service"),
         upstream=_optional_str(raw.get("upstream"), "edge.catch_all.upstream"),
         http_redirect=_as_bool(raw.get("http_redirect", True), "edge.catch_all.http_redirect"),
         http_redirect_status=status,
@@ -613,7 +960,7 @@ def _parse_verifications(raw: Any) -> List[VerificationCheck]:
         elif url is not None:
             raise ManifestError(f"`verify[{index}].url` is only supported for `type: http` or loopback `type: internal` checks.")
 
-        service = _optional_str(item.get("service"), f"verify[{index}].service")
+        service = _optional_identifier(item.get("service"), f"verify[{index}].service")
         path = _optional_path(item.get("path"), f"verify[{index}].path")
         if check_type == "internal" and url is not None:
             url_path = parsed_url.path or "/"
@@ -705,7 +1052,7 @@ def _parse_console(raw: Any) -> Optional[ConsoleConfig]:
         raise ManifestError("`console.surface` must be `console` or `root`.")
 
     return ConsoleConfig(
-        admin_domain=_optional_str(raw.get("admin_domain"), "console.admin_domain"),
+        admin_domain=_optional_domain(raw.get("admin_domain"), "console.admin_domain"),
         console_asset_path=_optional_str(raw.get("console_asset_path"), "console.console_asset_path"),
         surface=surface,
     )
@@ -839,7 +1186,7 @@ def _parse_data_service(raw: Any, field_name: str, default_mode: str) -> Optiona
         mode=_optional_str(raw.get("mode"), f"{field_name}.mode") or default_mode,
         inferred_from_addon=_as_bool(raw.get("inferred_from_addon", False), f"{field_name}.inferred_from_addon"),
         database=_optional_str(raw.get("database"), f"{field_name}.database"),
-        service=_optional_str(raw.get("service"), f"{field_name}.service"),
+        service=_optional_identifier(raw.get("service"), f"{field_name}.service"),
         class_name=_optional_str(raw.get("class"), f"{field_name}.class"),
         durable=_optional_bool(raw.get("durable"), f"{field_name}.durable"),
         export=_parse_optional_mapping(raw.get("export"), f"{field_name}.export"),
@@ -867,10 +1214,10 @@ def _parse_data_volumes(raw: Any) -> List[DataVolumeConfig]:
         known = {"name", "mount", "source", "service", "class", "export", "import", "verify"}
         volumes.append(
             DataVolumeConfig(
-                name=_require_str(item, "name", prefix=field_name),
+                name=_identifier_value(item.get("name"), f"{field_name}.name"),
                 mount=_optional_str(item.get("mount"), f"{field_name}.mount"),
                 source=_optional_str(item.get("source"), f"{field_name}.source"),
-                service=_optional_str(item.get("service"), f"{field_name}.service"),
+                service=_optional_identifier(item.get("service"), f"{field_name}.service"),
                 class_name=_optional_str(item.get("class"), f"{field_name}.class"),
                 export=_parse_optional_data_action(item.get("export"), f"{field_name}.export"),
                 import_config=_parse_optional_data_action(item.get("import"), f"{field_name}.import"),
@@ -1305,24 +1652,116 @@ def _is_env_key_name(value: str) -> bool:
     return all(char == "_" or char.isalnum() for char in value)
 
 
-def _validate_source_paths(manifest: Manifest, manifest_dir: Path) -> None:
+def _source_root(
+    explicit: Optional[Union[Path, SourceRoot]],
+    manifest_path: Path,
+) -> SourceRoot:
+    if isinstance(explicit, SourceRoot):
+        return explicit
+    if explicit is not None:
+        try:
+            return SourceRoot.from_path(explicit)
+        except CanonicalValidationError as exc:
+            raise ManifestError(exc.issue.message) from exc
+
+    manifest_dir = manifest_path.resolve(strict=False).parent
+    for candidate in (manifest_dir,) + tuple(manifest_dir.parents):
+        if (candidate / ".git").exists():
+            return SourceRoot.from_path(candidate)
+    return SourceRoot.from_path(manifest_dir)
+
+
+def _validate_source_paths(
+    manifest: Manifest,
+    manifest_dir: Path,
+    source_root: SourceRoot,
+    capability: Optional[HostPathCapability],
+) -> None:
+    _resolve_manifest_source(
+        source_root,
+        manifest_dir,
+        ".",
+        "manifest",
+        capability,
+        require_exists=True,
+    )
+
     for index, source in enumerate(manifest.env_files):
-        _resolve_source_path(manifest_dir, source, f"env_files[{index}]")
+        _resolve_manifest_source(
+            source_root,
+            manifest_dir,
+            source,
+            f"env_files[{index}]",
+            capability,
+            require_exists=True,
+        )
 
     for service_name, service in manifest.services.items():
         for index, source in enumerate(service.env_files):
-            _resolve_source_path(manifest_dir, source, f"services.{service_name}.env_files[{index}]")
+            _resolve_manifest_source(
+                source_root,
+                manifest_dir,
+                source,
+                f"services.{service_name}.env_files[{index}]",
+                capability,
+                require_exists=True,
+            )
         for index, mount in enumerate(service.mounts):
-            _resolve_source_path(manifest_dir, mount.source, f"services.{service_name}.mounts[{index}].source")
+            _resolve_manifest_source(
+                source_root,
+                manifest_dir,
+                mount.source,
+                f"services.{service_name}.mounts[{index}].source",
+                capability,
+                require_exists=True,
+            )
 
 
-def _resolve_source_path(manifest_dir: Path, source: str, field_name: str) -> Path:
-    raw = Path(source).expanduser()
-    resolved = raw if raw.is_absolute() else (manifest_dir / raw)
-    if not resolved.exists():
-        raise ManifestError(f"`{field_name}` points to missing source `{source}`.")
+
+def _resolve_manifest_source(
+    source_root: SourceRoot,
+    manifest_dir: Path,
+    source: str,
+    field_name: str,
+    capability: Optional[HostPathCapability],
+    *,
+    require_exists: bool,
+) -> Path:
+    if any(ord(character) < 32 or ord(character) == 127 for character in source):
+        raise ManifestError("%s contains a control character." % field_name)
+
+    try:
+        expanded = Path(source).expanduser()
+    except (KeyError, RuntimeError) as exc:
+        raise ManifestError("%s could not be expanded." % field_name) from exc
+
+    try:
+        if expanded.is_absolute():
+            if capability is None:
+                raise ManifestError(
+                    "%s is absolute and requires an explicit HostPathCapability."
+                    % field_name
+                )
+            resolved = resolve_host_path(
+                capability,
+                expanded,
+                field=field_name,
+            ).path
+        else:
+            resolved = resolve_source_path(
+                source_root,
+                source,
+                relative_to=manifest_dir,
+                field=field_name,
+            ).path
+    except CanonicalValidationError as exc:
+        raise ManifestError(exc.issue.message) from exc
+
+    if require_exists and not resolved.exists():
+        raise ManifestError(
+            "%s points to missing source %s." % (field_name, source)
+        )
     return resolved
-
 
 def _require_str(raw: Dict[str, Any], field_name: str, prefix: str = "") -> str:
     value = raw.get(field_name)
@@ -1592,6 +2031,8 @@ def _export_manifest_value(value: Any) -> Any:
     if is_dataclass(value):
         result: Dict[str, Any] = {}
         for item in fields(value):
+            if item.name == "diagnostics":
+                continue
             exported = _export_manifest_value(getattr(value, item.name))
             if item.name == "extra":
                 if isinstance(exported, dict):
