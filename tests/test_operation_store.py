@@ -222,6 +222,7 @@ def _receipt(
     *,
     receipt_id: str = "receipt_example-1",
     previous_revision_id: str | None = "rev_previous",
+    check_summary: str | None = None,
 ) -> TerminalReceipt:
     return TerminalReceipt(
         receipt_id=receipt_id,
@@ -249,7 +250,7 @@ def _receipt(
                     name="external",
                     status=CheckStatus.PASSED,
                     observed_digest=D5,
-                    summary="Observed healthy.",
+                    summary=check_summary,
                 ),
             ),
         ),
@@ -957,6 +958,63 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         self.store.commit_receipt(receipt)
         self.assertEqual(2, len(self.store.events(operation.operation_id)))
 
+    def test_direct_receipt_commit_rejects_verification_summary_prose(self) -> None:
+        operation, request, approval = self._accept()
+        receipt = _receipt(
+            operation.operation_id,
+            request,
+            approval,
+            check_summary="Observed healthy.",
+        )
+
+        with self.assertRaisesRegex(
+            ContractValidationError, "cannot contain summary prose"
+        ):
+            self.store.commit_receipt(receipt)
+
+        self.assertEqual(OperationState.ACCEPTED, self.store.get(operation.operation_id).state)
+        self.assertIsNone(self.store.receipt_payload(operation.operation_id))
+
+    def test_direct_receipt_commit_accepts_digest_only_checks(self) -> None:
+        operation, request, approval = self._accept()
+        receipt = _receipt(operation.operation_id, request, approval)
+
+        self.store.commit_receipt(receipt)
+
+        payload = self.store.receipt_payload(operation.operation_id)
+        self.assertIsNotNone(payload)
+        self.assertIsNone(payload["verification"]["checks"][0]["summary"])
+
+    def test_persisted_verification_summary_prose_fails_integrity(self) -> None:
+        operation, request, approval = self._accept()
+        self.store.commit_receipt(_receipt(operation.operation_id, request, approval))
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM terminal_receipts WHERE operation_id = ?",
+                    (operation.operation_id,),
+                ).fetchone()[0]
+            )
+            payload["verification"]["checks"][0]["summary"] = "Observed healthy."
+            payload_json = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            connection.execute(
+                """
+                UPDATE terminal_receipts
+                SET payload_json = ?, receipt_digest = ?
+                WHERE operation_id = ?
+                """,
+                (payload_json, canonical_digest(payload), operation.operation_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(IntegrityError):
+            SQLiteOperationJournal(self.store.database_path, clock=lambda: self.now[0])
+
     def test_terminal_reconciliation_tampering_is_detected_on_reopen(self) -> None:
         operation, request, approval = self._accept()
         self.store.commit_receipt(
@@ -1423,6 +1481,29 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         self.assertEqual(receipt, self.store.receipt(operation.operation_id))
         self.store.integrity_check()
 
+    def test_atomic_success_rejects_verification_summary_prose(self) -> None:
+        operation, request, approval, _, fence = self._ready_input_operation()
+        receipt = _receipt(
+            operation.operation_id,
+            request,
+            approval,
+            previous_revision_id=None,
+            check_summary="Observed healthy.",
+        )
+
+        with self.assertRaisesRegex(
+            ContractValidationError, "cannot contain summary prose"
+        ):
+            self.store.commit_success(receipt, None, fence=fence)
+
+        self.assertEqual(
+            RevisionState.READY,
+            self.store.revision_history(operation.operation_id)[-1].state,
+        )
+        self.assertIsNone(
+            self.store.active_revision(request.host_id, request.app, request.environment)
+        )
+
     def test_atomic_success_requires_the_exact_predecessor_revision(self) -> None:
         operation, request, approval, _, fence = self._ready_input_operation()
         receipt = _receipt(operation.operation_id, request, approval)
@@ -1555,6 +1636,62 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             )
         finally:
             connection.close()
+
+    def test_v2_migration_serializes_active_legacy_scope_lease_until_expiry(self) -> None:
+        legacy, _, _ = self._accept()
+        legacy_lease = self.store.acquire_lease(
+            legacy.operation_id, "legacy-executor", 30
+        )
+        second_request, second_approval, second_input = _execution_bundle(
+            request_id="request_scope-2",
+            idempotency_key="deploy-scope-2",
+            decision_id="decision_scope-2",
+            revision_id="rev_scope-2",
+        )
+        second = self.store.accept(
+            _actor(),
+            second_request,
+            second_approval,
+            execution_input=second_input,
+        )
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            connection.execute("DROP INDEX execution_scope_lease_operation")
+            connection.execute("DROP TABLE execution_scope_leases")
+            connection.execute("PRAGMA user_version = 2")
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = SQLiteOperationJournal(
+            self.store.database_path, clock=lambda: self.now[0]
+        )
+        connection = migrated._connect()
+        try:
+            scope_row = connection.execute(
+                """
+                SELECT operation_id, owner_id, fencing_token, expires_at
+                FROM execution_scope_leases
+                WHERE host_id = ? AND app = ? AND environment = ?
+                """,
+                (second_request.host_id, second_request.app, second_request.environment),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertIsNotNone(scope_row)
+        self.assertEqual(legacy.operation_id, scope_row["operation_id"])
+        self.assertEqual(legacy_lease.owner_id, scope_row["owner_id"])
+
+        with self.assertRaisesRegex(LeaseConflict, "scope"):
+            migrated.acquire_fence(second.operation_id, "v3-executor", 30)
+
+        self.now[0] = legacy_lease.expires_at
+        acquired = migrated.acquire_fence(
+            second.operation_id, "v3-executor", 30
+        )
+        self.assertEqual(second.operation_id, acquired.operation_id)
+        self.assertGreater(acquired.fencing_token, legacy_lease.fencing_token)
+        migrated.integrity_check()
 
 
 if __name__ == "__main__":
