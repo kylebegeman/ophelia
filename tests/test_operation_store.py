@@ -721,13 +721,13 @@ class SQLiteOperationJournalTests(unittest.TestCase):
 
     def test_non_finite_lease_ttls_and_clock_samples_fail_closed(self) -> None:
         operation, _, _ = self._accept()
-        for ttl in (float("nan"), float("inf"), float("-inf")):
+        for ttl in (float("nan"), float("inf"), float("-inf"), 10**1000):
             with self.subTest(ttl=ttl):
                 with self.assertRaises(ContractValidationError):
                     self.store.acquire_lease(operation.operation_id, "executor-a", ttl)
 
         lease = self.store.acquire_lease(operation.operation_id, "executor-a", 10)
-        for sample in (float("nan"), float("inf"), float("-inf")):
+        for sample in (float("nan"), float("inf"), float("-inf"), 10**1000):
             with self.subTest(clock=sample):
                 self.store._clock = lambda sample=sample: sample
                 with self.assertRaises(IntegrityError):

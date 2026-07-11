@@ -21,11 +21,12 @@ from ..domain._contracts import (
     canonical_digest,
     canonical_json,
     digest_text,
+    require_digest,
     require_text,
 )
 from ..domain.events import OperationEvent
 from ..domain.operations import Actor, OperationRef, OperationRequest, OperationState
-from ..domain.plans import ApprovedPlanRef
+from ..domain.plans import ApprovedPlanRef, AuthorizationKind
 from ..domain.receipts import (
     CheckStatus,
     CompensationResult,
@@ -122,7 +123,7 @@ class SQLiteOperationJournal:
     def _initialize(self) -> None:
         connection = self._connect()
         try:
-            journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
+            journal_mode = self._enable_wal(connection)
             if journal_mode.lower() != "wal":
                 raise IntegrityError("Operation database could not enable WAL mode.")
             migrate(connection)
@@ -130,6 +131,20 @@ class SQLiteOperationJournal:
         finally:
             connection.close()
             self._repair_permissions()
+
+    def _enable_wal(self, connection: sqlite3.Connection) -> str:
+        """Serialize WAL negotiation during concurrent first open."""
+
+        deadline = time.monotonic() + max(self._timeout_seconds, 0.0)
+        delay = 0.005
+        while True:
+            try:
+                return str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.1)
 
     def _open_journal_directory(self) -> int:
         required_flags = ("O_DIRECTORY", "O_NOFOLLOW")
@@ -711,66 +726,119 @@ class SQLiteOperationJournal:
             actor_claims = json.loads(operation["actor_json"])
             plan_claims = json.loads(operation["plan_json"])
             approval_claims = json.loads(operation["approval_json"])
-            approval_binding = dict(approval_claims)
+            if not all(
+                isinstance(value, dict)
+                for value in (request_claims, actor_claims, plan_claims, approval_claims)
+            ):
+                raise TypeError("accepted claims must be JSON objects")
+            require_digest(
+                request_claims["idempotency_key_digest"],
+                "idempotency_key_digest",
+            )
+            request_contract = OperationRequest(
+                request_id=request_claims["request_id"],
+                operation=request_claims["operation"],
+                host_id=request_claims["host_id"],
+                app=request_claims["app"],
+                environment=request_claims["environment"],
+                revision_id=request_claims["revision_id"],
+                revision_digest=request_claims["revision_digest"],
+                idempotency_key="redacted",
+            )
+            expected_request_claims = request_contract.to_dict()
+            expected_request_claims.pop("idempotency_key")
+            expected_request_claims["idempotency_key_digest"] = request_claims[
+                "idempotency_key_digest"
+            ]
+            actor_contract = Actor(
+                actor_id=actor_claims["actor_id"],
+                source=actor_claims["source"],
+                authenticated_by=actor_claims["authenticated_by"],
+            )
+            approval_contract = SQLiteOperationJournal._approved_plan_from_payload(
+                approval_claims
+            )
+            expected_plan_claims = {
+                "schema_version": approval_contract.schema_version,
+                "kind": "ophelia.kernel.approved_plan_claims",
+                "plan_id": approval_contract.plan_id,
+                "plan_digest": approval_contract.plan_digest,
+                "request_digest": approval_contract.request_digest,
+                "host_id": approval_contract.host_id,
+                "app": approval_contract.app,
+                "environment": approval_contract.environment,
+                "revision_id": approval_contract.revision_id,
+                "revision_digest": approval_contract.revision_digest,
+                "manifest_digest": approval_contract.manifest_digest,
+                "artifact_digests": list(approval_contract.artifact_digests),
+                "observed_state_digest": approval_contract.observed_state_digest,
+                "policy_digest": approval_contract.policy_digest,
+            }
+            approval_binding = approval_contract.to_dict()
             approval_binding.pop("approval_digest")
-        except Exception as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise IntegrityError("Accepted operation payload is invalid.") from exc
 
-        mappings = (request_claims, actor_claims, plan_claims, approval_claims)
-        if not all(isinstance(value, dict) for value in mappings):
-            raise IntegrityError("Accepted operation payload is invalid.")
-        shared_plan_claims = (
-            "plan_id",
-            "plan_digest",
-            "request_digest",
-            "host_id",
-            "app",
-            "environment",
-            "revision_id",
-            "revision_digest",
-            "manifest_digest",
-            "artifact_digests",
-            "observed_state_digest",
-            "policy_digest",
-        )
         if (
-            canonical_json(request_claims) != operation["request_json"]
-            or canonical_json(actor_claims) != operation["actor_json"]
-            or canonical_json(plan_claims) != operation["plan_json"]
-            or canonical_json(approval_claims) != operation["approval_json"]
-            or request_claims.get("request_id") != operation["request_id"]
-            or request_claims.get("operation") != operation["operation_class"]
-            or request_claims.get("host_id") != operation["host_id"]
-            or request_claims.get("app") != operation["app"]
-            or request_claims.get("environment") != operation["environment"]
-            or request_claims.get("revision_id") != operation["revision_id"]
-            or actor_claims.get("actor_id") != operation["actor_id"]
-            or plan_claims.get("plan_id") != operation["plan_id"]
-            or plan_claims.get("plan_digest") != operation["plan_digest"]
-            or plan_claims.get("request_digest") != operation["plan_request_digest"]
+            canonical_json(expected_request_claims) != operation["request_json"]
+            or canonical_json(actor_contract) != operation["actor_json"]
+            or canonical_json(expected_plan_claims) != operation["plan_json"]
+            or canonical_json(approval_contract) != operation["approval_json"]
+            or request_contract.request_id != operation["request_id"]
+            or request_contract.operation != operation["operation_class"]
+            or request_contract.host_id != operation["host_id"]
+            or request_contract.app != operation["app"]
+            or request_contract.environment != operation["environment"]
+            or request_contract.revision_id != operation["revision_id"]
+            or request_contract.intent_digest() != operation["request_digest"]
+            or actor_contract.actor_id != operation["actor_id"]
+            or approval_contract.plan_id != operation["plan_id"]
+            or approval_contract.plan_digest != operation["plan_digest"]
+            or approval_contract.request_digest != operation["plan_request_digest"]
             or operation["request_digest"] != operation["plan_request_digest"]
-            or plan_claims.get("host_id") != operation["host_id"]
-            or plan_claims.get("app") != operation["app"]
-            or plan_claims.get("environment") != operation["environment"]
-            or plan_claims.get("revision_id") != operation["revision_id"]
-            or plan_claims.get("revision_digest")
-            != request_claims.get("revision_digest")
-            or approval_claims.get("decision_id") != operation["decision_id"]
-            or approval_claims.get("actor_id") != operation["approval_actor_id"]
-            or approval_claims.get("approval_digest")
-            != operation["approval_digest"]
+            or approval_contract.host_id != operation["host_id"]
+            or approval_contract.app != operation["app"]
+            or approval_contract.environment != operation["environment"]
+            or approval_contract.revision_id != operation["revision_id"]
+            or approval_contract.revision_digest != request_contract.revision_digest
+            or approval_contract.decision_id != operation["decision_id"]
+            or approval_contract.actor_id != operation["approval_actor_id"]
+            or approval_contract.approval_digest != operation["approval_digest"]
+            or not isinstance(operation["approval_digest"], str)
             or not hmac.compare_digest(
                 operation["approval_digest"], canonical_digest(approval_binding)
-            )
-            or any(
-                approval_claims.get(key) != plan_claims.get(key)
-                for key in shared_plan_claims
             )
         ):
             raise IntegrityError(
                 "Accepted operation, plan, and approval claims do not reconcile."
             )
-        return plan_claims, approval_claims
+        return expected_plan_claims, approval_contract.to_dict()
+
+    @staticmethod
+    def _approved_plan_from_payload(payload: dict) -> ApprovedPlanRef:
+        return ApprovedPlanRef(
+            plan_id=payload["plan_id"],
+            plan_digest=payload["plan_digest"],
+            request_digest=payload["request_digest"],
+            manifest_digest=payload["manifest_digest"],
+            artifact_digests=tuple(payload["artifact_digests"]),
+            observed_state_digest=payload["observed_state_digest"],
+            policy_digest=payload["policy_digest"],
+            host_id=payload["host_id"],
+            app=payload["app"],
+            environment=payload["environment"],
+            revision_id=payload["revision_id"],
+            revision_digest=payload["revision_digest"],
+            actor_id=payload["actor_id"],
+            decision_id=payload["decision_id"],
+            authorization_kind=AuthorizationKind(payload["authorization_kind"]),
+            issuer=payload["issuer"],
+            audience=payload["audience"],
+            approved_at=payload["approved_at"],
+            expires_at=payload["expires_at"],
+            nonce_digest=payload["nonce_digest"],
+            approval_digest=payload["approval_digest"],
+        )
 
     @staticmethod
     def _receipt_from_payload(payload: object) -> TerminalReceipt:
@@ -947,7 +1015,7 @@ class SQLiteOperationJournal:
         if (
             isinstance(ttl_seconds, bool)
             or not isinstance(ttl_seconds, (int, float))
-            or not math.isfinite(ttl_seconds)
+            or not SQLiteOperationJournal._is_finite_number(ttl_seconds)
             or ttl_seconds <= 0
             or ttl_seconds > 86400
         ):
@@ -960,10 +1028,17 @@ class SQLiteOperationJournal:
         if (
             isinstance(now, bool)
             or not isinstance(now, (int, float))
-            or not math.isfinite(now)
+            or not self._is_finite_number(now)
         ):
             raise IntegrityError("Operation journal clock returned a non-finite sample.")
         return float(now)
+
+    @staticmethod
+    def _is_finite_number(value: int | float) -> bool:
+        try:
+            return math.isfinite(float(value))
+        except (OverflowError, TypeError, ValueError):
+            return False
 
     @staticmethod
     def _require_nonterminal_operation(
