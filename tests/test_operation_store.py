@@ -138,9 +138,10 @@ def _execution_bundle(
     request_id: str = "request_input-1",
     idempotency_key: str = "deploy-input",
     decision_id: str = "decision_input-1",
+    revision_id: str = "rev_static-1",
 ):
     revision = Revision(
-        revision_id="rev_static-1",
+        revision_id=revision_id,
         app="demo-service",
         environment="production",
         manifest_digest=D2,
@@ -220,6 +221,7 @@ def _receipt(
     approval: ApprovedPlanRef,
     *,
     receipt_id: str = "receipt_example-1",
+    previous_revision_id: str | None = "rev_previous",
 ) -> TerminalReceipt:
     return TerminalReceipt(
         receipt_id=receipt_id,
@@ -231,7 +233,7 @@ def _receipt(
         host_id=request.host_id,
         app=request.app,
         environment=request.environment,
-        previous_revision_id="rev_previous",
+        previous_revision_id=previous_revision_id,
         desired_revision_id=request.revision_id,
         desired_revision_digest=request.revision_digest,
         active_revision_id=request.revision_id,
@@ -1209,6 +1211,25 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             database_bytes += wal_path.read_bytes()
         self.assertNotIn(b"raw-input-nonce-that-must-not-be-stored", database_bytes)
 
+    def test_execution_deadline_must_be_future_and_within_approval(self) -> None:
+        request, approval, execution_input = _execution_bundle()
+
+        for deadline in ("2026-07-11T17:10:00Z", "2026-07-11T19:00:01Z"):
+            invalid = ExecutionInput.bind(
+                request=request,
+                plan=execution_input.plan,
+                approved_plan=approval,
+                revision=execution_input.revision,
+                artifact_ref=execution_input.artifact_ref,
+                deadline=deadline,
+            )
+            with self.subTest(deadline=deadline), self.assertRaises(
+                OperationConflict
+            ):
+                self.store.accept(
+                    _actor(), request, approval, execution_input=invalid
+                )
+
     def test_execution_input_tampering_with_recomputed_digest_is_detected(self) -> None:
         request, approval, execution_input = _execution_bundle()
         operation = self.store.accept(
@@ -1296,8 +1317,8 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         )
         self.assertEqual(2, staged.sequence)
 
-    def _ready_input_operation(self):
-        request, approval, execution_input = _execution_bundle()
+    def _ready_input_operation(self, **bundle_kwargs):
+        request, approval, execution_input = _execution_bundle(**bundle_kwargs)
         operation = self.store.accept(
             _actor(), request, approval, execution_input=execution_input
         )
@@ -1334,7 +1355,12 @@ class SQLiteOperationJournalTests(unittest.TestCase):
 
     def test_atomic_success_commits_active_lifecycle_event_and_receipt(self) -> None:
         operation, request, approval, _, fence = self._ready_input_operation()
-        receipt = _receipt(operation.operation_id, request, approval)
+        receipt = _receipt(
+            operation.operation_id,
+            request,
+            approval,
+            previous_revision_id=None,
+        )
 
         active = self.store.commit_success(receipt, None, fence=fence)
 
@@ -1356,6 +1382,61 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             receipt.receipt_id,
             self.store.receipt_payload(operation.operation_id)["receipt_id"],
         )
+        self.store.integrity_check()
+
+    def test_atomic_success_requires_the_exact_predecessor_revision(self) -> None:
+        operation, request, approval, _, fence = self._ready_input_operation()
+        receipt = _receipt(operation.operation_id, request, approval)
+
+        with self.assertRaises(OperationConflict):
+            self.store.commit_success(receipt, None, fence=fence)
+
+        self.assertEqual(
+            RevisionState.READY,
+            self.store.revision_history(operation.operation_id)[-1].state,
+        )
+        self.assertIsNone(
+            self.store.active_revision(request.host_id, request.app, request.environment)
+        )
+
+    def test_historical_atomic_success_survives_a_later_activation(self) -> None:
+        first, first_request, first_approval, _, first_fence = (
+            self._ready_input_operation()
+        )
+        first_receipt = _receipt(
+            first.operation_id,
+            first_request,
+            first_approval,
+            receipt_id="receipt_static-1",
+            previous_revision_id=None,
+        )
+        first_active = self.store.commit_success(
+            first_receipt, None, fence=first_fence
+        )
+
+        second, second_request, second_approval, _, second_fence = (
+            self._ready_input_operation(
+                request_id="request_input-2",
+                idempotency_key="deploy-input-2",
+                decision_id="decision_input-2",
+                revision_id="rev_static-2",
+            )
+        )
+        second_receipt = _receipt(
+            second.operation_id,
+            second_request,
+            second_approval,
+            receipt_id="receipt_static-2",
+            previous_revision_id=first_request.revision_id,
+        )
+        second_active = self.store.commit_success(
+            second_receipt,
+            first_active.revision_digest,
+            fence=second_fence,
+        )
+
+        self.assertEqual(first_active.generation + 1, second_active.generation)
+        self.assertEqual(second.operation_id, second_active.operation_id)
         self.store.integrity_check()
 
     def test_v1_to_v2_migration_preserves_existing_operation(self) -> None:

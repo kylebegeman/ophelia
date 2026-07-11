@@ -21,6 +21,7 @@ from ..domain._contracts import (
     canonical_digest,
     canonical_json,
     digest_text,
+    parse_utc,
     require_digest,
     require_text,
 )
@@ -308,6 +309,7 @@ class SQLiteOperationJournal:
             active_rows = connection.execute(
                 "SELECT * FROM active_revisions ORDER BY host_id, app, environment"
             ).fetchall()
+            active_by_scope = {}
             for row in active_rows:
                 active = cls._active_revision_from_row(row)
                 execution_input = cls._load_execution_input_tx(
@@ -332,25 +334,64 @@ class SQLiteOperationJournal:
                     raise IntegrityError(
                         "Active revision does not reconcile with lifecycle and input."
                     )
+                active_by_scope[(active.host_id, active.app, active.environment)] = active
             atomic_rows = connection.execute(
                 """
                 SELECT a.operation_id, a.active_generation, r.outcome,
-                       ar.generation, ar.operation_id AS active_operation_id
+                       r.payload_json AS receipt_json,
+                       o.host_id, o.app, o.environment
                 FROM atomic_success_commits AS a
                 JOIN terminal_receipts AS r ON r.operation_id = a.operation_id
-                LEFT JOIN active_revisions AS ar
-                  ON ar.operation_id = a.operation_id
-                ORDER BY a.operation_id
+                JOIN operations AS o ON o.operation_id = a.operation_id
+                ORDER BY o.host_id, o.app, o.environment,
+                         a.active_generation, a.operation_id
                 """
             ).fetchall()
+            latest_atomic_by_scope = {}
             for row in atomic_rows:
+                scope = (row["host_id"], row["app"], row["environment"])
+                previous = latest_atomic_by_scope.get(scope)
+                generation = int(row["active_generation"])
+                history = cls._verified_revision_history(
+                    connection, row["operation_id"]
+                )
+                receipt = cls._receipt_from_payload(json.loads(row["receipt_json"]))
+                execution_input = cls._load_execution_input_tx(
+                    connection, row["operation_id"]
+                )
                 if (
                     row["outcome"] != ReceiptOutcome.SUCCEEDED.value
-                    or row["active_operation_id"] != row["operation_id"]
-                    or int(row["active_generation"]) != int(row["generation"])
+                    or not history
+                    or history[-1].state is not RevisionState.ACTIVE
+                    or receipt.operation_id != row["operation_id"]
+                    or receipt.desired_revision_id
+                    != execution_input.revision.revision_id
+                    or receipt.desired_revision_digest
+                    != execution_input.revision.content_digest()
+                    or history[-1].revision_id != receipt.desired_revision_id
+                    or history[-1].revision_digest
+                    != receipt.desired_revision_digest
+                    or (
+                        previous is not None
+                        and generation <= previous[1]
+                    )
                 ):
                     raise IntegrityError(
-                        "Atomic success marker does not reconcile with active revision."
+                        "Atomic success marker does not reconcile with its receipt and lifecycle."
+                    )
+                latest_atomic_by_scope[scope] = (row["operation_id"], generation)
+            for scope, latest in latest_atomic_by_scope.items():
+                active = active_by_scope.get(scope)
+                if (
+                    active is None
+                    or active.generation < latest[1]
+                    or (
+                        active.generation == latest[1]
+                        and active.operation_id != latest[0]
+                    )
+                ):
+                    raise IntegrityError(
+                        "Current active revision conflicts with atomic success history."
                     )
         except IntegrityError:
             raise
@@ -460,6 +501,10 @@ class SQLiteOperationJournal:
                 )
 
             now = self._clock_sample()
+            if execution_input is not None and parse_utc(
+                execution_input.deadline
+            ) <= datetime.fromtimestamp(now, timezone.utc):
+                raise OperationConflict("Execution deadline has expired.")
             if approved_plan.expired(
                 datetime.fromtimestamp(now, timezone.utc)
             ):
@@ -594,6 +639,12 @@ class SQLiteOperationJournal:
     ) -> None:
         if not isinstance(execution_input, ExecutionInput):
             raise ContractValidationError("execution_input must be an ExecutionInput.")
+        if parse_utc(execution_input.deadline) > parse_utc(
+            approved_plan.expires_at
+        ):
+            raise OperationConflict(
+                "Execution deadline cannot outlive the approved plan."
+            )
         if not (
             execution_input.plan.request_digest == request_digest
             and execution_input.plan.operation == request.operation
@@ -2110,6 +2161,19 @@ class SQLiteOperationJournal:
                         "Atomic success receipt does not reconcile with active revision."
                     )
                 return self._active_revision_from_row(active)
+
+            current = connection.execute(
+                """
+                SELECT revision_id FROM active_revisions
+                WHERE host_id = ? AND app = ? AND environment = ?
+                """,
+                (validated.host_id, validated.app, validated.environment),
+            ).fetchone()
+            current_revision_id = None if current is None else current["revision_id"]
+            if validated.previous_revision_id != current_revision_id:
+                raise OperationConflict(
+                    "Successful receipt does not bind the exact predecessor revision."
+                )
 
             active = self._cas_active_revision_tx(
                 connection,
