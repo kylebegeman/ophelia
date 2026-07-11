@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import stat
+import subprocess
 import sys
 import time
 import tempfile
@@ -287,6 +288,39 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_concurrent_first_open_migrates_once_across_processes(self) -> None:
+        runtime_root = self.root / "concurrent-process-first-open"
+        source_root = Path(__file__).resolve().parents[1] / "src"
+        script = (
+            "from pathlib import Path; "
+            "from ophelia.execution import SQLiteOperationJournal; "
+            "SQLiteOperationJournal.beneath_runtime_root(Path(%r)).integrity_check()"
+            % str(runtime_root)
+        )
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(source_root)
+        processes = [
+            subprocess.Popen(
+                [sys.executable, "-c", script],
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(4)
+        ]
+        failures = []
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=15)
+            if process.returncode != 0:
+                failures.append((process.returncode, stdout, stderr))
+        self.assertEqual([], failures)
+
+        reopened = SQLiteOperationJournal.beneath_runtime_root(
+            runtime_root, clock=lambda: NOW
+        )
+        reopened.integrity_check()
+
     def test_accept_is_idempotent_across_request_retry_identity(self) -> None:
         first, request, approval = self._accept()
         retry = dataclasses.replace(request, request_id="request_example-2")
@@ -480,6 +514,40 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             SQLiteOperationJournal(self.store.database_path, clock=lambda: self.now[0])
 
+    def test_recomputed_event_digest_cannot_change_accepted_identity_claims(self) -> None:
+        operation, _, _ = self._accept()
+        event = _event(
+            operation.operation_id, sequence=1, event_id="event_rebound"
+        )
+        self.store.append(event)
+        payload = event.to_dict()
+        payload["host_id"] = "host_attacker"
+        payload_json = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        )
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            connection.execute(
+                """
+                UPDATE operation_events
+                SET payload_json = ?, event_digest = ?
+                WHERE operation_id = ?
+                """,
+                (
+                    payload_json,
+                    canonical_digest(payload),
+                    operation.operation_id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.store.events(operation.operation_id)
+        with self.assertRaises(IntegrityError):
+            SQLiteOperationJournal(self.store.database_path, clock=lambda: self.now[0])
+
     def test_previous_event_link_tampering_is_detected(self) -> None:
         operation, _, _ = self._accept()
         first = _event(
@@ -514,6 +582,64 @@ class SQLiteOperationJournalTests(unittest.TestCase):
 
         with self.assertRaises(IntegrityError):
             self.store.events(operation.operation_id)
+
+    def test_recomputed_plan_and_approval_claims_cannot_rebind_operation(self) -> None:
+        operation, _, _ = self._accept()
+        event = _event(
+            operation.operation_id, sequence=1, event_id="event_plan-rebound"
+        )
+        self.store.append(event)
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            plan_id, plan_json = connection.execute(
+                "SELECT plan_id, payload_json FROM plans"
+            ).fetchone()
+            decision_id, approval_json = connection.execute(
+                "SELECT decision_id, payload_json FROM approvals"
+            ).fetchone()
+            plan_payload = json.loads(plan_json)
+            approval_payload = json.loads(approval_json)
+            plan_payload["revision_digest"] = D2
+            approval_payload["revision_digest"] = D2
+            approval_binding = dict(approval_payload)
+            approval_binding.pop("approval_digest")
+            approval_payload["approval_digest"] = canonical_digest(approval_binding)
+            connection.execute(
+                "UPDATE plans SET payload_json = ? WHERE plan_id = ?",
+                (
+                    json.dumps(
+                        plan_payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                    plan_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE approvals SET payload_json = ?, approval_digest = ?
+                WHERE decision_id = ?
+                """,
+                (
+                    json.dumps(
+                        approval_payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                    approval_payload["approval_digest"],
+                    decision_id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.store.events(operation.operation_id)
+        with self.assertRaises(IntegrityError):
+            SQLiteOperationJournal(self.store.database_path, clock=lambda: self.now[0])
 
     def test_public_append_cannot_create_terminal_state_without_receipt(self) -> None:
         operation, _, _ = self._accept()
@@ -592,6 +718,40 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             lease_owner=second.owner_id,
             fencing_token=second.fencing_token,
         )
+
+    def test_non_finite_lease_ttls_and_clock_samples_fail_closed(self) -> None:
+        operation, _, _ = self._accept()
+        for ttl in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(ttl=ttl):
+                with self.assertRaises(ContractValidationError):
+                    self.store.acquire_lease(operation.operation_id, "executor-a", ttl)
+
+        lease = self.store.acquire_lease(operation.operation_id, "executor-a", 10)
+        for sample in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(clock=sample):
+                self.store._clock = lambda sample=sample: sample
+                with self.assertRaises(IntegrityError):
+                    self.store.heartbeat_lease(
+                        operation.operation_id,
+                        lease.owner_id,
+                        lease.fencing_token,
+                        10,
+                    )
+                with self.assertRaises(IntegrityError):
+                    self.store.release_lease(
+                        operation.operation_id,
+                        lease.owner_id,
+                        lease.fencing_token,
+                    )
+
+        self.store._clock = lambda: float("nan")
+        request = _request(
+            request_id="request_nonfinite", idempotency_key="nonfinite-clock"
+        )
+        with self.assertRaises(IntegrityError):
+            self.store.accept(
+                _actor(), request, _approval(request, decision_id="decision_nonfinite")
+            )
 
     def test_lease_samples_time_after_waiting_for_write_lock(self) -> None:
         operation, _, _ = self._accept()
@@ -785,6 +945,76 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             connection.commit()
         finally:
             connection.close()
+        with self.assertRaises(IntegrityError):
+            SQLiteOperationJournal(self.store.database_path, clock=lambda: self.now[0])
+
+    def test_recomputed_receipt_digest_cannot_change_accepted_claims(self) -> None:
+        operation, request, approval = self._accept()
+        receipt = _receipt(operation.operation_id, request, approval)
+        self.store.commit_receipt(receipt)
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM terminal_receipts WHERE operation_id = ?",
+                    (operation.operation_id,),
+                ).fetchone()[0]
+            )
+            payload["plan_id"] = "plan_attacker"
+            payload_json = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            connection.execute(
+                """
+                UPDATE terminal_receipts
+                SET payload_json = ?, receipt_digest = ?
+                WHERE operation_id = ?
+                """,
+                (payload_json, canonical_digest(payload), operation.operation_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.store.events(operation.operation_id)
+        with self.assertRaises(IntegrityError):
+            self.store.receipt_payload(operation.operation_id)
+        with self.assertRaises(IntegrityError):
+            self.store.commit_receipt(receipt)
+
+    def test_malformed_receipt_is_integrity_error_on_read_reopen_and_duplicate(self) -> None:
+        operation, request, approval = self._accept()
+        receipt = _receipt(operation.operation_id, request, approval)
+        self.store.commit_receipt(receipt)
+        connection = sqlite3.connect(str(self.store.database_path))
+        try:
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM terminal_receipts WHERE operation_id = ?",
+                    (operation.operation_id,),
+                ).fetchone()[0]
+            )
+            payload.pop("verification")
+            payload_json = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            connection.execute(
+                """
+                UPDATE terminal_receipts
+                SET payload_json = ?, receipt_digest = ?
+                WHERE operation_id = ?
+                """,
+                (payload_json, canonical_digest(payload), operation.operation_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.store.receipt_payload(operation.operation_id)
+        with self.assertRaises(IntegrityError):
+            self.store.commit_receipt(receipt)
         with self.assertRaises(IntegrityError):
             SQLiteOperationJournal(self.store.database_path, clock=lambda: self.now[0])
 
