@@ -171,6 +171,28 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
             CREATE INDEX execution_scope_lease_operation
             ON execution_scope_leases(operation_id)
             """,
+            """
+            INSERT INTO execution_scope_leases(
+                host_id, app, environment, operation_id, owner_id,
+                fencing_token, expires_at
+            )
+            SELECT o.host_id, o.app, o.environment, l.operation_id, l.owner_id,
+                   l.fencing_token, l.expires_at
+            FROM operation_leases AS l
+            JOIN operations AS o ON o.operation_id = l.operation_id
+            WHERE l.operation_id = (
+                SELECT l2.operation_id
+                FROM operation_leases AS l2
+                JOIN operations AS o2 ON o2.operation_id = l2.operation_id
+                WHERE o2.host_id = o.host_id
+                  AND o2.app = o.app
+                  AND o2.environment = o.environment
+                ORDER BY l2.fencing_token DESC,
+                         l2.expires_at DESC,
+                         l2.operation_id DESC
+                LIMIT 1
+            )
+            """,
         ),
     ),
 )

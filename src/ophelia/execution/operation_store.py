@@ -1411,6 +1411,7 @@ class SQLiteOperationJournal:
             )
             for check in checks_payload
         )
+        SQLiteOperationJournal._reject_verification_summary_prose(checks)
         verification = VerificationResult(
             status=VerificationStatus(verification_payload["status"]),
             observed_revision_digest=verification_payload.get(
@@ -1682,6 +1683,32 @@ class SQLiteOperationJournal:
                 and operation_lease["owner_id"] != owner_id
             ):
                 raise LeaseConflict("Operation lease is held by another owner.")
+
+            legacy_scope_lease = connection.execute(
+                """
+                SELECT l.operation_id, l.owner_id
+                FROM operation_leases AS l
+                JOIN operations AS o ON o.operation_id = l.operation_id
+                WHERE o.host_id = ? AND o.app = ? AND o.environment = ?
+                  AND l.owner_id IS NOT NULL
+                  AND l.expires_at > ?
+                  AND (l.operation_id != ? OR l.owner_id != ?)
+                ORDER BY l.expires_at DESC, l.operation_id
+                LIMIT 1
+                """,
+                (
+                    scope["host_id"],
+                    scope["app"],
+                    scope["environment"],
+                    now,
+                    operation_id,
+                    owner_id,
+                ),
+            ).fetchone()
+            if legacy_scope_lease is not None:
+                raise LeaseConflict(
+                    "Application execution scope has an active legacy operation lease."
+                )
 
             scope_lease = connection.execute(
                 """
@@ -2562,12 +2589,24 @@ class SQLiteOperationJournal:
     def _revalidate_receipt(receipt: TerminalReceipt) -> TerminalReceipt:
         if not isinstance(receipt, TerminalReceipt):
             raise ContractValidationError("receipt must be a TerminalReceipt.")
+        SQLiteOperationJournal._reject_verification_summary_prose(
+            receipt.verification.checks
+        )
         checks = tuple(replace(check) for check in receipt.verification.checks)
         verification = replace(receipt.verification, checks=checks)
         compensation = replace(receipt.compensation)
         return replace(
             receipt, verification=verification, compensation=compensation
         )
+
+    @staticmethod
+    def _reject_verification_summary_prose(
+        checks: Tuple[VerificationCheck, ...]
+    ) -> None:
+        if any(check.summary is not None for check in checks):
+            raise ContractValidationError(
+                "Authoritative journal verification checks cannot contain summary prose."
+            )
 
     def receipt_payload(self, operation_id: str) -> Optional[dict]:
         connection = self._connect()
