@@ -14,6 +14,7 @@ from .execution.staging import (
     StagingError,
     confirmation_token,
 )
+from .domain import canonical_digest
 from .manifest import Manifest
 from .operation_schema import attach_digest, diff_artifact, operation_id
 from .policy import policy_check_entry
@@ -233,6 +234,7 @@ def deploy_plan(
             runtime_root=runtime_root,
         )
     ]
+    plan["policy_digest"] = canonical_digest({"checks": plan["checks"]})
     plan["confirmation_token"] = (
         deploy_confirmation_token(plan) if plan["confirmation_required"] else None
     )
@@ -252,6 +254,7 @@ def deploy_plan(
                 "candidate_digest": candidate_digest,
                 "baseline_digest": baseline_digest,
                 "generated_files": generated_files,
+                "policy_digest": finalized["policy_digest"],
                 "evidence": evidence_bindings,
                 "deploy_metadata": effective_metadata,
                 "confirmation_payload": deploy_confirmation_payload(finalized),
@@ -484,6 +487,7 @@ def deploy_confirmation_payload(plan: Dict[str, object]) -> Dict[str, object]:
         "baseline_digest": plan.get("baseline_digest"),
         "evidence_digests": plan.get("evidence_digests"),
         "deploy_metadata": plan.get("deploy_metadata"),
+        "policy_digest": plan.get("policy_digest"),
         "generated_files": plan.get("generated_files"),
         "confirmation_created_at": plan.get("confirmation_created_at"),
         "confirmation_expires_at": plan.get("confirmation_expires_at"),
