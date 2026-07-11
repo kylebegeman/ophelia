@@ -66,9 +66,13 @@ class _RuntimeState:
     predecessor_revision_id: str | None = None
     predecessor_revision_digest: str | None = None
     crash_once_at: str | None = None
+    preflight_ok: bool = True
+    fail_preflight_call: int | None = None
+    preflight_calls: int = 0
     fail_active_verification_once: bool = False
     activation_count: int = 0
     restore_count: int = 0
+    remove_count: int = 0
     verification_summary: str | None = None
 
 
@@ -80,10 +84,15 @@ class _FakeStaticBackend:
         self.state = state
 
     def preflight(self, revision: Revision) -> PreflightResult:
+        self.state.preflight_calls += 1
+        ok = self.state.preflight_ok and (
+            self.state.fail_preflight_call != self.state.preflight_calls
+        )
         return PreflightResult(
-            ok=True,
+            ok=ok,
             observed_state_digest=_digest("preflight"),
             evidence_digests=(_digest("preflight-evidence"),),
+            blocker_codes=() if ok else ("fixture_preflight_failed",),
         )
 
     def start(self, revision: Revision) -> RuntimeHandle:
@@ -197,6 +206,7 @@ class _FakeStaticBackend:
         )
 
     def remove(self, handle: RuntimeHandle) -> RemoveResult:
+        self.state.remove_count += 1
         self.state.materialized_revision_id = None
         self.state.materialized_revision_digest = None
         self._crash("after_remove")
@@ -314,7 +324,11 @@ def _bundle(
                     PlanPhase.EMIT_RECEIPT,
                 },
                 desired_effect_digest=canonical_digest(
-                    {"phase": phase.value, "suffix": suffix}
+                    {
+                        "phase": phase.value,
+                        "revision_digest": revision.content_digest(),
+                        "artifact_digest": artifact_digest,
+                    }
                 ),
                 compensation=compensations.get(phase, CompensationAction.NONE),
             )
@@ -579,6 +593,77 @@ class JournaledExecutorTests(unittest.TestCase):
                 execution_input=incomplete_input,
             )
         self.assertEqual((), self.journal.list_recoverable())
+
+    def test_altered_static_effect_digest_is_rejected_before_durable_acceptance(self) -> None:
+        actor, request, _, execution_input = _bundle("altered-effect")
+        original = execution_input.plan
+        altered_steps = tuple(
+            replace(
+                step,
+                desired_effect_digest=canonical_digest(
+                    {"phase": step.phase.value, "altered": True}
+                ),
+            )
+            if step.phase is PlanPhase.SWITCH_TRAFFIC
+            else step
+            for step in original.steps
+        )
+        altered_plan = OperationPlan.create(
+            request=request,
+            manifest_digest=original.manifest_digest,
+            artifact_digests=original.artifact_digests,
+            observed_state_digest=original.observed_state_digest,
+            policy_digest=original.policy_digest,
+            steps=altered_steps,
+            blocker_codes=(),
+            created_at=original.created_at,
+        )
+        altered_approval = ApprovedPlanRef.bind(
+            altered_plan,
+            actor_id=actor.actor_id,
+            decision_id="decision_altered-effect",
+            authorization_kind=AuthorizationKind.LUMEN_DECISION,
+            issuer="fixture",
+            audience=request.host_id,
+            approved_at="2026-07-11T17:05:00Z",
+            expires_at="2026-07-11T19:00:00Z",
+            approval_nonce="altered-effect-nonce",
+        )
+        altered_input = ExecutionInput.bind(
+            request=request,
+            plan=altered_plan,
+            approved_plan=altered_approval,
+            revision=execution_input.revision,
+            artifact_ref=execution_input.artifact_ref,
+            deadline=execution_input.deadline,
+        )
+
+        with self.assertRaisesRegex(BackendContractError, "exact desired effects"):
+            self.executor.submit(
+                actor,
+                request,
+                altered_approval,
+                execution_input=altered_input,
+            )
+        self.assertEqual((), self.journal.list_recoverable())
+        self.assertEqual(0, self.runtime.activation_count)
+        self.assertEqual(0, self.runtime.remove_count)
+
+    def test_preflight_failure_does_not_remove_unstarted_candidate(self) -> None:
+        self.runtime.fail_preflight_call = 2
+        operation, _, _, _, _ = self._submit("preflight-failure")
+
+        receipt = self.executor.run(operation.operation_id, owner_id="worker-one")
+
+        self.assertEqual(ReceiptOutcome.FAILED_COMPENSATED, receipt.outcome)
+        self.assertEqual(0, self.runtime.remove_count)
+        self.assertFalse(
+            any(
+                event.event_type
+                == f"phase.{PlanPhase.START_CANDIDATE.value}.started"
+                for event in self.journal.events(operation.operation_id)
+            )
+        )
 
 
 if __name__ == "__main__":

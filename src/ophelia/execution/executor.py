@@ -606,7 +606,7 @@ class JournaledExecutor:
                         )
                 evidence_digests.extend(result.evidence_digests)
 
-            cleanup_required = candidate_started or not cancelled
+            cleanup_required = candidate_started
             if cleanup_required:
                 removal = backend.remove(candidate)
                 if not removal.removed:
@@ -617,8 +617,18 @@ class JournaledExecutor:
 
             if not switch_started and not cleanup_required:
                 compensation = CompensationResult(
-                    attempted=False,
-                    status=CompensationStatus.NOT_NEEDED,
+                    attempted=not cancelled,
+                    status=(
+                        CompensationStatus.NOT_NEEDED
+                        if cancelled
+                        else CompensationStatus.SUCCEEDED
+                    ),
+                    restored_revision_id=(
+                        None if previous is None else previous.revision_id
+                    ),
+                    restored_revision_digest=(
+                        None if previous is None else previous.revision_digest
+                    ),
                 )
             else:
                 compensation = CompensationResult(
@@ -836,6 +846,20 @@ class JournaledExecutor:
             raise BackendContractError(
                 "Static activation steps do not declare the required mutation and compensation semantics."
             )
+        revision_digest = execution_input.revision.content_digest()
+        artifact_digest = execution_input.artifact_ref.artifact_digest
+        expected_effect_digests = tuple(
+            JournaledExecutor._expected_static_effect_digest(
+                step.phase, revision_digest, artifact_digest
+            )
+            for step in execution_input.plan.steps
+        )
+        if tuple(
+            step.desired_effect_digest for step in execution_input.plan.steps
+        ) != expected_effect_digests:
+            raise BackendContractError(
+                "Static activation steps do not declare the exact desired effects."
+            )
         workloads = execution_input.revision.workloads
         if (
             len(workloads) != 1
@@ -857,6 +881,18 @@ class JournaledExecutor:
             raise BackendContractError(
                 "Static execution artifacts must reference immutable operation staging."
             )
+
+    @staticmethod
+    def _expected_static_effect_digest(
+        phase: PlanPhase, revision_digest: str, artifact_digest: str
+    ) -> str:
+        return canonical_digest(
+            {
+                "phase": phase.value,
+                "revision_digest": revision_digest,
+                "artifact_digest": artifact_digest,
+            }
+        )
 
     @staticmethod
     def _previous_handle(
