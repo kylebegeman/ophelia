@@ -6,7 +6,7 @@ import sqlite3
 from typing import Sequence, Tuple
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
     (
@@ -86,6 +86,70 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
             """,
             "CREATE INDEX operation_events_lookup ON operation_events(operation_id, sequence)",
             "CREATE INDEX operations_state_lookup ON operations(state, accepted_at)",
+        ),
+    ),
+    (
+        2,
+        (
+            """
+            CREATE TABLE operation_inputs (
+                operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id) ON DELETE CASCADE,
+                input_digest TEXT NOT NULL,
+                deadline TEXT NOT NULL,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536)
+            )
+            """,
+            """
+            CREATE TABLE operation_controls (
+                operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id) ON DELETE CASCADE,
+                cancellation_actor_json TEXT CHECK (
+                    cancellation_actor_json IS NULL OR length(cancellation_actor_json) <= 65536
+                ),
+                cancellation_requested_at TEXT
+            )
+            """,
+            """
+            CREATE TABLE revision_lifecycle (
+                operation_id TEXT NOT NULL REFERENCES operations(operation_id) ON DELETE CASCADE,
+                sequence INTEGER NOT NULL CHECK (sequence > 0),
+                revision_id TEXT NOT NULL,
+                revision_digest TEXT NOT NULL,
+                state TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                lease_owner TEXT NOT NULL,
+                fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+                PRIMARY KEY (operation_id, sequence)
+            )
+            """,
+            """
+            CREATE TABLE active_revisions (
+                host_id TEXT NOT NULL,
+                app TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+                revision_id TEXT NOT NULL,
+                revision_digest TEXT NOT NULL,
+                generation INTEGER NOT NULL CHECK (generation > 0),
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+                PRIMARY KEY (host_id, app, environment)
+            )
+            """,
+            """
+            CREATE TABLE atomic_success_commits (
+                operation_id TEXT PRIMARY KEY REFERENCES terminal_receipts(operation_id),
+                active_generation INTEGER NOT NULL CHECK (active_generation > 0)
+            )
+            """,
+            """
+            CREATE INDEX operations_recovery_lookup
+            ON operations(state, accepted_at, operation_id)
+            """,
+            """
+            CREATE INDEX revision_lifecycle_latest
+            ON revision_lifecycle(operation_id, sequence DESC)
+            """,
         ),
     ),
 )
