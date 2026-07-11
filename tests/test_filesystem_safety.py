@@ -466,9 +466,9 @@ class FilesystemSafetyTests(unittest.TestCase):
 
             def hook(event: str, path: str) -> None:
                 if event == "before_commit" and path == "write-only":
-                    staged = list(root.glob(".ophelia-dir-tmp-*"))
-                    self.assertEqual(1, len(staged))
-                    staged_modes.append(stat.S_IMODE(staged[0].stat().st_mode))
+                    staged_modes.append(
+                        stat.S_IMODE((root / "write-only").stat().st_mode)
+                    )
 
             with ManagedRoot(
                 root,
@@ -491,7 +491,84 @@ class FilesystemSafetyTests(unittest.TestCase):
                 0o700,
                 stat.S_IMODE((root / "restrictive-umask").stat().st_mode),
             )
-            self.assertEqual([], list(root.glob(".ophelia-dir-tmp-*")))
+
+    def test_mkdir_does_not_replace_a_concurrently_created_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "managed"
+            root.mkdir(mode=0o700)
+            real_mkdir = filesystem.os.mkdir
+            injected = False
+
+            def competing_mkdir(name, mode=0o777, *, dir_fd=None):
+                nonlocal injected
+                if name == "contested" and not injected:
+                    real_mkdir(name, 0o700, dir_fd=dir_fd)
+                    injected = True
+                return real_mkdir(name, mode, dir_fd=dir_fd)
+
+            with ManagedRoot(
+                root,
+                trusted_owner_uid=TRUSTED_UID,
+            ) as managed, mock.patch.object(
+                filesystem.os,
+                "mkdir",
+                side_effect=competing_mkdir,
+            ):
+                with self.assertRaises(FilesystemSafetyError) as failure:
+                    managed.mkdir("contested")
+
+            self.assertTrue(injected)
+            self.assertEqual(
+                FilesystemSafetyCode.INVALID_DESTINATION,
+                failure.exception.code,
+            )
+            self.assertTrue((root / "contested").is_dir())
+
+    def test_copy_source_close_failure_preserves_primary_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            root = base / "managed"
+            outside = base / "outside"
+            source = base / "source"
+            root.mkdir(mode=0o700)
+            outside.mkdir(mode=0o700)
+            source.write_bytes(b"source")
+            (root / "blocked").symlink_to(outside / "escaped")
+            source_identity = (source.stat().st_dev, source.stat().st_ino)
+            real_close = filesystem.os.close
+            real_fstat = filesystem.os.fstat
+
+            def close_then_report(descriptor: int) -> None:
+                try:
+                    value = real_fstat(descriptor)
+                    identity = (value.st_dev, value.st_ino)
+                except OSError:
+                    identity = None
+                real_close(descriptor)
+                if identity == source_identity:
+                    raise OSError(errno.EIO, "source close failed")
+
+            with ManagedRoot(
+                root,
+                trusted_owner_uid=TRUSTED_UID,
+            ) as managed, mock.patch.object(
+                filesystem.os,
+                "close",
+                side_effect=close_then_report,
+            ):
+                with self.assertRaises(FilesystemSafetyError) as failure:
+                    managed.copy_in(source, "blocked")
+
+            self.assertEqual(
+                FilesystemSafetyCode.CLEANUP_FAILURE,
+                failure.exception.code,
+            )
+            self.assertEqual(
+                FilesystemSafetyCode.SYMLINK_COMPONENT.value,
+                failure.exception.primary_error_code,
+            )
+            self.assertIn("close_copy_source", failure.exception.cleanup_failures)
+            self.assertFalse((outside / "escaped").exists())
 
     def test_mkdir_post_publication_failure_retains_requested_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
