@@ -225,25 +225,34 @@ def deploy_plan(
         "image_digest_pinned": image_digest_pinned,
         "json_receipts": True,
     }
-    plan["checks"] = [
-        policy_check_entry(
-            "deploy.apply",
-            plan["app"],
-            plan["environment"],
-            policy_context,
-            runtime_root=runtime_root,
-        )
-    ]
+    policy_entry = policy_check_entry(
+        "deploy.apply",
+        plan["app"],
+        plan["environment"],
+        policy_context,
+        runtime_root=runtime_root,
+    )
+    plan["checks"] = [policy_entry]
+    policy_result = policy_entry.get("result")
+    plan["blockers"] = (
+        list(policy_result.get("blockers", []))
+        if isinstance(policy_result, dict) and policy_result.get("status") == "blocked"
+        else []
+    )
     plan["policy_digest"] = canonical_digest({"checks": plan["checks"]})
     plan["confirmation_token"] = (
-        deploy_confirmation_token(plan) if plan["confirmation_required"] else None
+        deploy_confirmation_token(plan)
+        if plan["confirmation_required"] and not plan["blockers"]
+        else None
     )
     finalized = attach_digest(
         plan,
         operation="deploy.plan",
         risk="high" if plan["confirmation_required"] else "medium",
     )
-    if finalized["confirmation_required"]:
+    if finalized["confirmation_required"] and isinstance(
+        finalized["confirmation_token"], str
+    ):
         staging.write_binding(
             {
                 "schema_version": 2,

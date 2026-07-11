@@ -253,6 +253,63 @@ verify:
             self.assertIsNotNone(entry["result"])
             self.assertEqual("deploy.apply", entry["result"]["operation"])
 
+    def test_blocked_or_unreadable_policy_withholds_confirmation_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            policy_dir = runtime_root / "policy"
+            policy_dir.mkdir(parents=True)
+            policy_path = policy_dir / "ophelia-policy.yml"
+            policy_path.write_text(
+                """
+version: 1
+rules:
+  - id: require-pinned-image
+    operation: deploy.apply
+    environment: production
+    require:
+      image_digest_pinned: true
+    severity: blocker
+""".strip()
+                + "\n"
+            )
+            manifest_path = root / "policy-test.ophelia.yml"
+            manifest_path.write_text(self._manifest("super-secret-value"))
+
+            blocked = deploy_plan(
+                load_manifest(manifest_path),
+                manifest_path,
+                runtime_root,
+            )
+
+            self.assertIsNone(blocked["confirmation_token"])
+            self.assertTrue(blocked["blockers"])
+            operation_root = Path(blocked["staging"]["root"])
+            self.assertFalse((operation_root / "plan-binding.json").exists())
+
+            policy_path.write_text("version: [\n")
+            unreadable = deploy_plan(
+                load_manifest(manifest_path),
+                manifest_path,
+                root / "runtime-unreadable",
+            )
+            # The second runtime falls back to the valid repository policy.
+            self.assertIsNotNone(unreadable["confirmation_token"])
+
+            unreadable_policy_dir = root / "runtime-unreadable" / "policy"
+            unreadable_policy_dir.mkdir(parents=True, exist_ok=True)
+            (unreadable_policy_dir / "ophelia-policy.yml").write_text("version: [\n")
+            failed_closed = deploy_plan(
+                load_manifest(manifest_path),
+                manifest_path,
+                root / "runtime-unreadable",
+            )
+            self.assertIsNone(failed_closed["confirmation_token"])
+            self.assertEqual(
+                ["policy_evaluation_failed"],
+                [item["code"] for item in failed_closed["blockers"]],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

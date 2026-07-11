@@ -14,7 +14,7 @@ from ..execution.staging import (
 )
 from ..manifest import ManifestError, load_manifest
 from ..operation_schema import error_envelope
-from ..planning import deploy_plan, deploy_confirmation_token
+from ..planning import deploy_plan
 from ..remote import RemoteError, stage_remote_bundle
 from ..runtime import (
     ApplyPhaseError,
@@ -304,8 +304,22 @@ def run(args: Namespace) -> int:
         except StagingError as exc:
             print(f"Deploy plan failed: {exc}")
             return 1
+    if (
+        args.apply
+        and manifest.environment == "production"
+        and plan is not None
+        and plan.get("blockers")
+    ):
+        codes = sorted(
+            str(item.get("code"))
+            for item in plan["blockers"]
+            if isinstance(item, dict) and item.get("code")
+        )
+        detail = ", ".join(codes) or "policy_blocked"
+        print(f"Production apply blocked by policy: {detail}.")
+        return 1
     if args.apply and manifest.environment == "production" and not args.confirm:
-        expected = deploy_confirmation_token(plan) if plan is not None else "unknown"
+        expected = plan.get("confirmation_token") if plan is not None else "unknown"
         print(
             "Production apply requires confirmation token "
             f"{expected}. Run `ship deploy {args.manifest} --plan` first."

@@ -178,7 +178,7 @@ def load_policy(
             raise PolicyError(f"Policy file not found: {resolved}")
         return _parse_policy_file(resolved)
 
-    for candidate in policy_search_paths(None, runtime_root)[1:]:
+    for candidate in policy_search_paths(None, runtime_root):
         if candidate.exists():
             return _parse_policy_file(candidate)
 
@@ -592,7 +592,7 @@ def explain_policy(policy: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Best-effort plan integration
+# Fail-closed plan integration
 # --------------------------------------------------------------------------- #
 
 
@@ -604,15 +604,16 @@ def policy_check_entry(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
     policy_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Build a plan ``checks`` entry from a policy evaluation, best-effort.
+    """Build the one fail-closed policy check used by mutating plans.
 
-    Never raises: a missing or broken policy file yields a non-blocking check
-    with a warning rather than crashing the plan. The returned entry is purely
-    additive and is appended to a plan's ``checks`` list; it does not contribute
-    to the plan's top-level blockers/status.
+    Never raises: unavailable or malformed policy becomes a blocking result so
+    callers cannot mistake an unevaluated policy for authorization.
     """
     try:
         policy = load_policy(policy_path, runtime_root=runtime_root)
+        validation = validate_policy(policy)
+        if validation["status"] == "blocked":
+            raise PolicyError("Policy validation failed.")
         result = evaluate_policy(operation, app, environment, context, policy=policy)
         return {
             "name": "policy",
@@ -620,11 +621,28 @@ def policy_check_entry(
             "kind": POLICY_RESULT_KIND,
             "result": result,
         }
-    except Exception as exc:  # best-effort: a policy problem must not break a plan
+    except Exception:
+        blocker = issue(
+            "policy_evaluation_failed",
+            "Policy could not be loaded and evaluated. Failing closed.",
+            "policy",
+        )
+        result = {
+            "schema_version": SCHEMA_VERSION,
+            "kind": POLICY_RESULT_KIND,
+            "operation": operation,
+            "app": app,
+            "environment": environment,
+            "status": "blocked",
+            "rules": [],
+            "blockers": [blocker],
+            "warnings": [],
+            "summary": f"Policy result for {operation}: blocked because evaluation failed.",
+        }
         return {
             "name": "policy",
-            "ok": True,
+            "ok": False,
             "kind": POLICY_RESULT_KIND,
-            "message": f"Policy evaluation skipped: {exc}",
-            "result": None,
+            "message": "Policy evaluation failed closed.",
+            "result": result,
         }
