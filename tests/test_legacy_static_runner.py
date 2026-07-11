@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import multiprocessing
+import os
 import sys
 import tempfile
 import unittest
@@ -9,13 +12,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ophelia.domain import ReceiptOutcome
-from ophelia.execution.legacy_static_runner import execute_confirmed_static
+from ophelia.execution.legacy_static_runner import (
+    execute_confirmed_static,
+    static_execution_mode,
+    supports_journaled_static,
+)
 from ophelia.execution.operation_store import SQLiteOperationJournal
 from ophelia.execution.staging import find_confirmed_staging
 from ophelia.execution.static_backend import StaticBackendError
 from ophelia.manifest import load_manifest
 from ophelia.planning import deploy_plan
-from ophelia.runtime import DeployMetadata
+from ophelia.runtime import (
+    DeployMetadata,
+    current_release_id,
+    list_deployments,
+    list_releases,
+)
 
 
 class LegacyStaticRunnerTests(unittest.TestCase):
@@ -32,6 +44,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                     "kind": "ophelia.edge.reload",
                     "ok": True,
                     "container": "shared-caddy-1",
+                    "container_verified": True,
                     "validated": True,
                     "reloaded": True,
                     "returncode": 0,
@@ -60,6 +73,27 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                 database_bytes += wal_path.read_bytes()
             self.assertNotIn(raw_secret.encode(), database_bytes)
             self.assertNotIn(token.encode(), database_bytes)
+            self.assertEqual(
+                metadata.release_id,
+                current_release_id(runtime_root, manifest.app),
+            )
+            deployments = list_deployments(runtime_root)
+            self.assertEqual(1, len(deployments))
+            self.assertEqual(metadata.release_id, deployments[0].active_release_id)
+            releases = list_releases(runtime_root, manifest.app)
+            self.assertEqual(1, len(releases))
+            self.assertTrue(releases[0]["active"])
+            self.assertEqual(
+                "operations.db", releases[0]["kernel"]["authority"]
+            )
+            self.assertTrue(
+                (runtime_root / "apps" / manifest.app / "manifest.lock.json").is_file()
+            )
+            projection_bytes = (
+                runtime_root / "apps" / manifest.app / "release.json"
+            ).read_bytes()
+            self.assertNotIn(raw_secret.encode(), projection_bytes)
+            self.assertNotIn(token.encode(), projection_bytes)
             journal.integrity_check()
 
     def test_terminal_retry_returns_original_receipt_without_reloading(self) -> None:
@@ -74,6 +108,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                     "kind": "ophelia.edge.reload",
                     "ok": True,
                     "container": "shared-caddy-1",
+                    "container_verified": True,
                     "validated": True,
                     "reloaded": True,
                     "returncode": 0,
@@ -109,6 +144,181 @@ class LegacyStaticRunnerTests(unittest.TestCase):
             self.assertEqual(first.receipt, retried.receipt)
             self.assertEqual(["reload"], calls)
 
+    def test_process_crash_after_pointer_switch_recovers_through_same_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime_root, confirmed, manifest, token, metadata = _confirmed(root)
+
+            def reload_success(**_kwargs):
+                return {
+                    "kind": "ophelia.edge.reload",
+                    "ok": True,
+                    "container": "shared-caddy-1",
+                    "container_verified": True,
+                    "validated": True,
+                    "reloaded": True,
+                    "returncode": 0,
+                    "errors": [],
+                }
+
+            context = multiprocessing.get_context("spawn")
+            child = context.Process(
+                target=_crash_after_static_switch,
+                args=(str(root), str(runtime_root), token),
+            )
+            child.start()
+            child.join(timeout=20)
+            if child.is_alive():
+                child.terminate()
+                child.join(timeout=5)
+                self.fail("crash-injection child did not terminate")
+            self.assertEqual(91, child.exitcode)
+            self.assertTrue(supports_journaled_static(manifest, runtime_root))
+
+            recovered = execute_confirmed_static(
+                confirmed=confirmed,
+                manifest=manifest,
+                confirmation_token=token,
+                runtime_root=runtime_root,
+                ophelia_root=root,
+                deploy_metadata=metadata,
+                caddy_reloader=reload_success,
+                owner_id="runner-crash-recovery",
+            )
+
+            self.assertEqual(ReceiptOutcome.SUCCEEDED, recovered.receipt.outcome)
+            journal = SQLiteOperationJournal.beneath_runtime_root(runtime_root)
+            active = journal.active_revision(
+                recovered.receipt.host_id,
+                manifest.app,
+                manifest.environment or "unknown",
+            )
+            self.assertIsNotNone(active)
+            self.assertEqual(
+                recovered.receipt.desired_revision_digest,
+                active.revision_digest,
+            )
+            journal.integrity_check()
+
+    def test_missing_live_revision_record_with_nonterminal_journal_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime_root, confirmed, manifest, token, metadata = _confirmed(root)
+            context = multiprocessing.get_context("spawn")
+            child = context.Process(
+                target=_crash_after_static_switch,
+                args=(str(root), str(runtime_root), token),
+            )
+            child.start()
+            child.join(timeout=20)
+            if child.is_alive():
+                child.terminate()
+                child.join(timeout=5)
+                self.fail("crash-injection child did not terminate")
+            self.assertEqual(91, child.exitcode)
+
+            record = (
+                runtime_root
+                / "apps"
+                / manifest.app
+                / "static-revisions"
+                / f"{metadata.release_id}.json"
+            )
+            self.assertTrue(record.is_file())
+            record.unlink()
+
+            self.assertEqual(
+                "blocked", static_execution_mode(manifest, runtime_root)
+            )
+            with self.assertRaisesRegex(
+                StaticBackendError, "predecessor migration"
+            ):
+                execute_confirmed_static(
+                    confirmed=confirmed,
+                    manifest=manifest,
+                    confirmation_token=token,
+                    runtime_root=runtime_root,
+                    ophelia_root=root,
+                    deploy_metadata=metadata,
+                    caddy_reloader=lambda **_kwargs: self.fail(
+                        "Caddy must not be called"
+                    ),
+                    owner_id="runner-missing-live-record",
+                )
+
+            current = runtime_root / "static" / manifest.app / "current"
+            self.assertEqual(
+                Path("releases") / metadata.release_id,
+                current.readlink(),
+            )
+
+    def test_recovery_binds_live_operation_and_revision_identity(self) -> None:
+        tampered_values = {
+            "operation_id": "operation_" + ("f" * 32),
+            "revision_digest": "sha256:" + ("f" * 64),
+        }
+        for field, tampered_value in tampered_values.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                runtime_root, confirmed, manifest, token, metadata = _confirmed(root)
+                context = multiprocessing.get_context("spawn")
+                child = context.Process(
+                    target=_crash_after_static_switch,
+                    args=(str(root), str(runtime_root), token),
+                )
+                child.start()
+                child.join(timeout=20)
+                if child.is_alive():
+                    child.terminate()
+                    child.join(timeout=5)
+                    self.fail("crash-injection child did not terminate")
+                self.assertEqual(91, child.exitcode)
+
+                record = (
+                    runtime_root
+                    / "apps"
+                    / manifest.app
+                    / "static-revisions"
+                    / f"{metadata.release_id}.json"
+                )
+                payload = json.loads(record.read_text(encoding="utf-8"))
+                payload[field] = tampered_value
+                record.unlink()
+                record.write_text(
+                    json.dumps(payload, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+                current = runtime_root / "static" / manifest.app / "current"
+                expected_target = Path("releases") / metadata.release_id
+                self.assertEqual(expected_target, current.readlink())
+                with self.assertRaisesRegex(
+                    StaticBackendError, "does not reconcile"
+                ):
+                    execute_confirmed_static(
+                        confirmed=confirmed,
+                        manifest=manifest,
+                        confirmation_token=token,
+                        runtime_root=runtime_root,
+                        ophelia_root=root,
+                        deploy_metadata=metadata,
+                        caddy_reloader=lambda **_kwargs: self.fail(
+                            "Caddy must not be called"
+                        ),
+                        owner_id="runner-crash-recovery",
+                    )
+
+                self.assertEqual(expected_target, current.readlink())
+                self.assertTrue(
+                    (
+                        runtime_root
+                        / "static"
+                        / manifest.app
+                        / "releases"
+                        / metadata.release_id
+                    ).is_dir()
+                )
+
     def test_incomplete_caddy_success_report_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -119,6 +329,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                     "kind": "ophelia.edge.reload",
                     "ok": True,
                     "container": "shared-caddy-1",
+                    "container_verified": True,
                     "validated": False,
                     "reloaded": True,
                     "returncode": 0,
@@ -193,6 +404,67 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                 Path("releases") / "legacy-release", current.readlink()
             )
 
+    def test_managed_live_state_without_authoritative_journal_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime_root, confirmed, manifest, token, metadata = _confirmed(root)
+            release_id = "orphaned-managed-release"
+            static_release = (
+                runtime_root
+                / "static"
+                / manifest.app
+                / "releases"
+                / release_id
+            )
+            static_release.mkdir(parents=True)
+            (static_release / "index.html").write_text("orphaned\n")
+            current = static_release.parents[1] / "current"
+            current.symlink_to(
+                Path("releases") / release_id,
+                target_is_directory=True,
+            )
+            caddy = (
+                runtime_root
+                / "caddy"
+                / "sites.d"
+                / f"{manifest.app}.caddy"
+            )
+            caddy.parent.mkdir(parents=True)
+            caddy.write_text("managed caddy\n")
+            record = (
+                runtime_root
+                / "apps"
+                / manifest.app
+                / "static-revisions"
+                / f"{release_id}.json"
+            )
+            record.parent.mkdir(parents=True)
+            record.write_text(
+                '{"operation_id":"operation_orphaned-managed",'
+                '"revision_digest":"sha256:' + ("a" * 64) + '"}\n'
+            )
+
+            self.assertTrue(supports_journaled_static(manifest, runtime_root))
+            with self.assertRaisesRegex(
+                StaticBackendError, "no authoritative operation journal"
+            ):
+                execute_confirmed_static(
+                    confirmed=confirmed,
+                    manifest=manifest,
+                    confirmation_token=token,
+                    runtime_root=runtime_root,
+                    ophelia_root=root,
+                    deploy_metadata=metadata,
+                    caddy_reloader=lambda **_kwargs: self.fail(
+                        "Caddy must not be called"
+                    ),
+                    owner_id="runner-orphaned-managed",
+                )
+
+            self.assertFalse(
+                (runtime_root / "host-state" / "operations.db").exists()
+            )
+
     def test_caddy_failure_restores_files_and_never_commits_success(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -256,6 +528,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                     "kind": "ophelia.edge.reload",
                     "ok": True,
                     "container": "shared-caddy-1",
+                    "container_verified": True,
                     "validated": True,
                     "reloaded": True,
                     "returncode": 0,
@@ -288,7 +561,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                 ophelia_root=root,
                 deploy_metadata=metadata,
                 caddy_reloader=reload_success,
-                external_verifier=verify_failure,
+                blocking_external_verifier=verify_failure,
                 owner_id="runner-external-failure",
             )
 
@@ -317,6 +590,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                     "kind": "ophelia.edge.reload",
                     "ok": True,
                     "container": "shared-caddy-1",
+                    "container_verified": True,
                     "validated": True,
                     "reloaded": True,
                     "returncode": 0,
@@ -347,7 +621,7 @@ class LegacyStaticRunnerTests(unittest.TestCase):
                 ophelia_root=root,
                 deploy_metadata=metadata,
                 caddy_reloader=reload_success,
-                external_verifier=verify_success,
+                blocking_external_verifier=verify_success,
                 owner_id="runner-external-success",
             )
 
@@ -404,6 +678,46 @@ routes:
         load_manifest(confirmed.manifest_path),
         token,
         metadata,
+    )
+
+
+def _crash_after_static_switch(
+    root_value: str, runtime_value: str, token: str
+) -> None:
+    root = Path(root_value)
+    runtime_root = Path(runtime_value)
+    confirmed = find_confirmed_staging(runtime_root, "runner-static", token)
+    manifest = load_manifest(confirmed.manifest_path)
+    metadata = DeployMetadata(
+        **confirmed.binding["deploy_metadata"], locked=True
+    )
+
+    def reload_success(**_kwargs):
+        return {
+            "kind": "ophelia.edge.reload",
+            "ok": True,
+            "container": "shared-caddy-1",
+            "container_verified": True,
+            "validated": True,
+            "reloaded": True,
+            "returncode": 0,
+            "errors": [],
+        }
+
+    def crash(boundary: str) -> None:
+        if boundary == "after_static_switch":
+            os._exit(91)
+
+    execute_confirmed_static(
+        confirmed=confirmed,
+        manifest=manifest,
+        confirmation_token=token,
+        runtime_root=runtime_root,
+        ophelia_root=root,
+        deploy_metadata=metadata,
+        caddy_reloader=reload_success,
+        fault_injector=crash,
+        owner_id="runner-crash-recovery",
     )
 
 

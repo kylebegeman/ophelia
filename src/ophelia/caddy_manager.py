@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -17,6 +19,8 @@ SHARED_CADDY_CONTAINER_CANDIDATES = (
     "edge-caddy-1",
     "quark-reverse-proxy-caddy-1",
 )
+
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 
 CADDY_CONTAINER_CONFIG_PATH = "/etc/caddy/Caddyfile"
 CADDY_CONTAINER_ENV_PATH = "/etc/caddy/env"
@@ -93,6 +97,8 @@ def reload_caddy(
         "kind": "ophelia.edge.reload",
         "ok": False,
         "container": None,
+        "container_id": None,
+        "container_verified": False,
         "validated": False,
         "reloaded": False,
         "runtime_root": str(runtime_root),
@@ -120,20 +126,36 @@ def reload_caddy(
     else:
         report["warnings"].append({"code": "validation_skipped", "message": "Caddy validation was skipped before reload."})
 
-    discovery = discover_shared_caddy_container(runtime_root=runtime_root, timeout=timeout)
+    discovery = discover_shared_caddy_container(
+        runtime_root=runtime_root,
+        ophelia_root=ophelia_root,
+        timeout=timeout,
+    )
     report["container"] = discovery.get("container")
+    report["container_id"] = discovery.get("container_id")
+    report["container_verified"] = discovery.get("verified") is True
     warnings = report.get("warnings")
     if isinstance(warnings, list):
         warnings.extend(discovery.get("warnings", []))
-    if not report["container"]:
-        _add_error(report, "caddy_container_not_found", "No running shared Caddy container was found.")
-        report["stderr"] = "No running shared Caddy container was found."
+    if (
+        not report["container"]
+        or not report["container_id"]
+        or not report["container_verified"]
+    ):
+        _add_error(
+            report,
+            "caddy_container_not_found",
+            "No running Caddy container bound to this Ophelia runtime was found.",
+        )
+        report["stderr"] = (
+            "No running Caddy container bound to this Ophelia runtime was found."
+        )
         return report
 
     command = [
         "docker",
         "exec",
-        str(report["container"]),
+        str(report["container_id"]),
         "sh",
         "-ec",
         CADDY_ENVFILE_RELOAD_SCRIPT,
@@ -155,16 +177,26 @@ def reload_caddy(
 
 def discover_shared_caddy_container(
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    ophelia_root: Path = REPO_ROOT,
     timeout: int = 30,
 ) -> Dict[str, object]:
     warnings: List[Dict[str, str]] = []
     for candidate in SHARED_CADDY_CONTAINER_CANDIDATES:
-        result = _run(
-            ["docker", "inspect", "--format", "{{.State.Running}}", candidate],
-            timeout=timeout,
-            runtime_root=runtime_root,
+        inspection = _inspect_container(
+            candidate, runtime_root, ophelia_root, timeout
         )
-        if result.get("returncode") == 0 and str(result.get("stdout")).strip().lower() == "true":
+        if inspection is not None and inspection["running"] is True:
+            if inspection["runtime_matches"] is not True:
+                warnings.append(
+                    {
+                        "code": "caddy_container_runtime_mismatch",
+                        "message": (
+                            f"Ignoring Caddy container `{candidate}` because its "
+                            "mounts do not match this runtime."
+                        ),
+                    }
+                )
+                continue
             if candidate != SHARED_CADDY_CONTAINER_CANDIDATES[0]:
                 warnings.append(
                     {
@@ -172,22 +204,107 @@ def discover_shared_caddy_container(
                         "message": f"Using fallback Caddy container `{candidate}`.",
                     }
                 )
-            return {"container": candidate, "warnings": warnings}
-        if result.get("returncode") == 0:
+            return {
+                "container": candidate,
+                "container_id": inspection["container_id"],
+                "verified": True,
+                "warnings": warnings,
+            }
+        if inspection is not None:
             warnings.append({"code": "caddy_container_not_running", "message": f"Caddy container `{candidate}` is not running."})
 
     listed = _run(["docker", "ps", "--format", "{{.Names}}"], timeout=timeout, runtime_root=runtime_root)
     if listed.get("returncode") == 0:
         for name in str(listed.get("stdout") or "").splitlines():
-            if "caddy" in name.lower():
+            if "caddy" not in name.lower():
+                continue
+            inspection = _inspect_container(
+                name, runtime_root, ophelia_root, timeout
+            )
+            if (
+                inspection is not None
+                and inspection["running"] is True
+                and inspection["runtime_matches"] is True
+            ):
                 warnings.append(
                     {
                         "code": "discovered_caddy_container_name",
                         "message": f"Using discovered Caddy container `{name}`.",
                     }
                 )
-                return {"container": name, "warnings": warnings}
-    return {"container": None, "warnings": warnings}
+                return {
+                    "container": name,
+                    "container_id": inspection["container_id"],
+                    "verified": True,
+                    "warnings": warnings,
+                }
+    return {
+        "container": None,
+        "container_id": None,
+        "verified": False,
+        "warnings": warnings,
+    }
+
+
+def _inspect_container(
+    container: str,
+    runtime_root: Path,
+    ophelia_root: Path,
+    timeout: int,
+) -> Dict[str, object] | None:
+    """Inspect once, then return the immutable ID bound to verified mounts."""
+
+    result = _run(
+        ["docker", "inspect", "--format", "{{json .}}", container],
+        timeout=timeout,
+        runtime_root=runtime_root,
+    )
+    if result.get("returncode") != 0:
+        return None
+    try:
+        payload = json.loads(str(result.get("stdout") or ""))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    container_id = payload.get("Id")
+    state = payload.get("State")
+    mounts = payload.get("Mounts")
+    if (
+        not isinstance(container_id, str)
+        or _CONTAINER_ID.fullmatch(container_id) is None
+        or not isinstance(state, dict)
+        or not isinstance(state.get("Running"), bool)
+        or not isinstance(mounts, list)
+    ):
+        return None
+    by_destination = {
+        item.get("Destination"): item.get("Source")
+        for item in mounts
+        if isinstance(item, dict)
+        and isinstance(item.get("Destination"), str)
+        and isinstance(item.get("Source"), str)
+    }
+    expected = {
+        "/etc/caddy/Caddyfile": ophelia_root
+        / "platform"
+        / "shared"
+        / "caddy"
+        / "Caddyfile",
+        "/etc/caddy/env": runtime_root / "caddy" / "env",
+        "/etc/caddy/global.d": runtime_root / "caddy" / "global.d",
+        "/etc/caddy/sites.d": runtime_root / "caddy" / "sites.d",
+    }
+    return {
+        "container_id": container_id,
+        "running": state["Running"],
+        "runtime_matches": all(
+            isinstance(by_destination.get(destination), str)
+            and Path(str(by_destination[destination])).resolve(strict=False)
+            == source.resolve(strict=False)
+            for destination, source in expected.items()
+        ),
+    }
 
 
 def _process_summary(report: Dict[str, object]) -> Dict[str, object]:

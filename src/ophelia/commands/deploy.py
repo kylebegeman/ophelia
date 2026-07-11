@@ -9,7 +9,7 @@ from ..config import DEFAULT_RUNTIME_ROOT, REPO_ROOT
 from ..domain import ReceiptOutcome
 from ..execution.legacy_static_runner import (
     execute_confirmed_static,
-    supports_journaled_static,
+    static_execution_mode,
 )
 from ..execution.staging import (
     ConfirmedStaging,
@@ -27,6 +27,7 @@ from ..runtime import (
     apply_local_bundle,
     current_release_id,
     deploy_bundle,
+    load_release,
     update_current_release_verification,
 )
 from ..verify import run_verifications, verification_blocks_release
@@ -332,11 +333,30 @@ def run(args: Namespace) -> int:
         return 1
 
     journaled_static = None
+    journaled_external_verification = bool(
+        args.verify
+        and (
+            args.verify_failure_mode
+            or manifest.verify_policy.failure_mode
+        )
+        == "hard"
+    )
     if args.apply:
+        static_mode = (
+            static_execution_mode(manifest, args.runtime_root)
+            if confirmed is not None
+            else "compatibility"
+        )
+        if static_mode == "blocked":
+            print(
+                "Local apply blocked because managed static state requires "
+                "explicit journal or compatibility migration."
+            )
+            return 1
         try:
             if (
                 confirmed is not None
-                and supports_journaled_static(manifest, args.runtime_root)
+                and static_mode == "journaled"
             ):
                 journaled_static = execute_confirmed_static(
                     confirmed=confirmed,
@@ -345,9 +365,9 @@ def run(args: Namespace) -> int:
                     runtime_root=args.runtime_root,
                     ophelia_root=args.ophelia_root,
                     deploy_metadata=deploy_metadata,
-                    external_verifier=(
+                    blocking_external_verifier=(
                         (lambda: _run_verification(manifest, args))
-                        if args.verify
+                        if journaled_external_verification
                         else None
                     ),
                 )
@@ -399,7 +419,22 @@ def run(args: Namespace) -> int:
             if journaled_static is not None
             else current_release_id(args.runtime_root, manifest.app) or "unknown"
         )
-        verified = "true" if journaled_static is not None and args.verify else "not_run"
+        expected_kernel_generation = (
+            _release_kernel_generation(
+                args.runtime_root,
+                manifest.app,
+                journaled_static.release_id,
+                journaled_static.operation.operation_id,
+            )
+            if journaled_static is not None
+            else None
+        )
+        verified = (
+            "true"
+            if journaled_static is not None
+            and journaled_external_verification
+            else "not_run"
+        )
         print(f"Apply result: app={manifest.app} release={release_id} applied=true verified={verified} runtime={app_root}")
         if journaled_static is not None:
             print(
@@ -408,7 +443,7 @@ def run(args: Namespace) -> int:
                 f"receipt={journaled_static.receipt.receipt_id} "
                 f"outcome={journaled_static.receipt.outcome.value}"
             )
-            if args.verify:
+            if journaled_external_verification:
                 print(
                     f"Verify result: app={manifest.app} release={release_id} "
                     "applied=true verified=true"
@@ -420,7 +455,24 @@ def run(args: Namespace) -> int:
             except ValueError as exc:
                 print(str(exc))
                 return 1
-            update_current_release_verification(args.runtime_root, manifest.app, verification)
+            if journaled_static is not None:
+                if expected_kernel_generation is not None:
+                    update_current_release_verification(
+                        args.runtime_root,
+                        manifest.app,
+                        verification,
+                        expected_release_id=journaled_static.release_id,
+                        expected_kernel_generation=expected_kernel_generation,
+                        expected_kernel_operation_id=(
+                            journaled_static.operation.operation_id
+                        ),
+                    )
+            else:
+                update_current_release_verification(
+                    args.runtime_root,
+                    manifest.app,
+                    verification,
+                )
             _print_verification(manifest.app, verification)
             if not verification["ok"]:
                 print(
@@ -447,6 +499,24 @@ def _confirmed_app_reference(path: Path) -> str | None:
         return None
     app = value[len(prefix) :]
     return app or None
+
+
+def _release_kernel_generation(
+    runtime_root: Path,
+    app: str,
+    release_id: str,
+    operation_id: str,
+) -> int | None:
+    try:
+        kernel = load_release(runtime_root, app, release_id).get("kernel")
+    except (FileNotFoundError, ValueError):
+        return None
+    if not isinstance(kernel, dict) or kernel.get("operation_id") != operation_id:
+        return None
+    generation = kernel.get("active_generation")
+    if isinstance(generation, int) and not isinstance(generation, bool) and generation > 0:
+        return generation
+    return None
 
 
 def _locked_confirmed_metadata(

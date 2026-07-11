@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -16,7 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 class ApplySafetyTests(unittest.TestCase):
     def test_journaled_static_gate_excludes_unmodeled_and_legacy_state(self) -> None:
-        from ophelia.execution.legacy_static_runner import supports_journaled_static
+        from ophelia.execution.legacy_static_runner import (
+            static_execution_mode,
+            supports_journaled_static,
+        )
         from ophelia.manifest import load_manifest
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -30,6 +34,29 @@ class ApplySafetyTests(unittest.TestCase):
             self.assertTrue(
                 supports_journaled_static(manifest, runtime_root)
             )
+            self.assertEqual(
+                "journaled", static_execution_mode(manifest, runtime_root)
+            )
+
+            service_path = root / "service.ophelia.yml"
+            service_path.write_text(
+                _service_manifest().replace(
+                    "environment: staging", "environment: production"
+                )
+            )
+            service_manifest = load_manifest(service_path)
+            service_caddy = (
+                runtime_root
+                / "caddy"
+                / "sites.d"
+                / f"{service_manifest.app}.caddy"
+            )
+            service_caddy.parent.mkdir(parents=True)
+            service_caddy.write_text("service\n")
+            self.assertEqual(
+                "compatibility",
+                static_execution_mode(service_manifest, runtime_root),
+            )
 
             on_demand_path = root / "on-demand.ophelia.yml"
             on_demand_path.write_text(
@@ -42,6 +69,10 @@ class ApplySafetyTests(unittest.TestCase):
                 supports_journaled_static(
                     load_manifest(on_demand_path), runtime_root
                 )
+            )
+            self.assertEqual(
+                "compatibility",
+                static_execution_mode(load_manifest(on_demand_path), runtime_root),
             )
 
             legacy_release = (
@@ -63,10 +94,13 @@ class ApplySafetyTests(unittest.TestCase):
                 / "sites.d"
                 / f"{manifest.app}.caddy"
             )
-            caddy.parent.mkdir(parents=True)
+            caddy.parent.mkdir(parents=True, exist_ok=True)
             caddy.write_text("legacy\n")
             self.assertFalse(
                 supports_journaled_static(manifest, runtime_root)
+            )
+            self.assertEqual(
+                "compatibility", static_execution_mode(manifest, runtime_root)
             )
 
             record = (
@@ -81,6 +115,9 @@ class ApplySafetyTests(unittest.TestCase):
             self.assertFalse(
                 supports_journaled_static(manifest, runtime_root)
             )
+            self.assertEqual(
+                "blocked", static_execution_mode(manifest, runtime_root)
+            )
 
             global_caddy = (
                 runtime_root
@@ -92,6 +129,9 @@ class ApplySafetyTests(unittest.TestCase):
             global_caddy.write_text("on_demand_tls {}\n")
             self.assertFalse(
                 supports_journaled_static(manifest, runtime_root)
+            )
+            self.assertEqual(
+                "blocked", static_execution_mode(manifest, runtime_root)
             )
 
     def test_production_apply_requires_confirmation_token(self) -> None:
@@ -136,22 +176,7 @@ class ApplySafetyTests(unittest.TestCase):
                 check=True,
             )
             token = json.loads(plan.stdout)["confirmation_token"]
-            fake_bin = root / "bin"
-            fake_bin.mkdir()
-            fake_docker = fake_bin / "docker"
-            fake_docker.write_text(
-                "#!/bin/sh\n"
-                "if [ \"$1\" = \"inspect\" ]; then echo true; fi\n"
-                "exit 0\n"
-            )
-            fake_docker.chmod(0o755)
-            caddy_root = root / "platform" / "shared" / "caddy"
-            caddy_root.mkdir(parents=True)
-            (caddy_root / "Caddyfile").write_text(
-                "import /runtime/caddy/sites.d/*.caddy\n"
-            )
-            environment = os.environ.copy()
-            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            environment = _fake_caddy_environment(root, runtime_root)
 
             applied = subprocess.run(
                 [
@@ -208,6 +233,178 @@ class ApplySafetyTests(unittest.TestCase):
                 )
             finally:
                 connection.close()
+
+    def test_journaled_static_warn_verification_is_nonblocking_and_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            static_root = root / "static"
+            static_root.mkdir()
+            (static_root / "index.html").write_text("warning verification\n")
+            manifest_path = root / "warn-static.ophelia.yml"
+            manifest_path.write_text(
+                _static_manifest(Path("static"), environment="production")
+                + "verify:\n"
+                + "  - name: unavailable\n"
+                + "    url: http://127.0.0.1:1/health\n"
+                + "verify_policy:\n"
+                + "  attempts: 1\n"
+                + "  interval: 0\n"
+                + "  timeout: 0.2\n"
+                + "  failure_mode: warn\n"
+            )
+            runtime_root = root / "runtime"
+            repo = Path(__file__).resolve().parents[1]
+            plan = subprocess.run(
+                [
+                    str(repo / "cli" / "ship"),
+                    "deploy",
+                    str(manifest_path),
+                    "--runtime-root",
+                    str(runtime_root),
+                    "--plan",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            token = json.loads(plan.stdout)["confirmation_token"]
+
+            applied = subprocess.run(
+                [
+                    str(repo / "cli" / "ship"),
+                    "deploy",
+                    str(manifest_path),
+                    "--runtime-root",
+                    str(runtime_root),
+                    "--ophelia-root",
+                    str(root),
+                    "--apply",
+                    "--confirm",
+                    token,
+                    "--verify",
+                ],
+                text=True,
+                capture_output=True,
+                env=_fake_caddy_environment(root, runtime_root),
+            )
+
+            self.assertEqual(0, applied.returncode, applied.stdout + applied.stderr)
+            self.assertIn("outcome=succeeded", applied.stdout)
+            self.assertIn("verified=false", applied.stdout)
+            self.assertTrue(
+                (runtime_root / "static" / "safe-static" / "current").is_symlink()
+            )
+            release = json.loads(
+                (runtime_root / "apps" / "safe-static" / "release.json").read_text()
+            )
+            self.assertFalse(release["verified"])
+            connection = sqlite3.connect(
+                runtime_root / "host-state" / "operations.db"
+            )
+            try:
+                self.assertEqual(
+                    "succeeded",
+                    connection.execute(
+                        "SELECT outcome FROM terminal_receipts"
+                    ).fetchone()[0],
+                )
+            finally:
+                connection.close()
+
+    def test_journaled_warn_verification_does_not_update_a_newer_release(self) -> None:
+        from ophelia.runtime import update_current_release_verification
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            app_root = runtime_root / "apps" / "safe-static"
+            releases_root = app_root / "releases"
+            releases_root.mkdir(parents=True)
+
+            def release(
+                release_id: str,
+                generation: int,
+                operation_id: str,
+            ) -> dict[str, object]:
+                return {
+                    "release_id": release_id,
+                    "verified": None,
+                    "verification": {"status": "not_run", "ok": None, "results": []},
+                    "kernel": {
+                        "active_generation": generation,
+                        "operation_id": operation_id,
+                    },
+                }
+
+            stale = release("release-a", 1, "operation_a")
+            current = release("release-b", 2, "operation_b")
+            (releases_root / "release-a.json").write_text(json.dumps(stale))
+            (releases_root / "release-b.json").write_text(json.dumps(current))
+            (app_root / "release.json").write_text(json.dumps(current))
+            (app_root / "active_release.json").write_text(json.dumps(current))
+
+            verification = {"ok": False, "results": []}
+            self.assertFalse(
+                update_current_release_verification(
+                    runtime_root,
+                    "safe-static",
+                    verification,
+                    expected_release_id="release-a",
+                    expected_kernel_generation=1,
+                    expected_kernel_operation_id="operation_a",
+                )
+            )
+            self.assertEqual(
+                "release-b",
+                json.loads((app_root / "release.json").read_text())["release_id"],
+            )
+            self.assertIsNone(
+                json.loads((releases_root / "release-b.json").read_text())["verified"]
+            )
+            self.assertFalse(
+                update_current_release_verification(
+                    runtime_root,
+                    "safe-static",
+                    verification,
+                    expected_release_id="release-b",
+                    expected_kernel_generation=1,
+                    expected_kernel_operation_id="operation_b",
+                )
+            )
+            self.assertIsNone(
+                json.loads((releases_root / "release-b.json").read_text())["verified"]
+            )
+
+            self.assertFalse(
+                update_current_release_verification(
+                    runtime_root,
+                    "safe-static",
+                    verification,
+                    expected_release_id="release-b",
+                    expected_kernel_generation=2,
+                    expected_kernel_operation_id="operation_a",
+                )
+            )
+            self.assertIsNone(
+                json.loads((releases_root / "release-b.json").read_text())["verified"]
+            )
+
+            self.assertTrue(
+                update_current_release_verification(
+                    runtime_root,
+                    "safe-static",
+                    verification,
+                    expected_release_id="release-b",
+                    expected_kernel_generation=2,
+                    expected_kernel_operation_id="operation_b",
+                )
+            )
+            self.assertFalse(
+                json.loads((app_root / "release.json").read_text())["verified"]
+            )
+            self.assertFalse(
+                json.loads((app_root / "active_release.json").read_text())["verified"]
+            )
 
     def test_apply_rejects_placeholder_env_values_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -569,6 +766,54 @@ routes:
   - domain: private-service.example.com
     service: app
 """.strip() + "\n"
+
+
+def _fake_caddy_environment(root: Path, runtime_root: Path) -> dict[str, str]:
+    caddy_root = root / "platform" / "shared" / "caddy"
+    caddy_root.mkdir(parents=True, exist_ok=True)
+    caddyfile = caddy_root / "Caddyfile"
+    caddyfile.write_text("import /runtime/caddy/sites.d/*.caddy\n")
+    mounts = json.dumps(
+        [
+            {
+                "Source": str(caddyfile),
+                "Destination": "/etc/caddy/Caddyfile",
+            },
+            {
+                "Source": str(runtime_root / "caddy" / "env"),
+                "Destination": "/etc/caddy/env",
+            },
+            {
+                "Source": str(runtime_root / "caddy" / "global.d"),
+                "Destination": "/etc/caddy/global.d",
+            },
+            {
+                "Source": str(runtime_root / "caddy" / "sites.d"),
+                "Destination": "/etc/caddy/sites.d",
+            },
+        ]
+    )
+    inspection = json.dumps(
+        {
+            "Id": "a" * 64,
+            "State": {"Running": True},
+            "Mounts": json.loads(mounts),
+        }
+    )
+    fake_bin = root / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"inspect\" ] && "
+        "[ \"$3\" = \"{{json .}}\" ]; then "
+        f"printf '%s\\n' {shlex.quote(inspection)}; exit 0; fi\n"
+        "exit 0\n"
+    )
+    fake_docker.chmod(0o755)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+    return environment
 
 
 if __name__ == "__main__":

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
@@ -1319,13 +1321,66 @@ def load_release(runtime_root: Path, app: str, release_id: str) -> Dict[str, obj
     raise FileNotFoundError(f"Release not found: {app}/{release_id}")
 
 
-def update_current_release_verification(runtime_root: Path, app: str, verification: Dict[str, object]) -> None:
+def update_current_release_verification(
+    runtime_root: Path,
+    app: str,
+    verification: Dict[str, object],
+    *,
+    expected_release_id: str | None = None,
+    expected_kernel_generation: int | None = None,
+    expected_kernel_operation_id: str | None = None,
+) -> bool:
+    """Record verification only when an expected release is still current.
+
+    Journaled static applies release the kernel fence before warning-mode
+    verification. The compatibility projection lock keeps that later write from
+    racing a newer projection, while the release, generation, and operation
+    checks prevent stale verification from being attached to a newer release.
+    """
+
     verification.setdefault("verified", bool(verification.get("ok")))
     verification.setdefault("status", "passed" if verification.get("ok") else "failed")
     updates = {"verification": verification, "verified": bool(verification.get("ok"))}
-    payload = _update_current_release(runtime_root, app, updates)
-    if payload and payload.get("release_id") == active_release_id(runtime_root, app):
-        _write_active_release(runtime_root, app, payload)
+    app_root = runtime_root / "apps" / app
+    release_path = app_root / "release.json"
+    if not release_path.exists():
+        return False
+
+    lock_path = app_root / ".legacy-projection.lock"
+    lock_fd = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+            raise OSError("Compatibility projection lock must be a regular file.")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        payload = _update_current_release(
+            runtime_root,
+            app,
+            updates,
+            expected_release_id=expected_release_id,
+            expected_kernel_generation=expected_kernel_generation,
+            expected_kernel_operation_id=expected_kernel_operation_id,
+        )
+        active = active_release(runtime_root, app)
+        if payload and _release_matches_expected(
+            active,
+            expected_release_id=payload.get("release_id"),
+            expected_kernel_generation=expected_kernel_generation,
+            expected_kernel_operation_id=expected_kernel_operation_id,
+        ):
+            _write_active_release(runtime_root, app, payload)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+    return payload is not None
 
 
 def update_current_release_apply(runtime_root: Path, app: str, apply_result: Dict[str, object]) -> None:
@@ -1364,7 +1419,15 @@ def _write_active_release(runtime_root: Path, app: str, release: Dict[str, objec
             latest_path.write_text(json.dumps(latest, indent=2, sort_keys=True) + "\n")
 
 
-def _update_current_release(runtime_root: Path, app: str, updates: Dict[str, object]) -> Dict[str, object] | None:
+def _update_current_release(
+    runtime_root: Path,
+    app: str,
+    updates: Dict[str, object],
+    *,
+    expected_release_id: str | None = None,
+    expected_kernel_generation: int | None = None,
+    expected_kernel_operation_id: str | None = None,
+) -> Dict[str, object] | None:
     app_root = runtime_root / "apps" / app
     release_path = app_root / "release.json"
     if not release_path.exists():
@@ -1372,6 +1435,13 @@ def _update_current_release(runtime_root: Path, app: str, updates: Dict[str, obj
 
     payload = _load_release_json(release_path)
     if not payload:
+        return None
+    if not _release_matches_expected(
+        payload,
+        expected_release_id=expected_release_id,
+        expected_kernel_generation=expected_kernel_generation,
+        expected_kernel_operation_id=expected_kernel_operation_id,
+    ):
         return None
     payload.update(updates)
     release_id = payload.get("release_id")
@@ -1381,6 +1451,37 @@ def _update_current_release(runtime_root: Path, app: str, updates: Dict[str, obj
             historical_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     release_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
+
+
+def _release_matches_expected(
+    payload: Dict[str, object],
+    *,
+    expected_release_id: object,
+    expected_kernel_generation: int | None,
+    expected_kernel_operation_id: str | None,
+) -> bool:
+    if (
+        expected_release_id is not None
+        and payload.get("release_id") != expected_release_id
+    ):
+        return False
+    if (
+        expected_kernel_generation is None
+        and expected_kernel_operation_id is None
+    ):
+        return True
+    kernel = payload.get("kernel")
+    if not isinstance(kernel, dict):
+        return False
+    if (
+        expected_kernel_generation is not None
+        and kernel.get("active_generation") != expected_kernel_generation
+    ):
+        return False
+    return (
+        expected_kernel_operation_id is None
+        or kernel.get("operation_id") == expected_kernel_operation_id
+    )
 
 
 def _load_release_json(path: Path) -> Dict[str, object]:
