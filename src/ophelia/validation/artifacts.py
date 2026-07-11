@@ -102,14 +102,14 @@ def _canonical_path(name: Any, *, is_directory: bool, limits: ArchiveLimits) -> 
         _reject("archive_member_path_invalid", "archive member path is empty or invalid.")
     if "\\" in name:
         _reject("archive_member_path_backslash", "archive member path contains a backslash.")
-    if name.startswith("/") or name.startswith("//") or _DRIVE_PATH.match(name):
-        _reject("archive_member_path_absolute", "archive member path is absolute.")
     if any(ord(character) < 32 or ord(character) == 127 for character in name):
         _reject("archive_member_path_control", "archive member path contains a control character.")
 
     candidate = name[2:] if name.startswith("./") else name
     if candidate.startswith("./"):
         _reject("archive_member_path_invalid", "archive member path has repeated dot prefixes.")
+    if candidate.startswith("/") or candidate.startswith("//") or _DRIVE_PATH.match(candidate):
+        _reject("archive_member_path_absolute", "archive member path is absolute.")
     if is_directory and candidate.endswith("/"):
         candidate = candidate[:-1]
     candidate = unicodedata.normalize("NFC", candidate)
@@ -168,6 +168,7 @@ def _inspect_open_source(
     file_destinations = set()
     required_directories = set()
     total = 0
+    final_payload_end = 0
     try:
         archive = tarfile.open(fileobj=source, mode="r:*")
     except (tarfile.TarError, EOFError, OSError):
@@ -178,12 +179,14 @@ def _inspect_open_source(
             for info in archive:
                 if len(members) >= limits.max_members:
                     _reject("archive_member_count_exceeded", "archive member count exceeds the configured limit.")
-                kind = _member_kind(info)
                 if (
+                    info.type == tarfile.GNUTYPE_SPARSE
+                    or
                     getattr(info, "sparse", None) is not None
                     or any(str(key).startswith(("GNU.sparse", "SCHILY.realsize")) for key in info.pax_headers)
                 ):
                     _reject("archive_member_sparse", "archive contains sparse member metadata.")
+                kind = _member_kind(info)
                 size = info.size
                 if isinstance(size, bool) or not isinstance(size, int) or size < 0:
                     _reject("archive_member_size_invalid", "archive member has an invalid declared size.")
@@ -212,12 +215,15 @@ def _inspect_open_source(
                 required_directories.update(ancestors)
                 if kind == "file":
                     file_destinations.add(canonical)
+                padded_size = ((size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE) * tarfile.BLOCKSIZE
+                final_payload_end = max(final_payload_end, info.offset_data + padded_size)
                 total += size
                 if total > limits.max_total_unpacked_bytes:
                     _reject("archive_total_size_exceeded", "archive declared size exceeds the configured limit.")
                 if total > source_bytes * limits.max_expansion_ratio:
                     _reject("archive_expansion_ratio_exceeded", "archive declared expansion ratio exceeds the configured limit.")
                 members.append(ArchiveMember(path=canonical, kind=kind, size=size))
+            _verify_tar_termination(archive, final_payload_end)
         except (tarfile.TarError, EOFError, OSError):
             _reject("archive_malformed", "archive is malformed, truncated, or unsupported.")
     finally:
@@ -229,6 +235,18 @@ def _inspect_open_source(
         total_unpacked_bytes=total,
         members=tuple(members),
     )
+
+
+def _verify_tar_termination(archive: tarfile.TarFile, final_payload_end: int) -> None:
+    """Require the two zero blocks that terminate a canonical tar stream."""
+
+    try:
+        archive.fileobj.seek(final_payload_end)
+        terminator = archive.fileobj.read(tarfile.BLOCKSIZE * 2)
+    except (AttributeError, OSError, ValueError):
+        _reject("archive_malformed", "archive termination could not be verified.")
+    if len(terminator) != tarfile.BLOCKSIZE * 2 or any(terminator):
+        _reject("archive_malformed", "archive is missing its required zero-block terminator.")
 
 
 def inspect_archive(
@@ -245,7 +263,12 @@ def inspect_archive(
             "archive_source_platform_unsupported",
             "this platform cannot safely open archive sources without following links.",
         )
-    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    flags = (
+        os.O_RDONLY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         descriptor = os.open(str(path), flags)
     except (OSError, ValueError):

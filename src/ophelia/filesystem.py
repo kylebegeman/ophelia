@@ -24,12 +24,11 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 DEFAULT_DIRECTORY_MODE = 0o700
 DEFAULT_FILE_MODE = 0o600
 MANAGED_ROOT_TRUST_BOUNDARY = (
-    "trusted_owner_uid must be exclusive to Ophelia; no untrusted same-UID "
-    "process may rename managed directories"
+    "trusted_owner_uid must be exclusive to a single Ophelia writer; managed "
+    "directories must be ACL-free, and no untrusted same-UID process may rename them"
 )
 _COPY_BUFFER_SIZE = 128 * 1024
 _TEMP_PREFIX = ".ophelia-tmp-"
-_DIRECTORY_TEMP_PREFIX = ".ophelia-dir-tmp-"
 _TestHook = Callable[[str, str], None]
 _Path = Union[str, os.PathLike]
 
@@ -90,11 +89,13 @@ class FilesystemSafetyError(Exception):
 class ManagedRoot:
     """A mutation boundary for directories owned by one trusted Ophelia UID.
 
-    trusted_owner_uid must be exclusive to the Ophelia process. Untrusted
+    trusted_owner_uid must be exclusive to one Ophelia writer. Managed roots
+    must not carry ACL entries that grant another principal access. Untrusted
     same-UID processes and same-UID renames of managed directories are outside
     the containment guarantee because generic POSIX dirfds cannot prevent them.
     When omitted, the effective UID is accepted only for a non-privileged
-    process. UID 0 must be supplied explicitly.
+    process whose root already satisfies that external single-writer contract.
+    UID 0 must be supplied explicitly.
 
     The root and every traversed destination directory must be owned by the
     trusted UID and must not be group- or world-writable. Instances are not
@@ -194,7 +195,7 @@ class ManagedRoot:
         return MANAGED_ROOT_TRUST_BOUNDARY
 
     def mkdir(self, path: _Path, mode: int = DEFAULT_DIRECTORY_MODE) -> None:
-        """Atomically publish one directory with an exact owner-only mode."""
+        """Create one directory without replacing an existing entry."""
 
         operation = "mkdir"
         components, display = _destination_components(path, operation)
@@ -205,9 +206,9 @@ class ManagedRoot:
             operation,
             display,
         )
-        temporary_name: Optional[str] = None
         created_fd: Optional[int] = None
-        committed = False
+        created_identity: Optional[Tuple[int, int]] = None
+        complete = False
         primary_error: Optional[BaseException] = None
         cleanup_failures = []
         try:
@@ -219,24 +220,37 @@ class ManagedRoot:
                 operation,
                 display,
             )
-            temporary_name = _create_temporary_directory(
-                parent_fd,
-                operation,
-                display,
-            )
             try:
-                _secure_temporary_directory_mode(
-                    parent_fd,
-                    temporary_name,
+                os.mkdir(name, DEFAULT_DIRECTORY_MODE, dir_fd=parent_fd)
+                created_stat = os.stat(
+                    name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
                 )
+                created_identity = (created_stat.st_dev, created_stat.st_ino)
+                _require_safe_parent(
+                    created_stat,
+                    self._trusted_owner_uid,
+                    operation,
+                    display,
+                )
+                _secure_created_directory_mode(parent_fd, name)
                 created_fd = os.open(
-                    temporary_name,
+                    name,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                     dir_fd=parent_fd,
                 )
-                created_stat = os.fstat(created_fd)
+                opened_stat = os.fstat(created_fd)
+                if (opened_stat.st_dev, opened_stat.st_ino) != created_identity:
+                    raise FilesystemSafetyError(
+                        FilesystemSafetyCode.RACE_DETECTED,
+                        operation,
+                        display,
+                        "created directory identity changed before it could be secured; "
+                        + MANAGED_ROOT_TRUST_BOUNDARY,
+                    )
                 _require_safe_parent(
-                    created_stat,
+                    opened_stat,
                     self._trusted_owner_uid,
                     operation,
                     display,
@@ -248,42 +262,12 @@ class ManagedRoot:
                     operation,
                     display,
                     parent_fd,
-                    temporary_name,
+                    name,
                 ) from exc
-
-            created_identity = (created_stat.st_dev, created_stat.st_ino)
             _sync(created_fd, operation, display)
+            complete = True
             self._call_hook("before_commit", display)
             self._revalidate_parent(parent_fd, parent_components, operation, display)
-            _require_absent_directory_destination(
-                parent_fd,
-                name,
-                operation,
-                display,
-            )
-            try:
-                os.replace(
-                    temporary_name,
-                    name,
-                    src_dir_fd=parent_fd,
-                    dst_dir_fd=parent_fd,
-                )
-            except (TypeError, NotImplementedError) as exc:
-                raise FilesystemSafetyError(
-                    FilesystemSafetyCode.UNSUPPORTED_PLATFORM,
-                    operation,
-                    display,
-                    "descriptor-relative atomic directory publication is unavailable",
-                ) from exc
-            except OSError as exc:
-                raise _mutation_os_error(
-                    exc,
-                    operation,
-                    display,
-                    parent_fd,
-                    name,
-                ) from exc
-            committed = True
             _sync(parent_fd, operation, display)
             self._post_mutation_revalidate(
                 parent_fd,
@@ -300,15 +284,13 @@ class ManagedRoot:
                 try:
                     os.close(created_fd)
                 except OSError:
-                    cleanup_failures.append("close_temporary_directory")
-            if temporary_name is not None and not committed:
+                    cleanup_failures.append("close_created_directory")
+            if created_identity is not None and not complete:
                 cleanup_failures.extend(
-                    _cleanup_temporary_entry(
+                    _cleanup_created_directory(
                         parent_fd,
-                        temporary_name,
-                        operation,
-                        display,
-                        directory=True,
+                        name,
+                        created_identity,
                     )
                 )
             try:
@@ -389,7 +371,13 @@ class ManagedRoot:
         destination: _Path,
         mode: int = DEFAULT_FILE_MODE,
     ) -> None:
-        """Copy one externally opened regular file into the managed root."""
+        """Copy one stable externally opened regular file into the managed root.
+
+        Metadata revalidation detects ordinary concurrent changes. Callers that
+        require snapshot semantics must additionally ensure the source is not
+        writable for the duration of the copy; coarse or cached timestamps
+        cannot prove stability against a cooperating writer.
+        """
 
         operation = "copy_in"
         source_path = _path_text(source, operation=operation, destination=False)
@@ -397,6 +385,8 @@ class ManagedRoot:
         _validate_mode(mode, DEFAULT_FILE_MODE, operation, display)
 
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+        primary_error: Optional[BaseException] = None
+        cleanup_failures = []
         try:
             source_fd = os.open(source_path, flags)
         except OSError as exc:
@@ -467,8 +457,25 @@ class ManagedRoot:
                 copy_content,
                 require_existing=False,
             )
+        except BaseException as exc:
+            primary_error = exc
         finally:
-            os.close(source_fd)
+            try:
+                os.close(source_fd)
+            except OSError:
+                cleanup_failures.append("close_copy_source")
+            if cleanup_failures:
+                combined = _combined_cleanup_error(
+                    primary_error,
+                    operation,
+                    display,
+                    cleanup_failures,
+                )
+                if primary_error is not None:
+                    raise combined from primary_error
+                raise combined
+        if primary_error is not None:
+            raise primary_error.with_traceback(primary_error.__traceback__)
 
     def _require_open(self, operation: str) -> int:
         descriptor = self._descriptor
@@ -1164,36 +1171,38 @@ def _source_signature(
     )
 
 
-def _create_temporary_directory(
+def _cleanup_created_directory(
     parent_fd: int,
-    operation: str,
-    display: str,
-) -> str:
-    for _ in range(128):
-        name = _DIRECTORY_TEMP_PREFIX + secrets.token_hex(16)
-        try:
-            os.mkdir(name, DEFAULT_DIRECTORY_MODE, dir_fd=parent_fd)
-            return name
-        except FileExistsError:
-            continue
-        except OSError as exc:
-            raise FilesystemSafetyError(
-                FilesystemSafetyCode.IO_FAILURE,
-                operation,
-                display,
-                "could not create destination-local temporary directory",
-            ) from exc
-    raise FilesystemSafetyError(
-        FilesystemSafetyCode.IO_FAILURE,
-        operation,
-        display,
-        "could not allocate a unique temporary directory",
-    )
+    name: str,
+    expected_identity: Tuple[int, int],
+) -> Tuple[str, ...]:
+    failures = []
+    try:
+        value = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        value = None
+    except OSError:
+        failures.append("inspect_created_directory_before_cleanup")
+        value = None
+    if value is not None:
+        if not stat.S_ISDIR(value.st_mode) or (value.st_dev, value.st_ino) != expected_identity:
+            failures.append("created_directory_identity_changed")
+        else:
+            try:
+                os.rmdir(name, dir_fd=parent_fd)
+            except OSError:
+                failures.append("remove_created_directory")
+    try:
+        os.fsync(parent_fd)
+    except OSError:
+        failures.append("fsync_destination_parent_after_cleanup")
+    return tuple(failures)
 
 
-def _secure_temporary_directory_mode(parent_fd: int, name: str) -> None:
-    # Linux lacks no-follow chmod. The fallback relies on the exclusive-UID
-    # trust boundary, then immediately opens with O_NOFOLLOW and checks identity.
+def _secure_created_directory_mode(parent_fd: int, name: str) -> None:
+    # The directory was created exclusively in a trusted 0700 parent. On
+    # platforms without no-follow chmod, the documented single-UID writer
+    # prerequisite excludes replacement between the stat and chmod calls.
     kwargs = {"dir_fd": parent_fd}
     if os.chmod in os.supports_follow_symlinks:
         kwargs["follow_symlinks"] = False

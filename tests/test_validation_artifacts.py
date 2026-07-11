@@ -5,6 +5,7 @@ import io
 import os
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Optional
@@ -101,6 +102,7 @@ class ArchiveInspectionTests(unittest.TestCase):
             ("/etc/passwd", "archive_member_path_absolute"),
             ("//server/share", "archive_member_path_absolute"),
             ("C:/Windows/file", "archive_member_path_absolute"),
+            ("./C:/Windows/file", "archive_member_path_absolute"),
             (r"folder\file", "archive_member_path_backslash"),
             ("../escape", "archive_member_path_invalid"),
             ("a/../escape", "archive_member_path_invalid"),
@@ -156,6 +158,11 @@ class ArchiveInspectionTests(unittest.TestCase):
         info.pax_headers = {"GNU.sparse.map": "0,1"}
         path = self._tar([(info, b"x")], name="sparse.tar")
         self.assert_rejected(path, "archive_member_sparse")
+
+        gnu_info = tarfile.TarInfo("gnu-sparse.bin")
+        gnu_info.type = tarfile.GNUTYPE_SPARSE
+        gnu_path = self._tar([(gnu_info, b"")], name="gnu-sparse.tar")
+        self.assert_rejected(gnu_path, "archive_member_sparse")
 
     def test_enforces_source_member_total_count_path_and_depth_quotas(self) -> None:
         source = self._tar([self._file("a", b"1234")], name="source.tar")
@@ -220,6 +227,14 @@ class ArchiveInspectionTests(unittest.TestCase):
         truncated.write_bytes(valid.read_bytes()[:700])
         self.assert_rejected(truncated, "archive_malformed")
 
+        boundary = self._tar([self._file("one", b"x")], name="boundary.tar")
+        member_boundary = self.root / "member-boundary.tar"
+        member_boundary.write_bytes(boundary.read_bytes()[:1024])
+        self.assert_rejected(member_boundary, "archive_malformed")
+        one_zero_block = self.root / "one-zero-block.tar"
+        one_zero_block.write_bytes(boundary.read_bytes()[:1536])
+        self.assert_rejected(one_zero_block, "archive_malformed")
+
         zstd = self.root / "bundle.tar.zst"
         zstd.write_bytes(b"\x28\xb5\x2f\xfd" + b"not-inspected")
         self.assert_rejected(zstd, "archive_compression_unsupported")
@@ -229,6 +244,13 @@ class ArchiveInspectionTests(unittest.TestCase):
         link = self.root / "link.tar"
         link.symlink_to(target)
         self.assert_rejected(link, "archive_source_open_failed")
+
+    def test_fifo_source_is_rejected_without_waiting_for_a_writer(self) -> None:
+        fifo = self.root / "source.tar"
+        os.mkfifo(fifo)
+        started = time.monotonic()
+        self.assert_rejected(fifo, "archive_source_not_regular")
+        self.assertLess(time.monotonic() - started, 1.0)
 
     def test_detects_same_inode_mutation_during_inspection(self) -> None:
         path = self._tar([self._file("a", b"payload")], name="mutable.tar")
