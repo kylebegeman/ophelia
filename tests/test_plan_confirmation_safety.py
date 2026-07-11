@@ -191,6 +191,38 @@ class PlanConfirmationSafetyTests(unittest.TestCase):
             self.assertIn("does not match --release-id", stdout.getvalue())
             apply.assert_not_called()
 
+    def test_runtime_policy_blocks_the_same_local_apply_entrypoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path, _ = self._manifest(root)
+            runtime_root = root / "runtime"
+            policy_dir = runtime_root / "policy"
+            policy_dir.mkdir(parents=True)
+            (policy_dir / "ophelia-policy.yml").write_text(
+                """
+version: 1
+rules:
+  - id: require-pinned-image
+    operation: deploy.apply
+    environment: production
+    require:
+      image_digest_pinned: true
+    severity: blocker
+""".strip()
+                + "\n"
+            )
+            stdout = io.StringIO()
+            with patch("ophelia.commands.deploy.apply_local_bundle") as apply:
+                with contextlib.redirect_stdout(stdout):
+                    result = deploy_command.run(
+                        _deploy_args(manifest_path, runtime_root, confirm=None)
+                    )
+
+            self.assertEqual(1, result)
+            self.assertIn("blocked by policy", stdout.getvalue())
+            self.assertIn("policy_require_pinned_image", stdout.getvalue())
+            apply.assert_not_called()
+
     def test_staging_rejects_symlinked_ancestors_and_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
