@@ -376,14 +376,15 @@ class TrafficActivationResult(Contract):
 
     committed_atomically: bool
     previous_revision_digest: Optional[str]
-    active_revision_digest: str
+    active_revision_digest: Optional[str]
     observed_state_digest: str
     evidence_digests: Tuple[str, ...]
 
     def __post_init__(self) -> None:
         if self.previous_revision_digest is not None:
             require_digest(self.previous_revision_digest, "previous_revision_digest")
-        require_digest(self.active_revision_digest, "active_revision_digest")
+        if self.active_revision_digest is not None:
+            require_digest(self.active_revision_digest, "active_revision_digest")
         require_digest(self.observed_state_digest, "observed_state_digest")
         require_digests(self.evidence_digests, "evidence_digests")
         if not self.committed_atomically:
@@ -452,6 +453,9 @@ class OperationJournal(Protocol):
     def commit_receipt(self, receipt: TerminalReceipt) -> None:
         ...
 
+    def receipt(self, operation_id: str) -> Optional[TerminalReceipt]:
+        ...
+
 
 class CanonicalExecutor(Protocol):
     """The sole mutating entrypoint for CLI, API, SSH, daemon, and Lumen adapters."""
@@ -461,7 +465,15 @@ class CanonicalExecutor(Protocol):
         actor: Actor,
         request: OperationRequest,
         approved_plan: ApprovedPlanRef,
+        *,
+        execution_input: ExecutionInput,
     ) -> OperationRef:
+        ...
+
+    def run(self, operation_id: str, *, owner_id: str) -> TerminalReceipt:
+        ...
+
+    def cancel(self, operation_id: str, actor: Actor) -> ExecutionControl:
         ...
 
 

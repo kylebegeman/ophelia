@@ -51,6 +51,9 @@ class LegacyExecutionAdapterTests(unittest.TestCase):
             self.assertEqual(bundle.revision, bundle.execution_input.revision)
             self.assertEqual(bundle.artifact_ref, bundle.execution_input.artifact_ref)
             self.assertEqual(
+                (bundle.artifact_tree_digest,), bundle.revision.artifact_digests
+            )
+            self.assertEqual(
                 bundle.approval.expires_at, bundle.execution_input.deadline
             )
             self.assertEqual(
