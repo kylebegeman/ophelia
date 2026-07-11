@@ -472,6 +472,46 @@ class KernelContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "desired, active, and observed"):
             dataclasses.replace(receipt, active_revision_digest=D2)
 
+    def test_compensation_can_truthfully_restore_an_empty_first_deploy(self) -> None:
+        compensation = CompensationResult(
+            attempted=True,
+            status=CompensationStatus.SUCCEEDED,
+        )
+        receipt = TerminalReceipt(
+            receipt_id="receipt_first-deploy-failed",
+            operation_id="operation_first-deploy-failed",
+            operation="deploy.apply",
+            plan_id=_plan().plan_id,
+            plan_digest=_plan().plan_digest(),
+            decision_id="decision_example-1",
+            host_id="host_example-1",
+            app="demo-service",
+            environment="production",
+            previous_revision_id=None,
+            desired_revision_id="rev_example-1",
+            desired_revision_digest=D1,
+            active_revision_id=None,
+            active_revision_digest=None,
+            artifact_digests=(D3,),
+            verification=VerificationResult(
+                status=VerificationStatus.FAILED,
+                observed_revision_digest=None,
+                observed_state_digest=D2,
+                observed_at=CREATED,
+                checks=(VerificationCheck("readiness", CheckStatus.FAILED),),
+            ),
+            compensation=compensation,
+            effect=ReceiptEffect.NONE,
+            outcome=ReceiptOutcome.FAILED_COMPENSATED,
+            started_at=CREATED,
+            completed_at="2026-07-11T17:10:00Z",
+        )
+
+        self.assertIsNone(receipt.compensation.restored_revision_id)
+        self.assertIsNone(receipt.active_revision_id)
+        with self.assertRaisesRegex(ContractValidationError, "together"):
+            dataclasses.replace(compensation, restored_revision_id="rev_partial")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,10 +118,10 @@ class CompensationResult(Contract):
             raise ContractValidationError("Compensation cannot be attempted with not_needed status.")
         if self.status is not CompensationStatus.NOT_NEEDED and not self.attempted:
             raise ContractValidationError("A compensation outcome requires attempted=true.")
-        if self.status is CompensationStatus.SUCCEEDED and (
-            self.restored_revision_id is None or self.restored_revision_digest is None
-        ):
-            raise ContractValidationError("Successful compensation must identify the restored revision.")
+        if (self.restored_revision_id is None) != (self.restored_revision_digest is None):
+            raise ContractValidationError(
+                "Compensation must identify restored revision id and digest together."
+            )
 
 
 @dataclass(frozen=True)
