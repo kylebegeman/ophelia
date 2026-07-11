@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-from ophelia.validation import artifacts
-from ophelia.validation.artifacts import (
+from ophelia.validation import (
     ArchiveInspectionError,
     ArchiveLimits,
+    artifacts,
     inspect_archive,
 )
 

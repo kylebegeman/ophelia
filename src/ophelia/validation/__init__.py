@@ -46,6 +46,13 @@ def _reject(code: str, field: str, message: str) -> None:
     raise CanonicalValidationError(ValidationIssue(code, field, message))
 
 
+from .artifacts import (
+    ArchiveInspection,
+    ArchiveInspectionError,
+    ArchiveLimits,
+    ArchiveMember,
+    inspect_archive,
+)
 from .domains import IDNA_PROFILE, CanonicalDomain, parse_domain
 from .identifiers import Environment, Identifier, parse_environment, parse_identifier
 from .paths import (
@@ -60,6 +67,10 @@ from .paths import (
 from .routes import CanonicalHTTPPath, HTTPPathKind, parse_http_path
 
 __all__ = [
+    "ArchiveInspection",
+    "ArchiveInspectionError",
+    "ArchiveLimits",
+    "ArchiveMember",
     "CanonicalDomain",
     "CanonicalHostPath",
     "CanonicalHTTPPath",
@@ -73,6 +84,7 @@ __all__ = [
     "SourceRoot",
     "ValidationIssue",
     "host_path_capability",
+    "inspect_archive",
     "parse_domain",
     "parse_environment",
     "parse_http_path",
