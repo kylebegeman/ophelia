@@ -9,6 +9,12 @@ from typing import Dict, List
 
 
 def gc_plan(runtime_root: Path, keep_releases: int = 5) -> Dict[str, object]:
+    if (
+        not isinstance(keep_releases, int)
+        or isinstance(keep_releases, bool)
+        or keep_releases < 1
+    ):
+        raise ValueError("keep_releases must be a positive integer.")
     candidates: List[Dict[str, object]] = []
     runtime_root = runtime_root.expanduser()
     apps_root = runtime_root / "apps"
@@ -24,12 +30,26 @@ def gc_plan(runtime_root: Path, keep_releases: int = 5) -> Dict[str, object]:
     static_root = runtime_root / "static"
     if static_root.exists():
         for app_root in sorted(path for path in static_root.iterdir() if path.is_dir()):
-            versions_root = app_root / "versions"
-            versions = sorted([path for path in versions_root.iterdir() if path.is_dir()]) if versions_root.exists() else []
-            protected = {path.name for path in versions[-keep_releases:]}
-            for version in versions:
-                if version.name not in protected:
-                    candidates.append({"path": str(version), "reason": "old static version"})
+            releases_root = app_root / "releases"
+            releases = (
+                sorted(
+                    path
+                    for path in releases_root.iterdir()
+                    if path.is_dir() and not path.is_symlink()
+                )
+                if releases_root.exists() and not releases_root.is_symlink()
+                else []
+            )
+            protected = {path.name for path in releases[-keep_releases:]}
+            current_release = _current_static_release_id(app_root, releases_root)
+            if current_release is not None:
+                protected.add(current_release)
+            protected |= _protected_release_ids(runtime_root / "apps" / app_root.name)
+            for release in releases:
+                if release.name not in protected:
+                    candidates.append(
+                        {"path": str(release), "reason": "old static release"}
+                    )
     temp_root = runtime_root / "tmp"
     if temp_root.exists():
         for child in temp_root.iterdir():
@@ -98,6 +118,19 @@ def _release_id_from_path(release_path: Path) -> str | None:
         return None
     release_id = payload.get("release_id")
     return release_id if isinstance(release_id, str) else None
+
+
+def _current_static_release_id(app_root: Path, releases_root: Path) -> str | None:
+    current = app_root / "current"
+    if not current.is_symlink():
+        return None
+    try:
+        target = current.readlink()
+        resolved = (current.parent / target).resolve(strict=False)
+        relative = resolved.relative_to(releases_root.resolve(strict=False))
+    except (OSError, ValueError):
+        return None
+    return relative.parts[0] if len(relative.parts) == 1 else None
 
 
 def _inside_runtime(runtime_root: Path, path: Path) -> bool:
