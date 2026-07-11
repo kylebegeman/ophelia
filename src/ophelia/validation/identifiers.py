@@ -10,7 +10,7 @@ from typing import Any, Optional
 from . import _reject
 
 
-_IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ def parse_identifier(value: Any, *, field: str = "identifier") -> Identifier:
             "invalid_identifier",
             field,
             "%s must be 1-63 lowercase alphanumeric or hyphen characters, "
-            "starting and ending with an alphanumeric character." % field,
+            "starting with a letter and ending with an alphanumeric character." % field,
         )
     return Identifier(value)
 
