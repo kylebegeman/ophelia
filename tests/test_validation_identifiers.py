@@ -18,7 +18,16 @@ class IdentifierValidationTests(unittest.TestCase):
         self.assertEqual("a" * 63, parse_identifier("a" * 63).value)
 
     def test_rejects_noncanonical_identifiers_with_structured_diagnostic(self) -> None:
-        for value in ("", "-app", "app-", "two--parts", "Upper", "under_score", "a" * 64):
+        for value in (
+            "",
+            "1app",
+            "-app",
+            "app-",
+            "two--parts",
+            "Upper",
+            "under_score",
+            "a" * 64,
+        ):
             with self.subTest(value=value):
                 with self.assertRaises(CanonicalValidationError) as raised:
                     parse_identifier(value, field="app")
