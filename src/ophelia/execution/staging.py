@@ -366,6 +366,8 @@ def _verify_binding(
         raise StagingError("Staged plan identity does not match its confirmation payload.")
     if binding.get("deploy_metadata") != payload.get("deploy_metadata"):
         raise StagingError("Staged deploy metadata does not match its confirmation payload.")
+    if binding.get("policy_digest") != payload.get("policy_digest"):
+        raise StagingError("Staged policy digest does not match its confirmation payload.")
     if binding.get("generated_files") != payload.get("generated_files"):
         raise StagingError("Staged generated files do not match their confirmation payload.")
     generated = binding.get("generated_files")
