@@ -72,6 +72,29 @@ class StaticBackendTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertEqual(("immutable_collision",), result.blocker_codes)
 
+    def test_materialization_crash_boundaries_are_idempotently_recoverable(self) -> None:
+        for boundary in (
+            "after_bundle_materialize",
+            "after_static_materialize",
+            "after_revision_record",
+        ):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp:
+                pending = {boundary}
+
+                def fail_once(at: str) -> None:
+                    if at in pending:
+                        pending.remove(at)
+                        raise RuntimeError("injected")
+
+                backend, revision = _backend(
+                    Path(temp), fault_injector=fail_once
+                )
+                with self.assertRaisesRegex(RuntimeError, "injected"):
+                    backend.start(revision)
+
+                handle = backend.start(revision)
+                self.assertTrue(backend.inspect(handle).workloads[0].ready)
+
     def test_readiness_is_derived_from_observed_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             backend, revision = _backend(Path(temp))
@@ -81,6 +104,46 @@ class StaticBackendTests(unittest.TestCase):
             self.assertFalse(observed.workloads[0].ready)
             self.assertEqual("failed", observed.state.value)
             self.assertEqual("failed", backend.verify(revision, observed).status.value)
+
+    def test_candidate_cleanup_is_fenced_idempotent_and_refuses_active_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            backend, revision = _backend(Path(temp))
+            handle = backend.start(revision)
+
+            removed = backend.remove(handle)
+            self.assertTrue(removed.removed)
+            self.assertFalse(backend.bundle_release.exists())
+            self.assertFalse(backend.static_release.exists())
+            self.assertFalse(backend.revision_record.exists())
+            self.assertTrue(backend.remove(handle).removed)
+
+        with tempfile.TemporaryDirectory() as temp:
+            backend, revision = _backend(Path(temp))
+            handle = backend.start(revision)
+            backend.activate(handle, None)
+            with self.assertRaisesRegex(StaticBackendError, "active"):
+                backend.remove(handle)
+
+    def test_candidate_cleanup_recovers_from_partial_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            pending = {"after_bundle_remove"}
+
+            def fail_once(at: str) -> None:
+                if at in pending:
+                    pending.remove(at)
+                    raise RuntimeError("injected")
+
+            backend, revision = _backend(
+                Path(temp), fault_injector=fail_once
+            )
+            handle = backend.start(revision)
+            with self.assertRaisesRegex(RuntimeError, "injected"):
+                backend.remove(handle)
+
+            self.assertTrue(backend.remove(handle).removed)
+            self.assertFalse(backend.bundle_release.exists())
+            self.assertFalse(backend.static_release.exists())
+            self.assertFalse(backend.revision_record.exists())
 
     def test_atomic_activate_and_first_deploy_deactivate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -140,6 +203,72 @@ class StaticBackendTests(unittest.TestCase):
             self.assertEqual(first_caddy, second.caddy_live.read_bytes())
             self.assertEqual(first_target, second.static_current.readlink())
             self.assertEqual(b"first\n", (second.static_current / "index.html").read_bytes())
+
+    def test_restore_without_activation_evidence_verifies_preserved_predecessor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first, first_revision = _backend(
+                root, release_id="release-one", content="first\n"
+            )
+            first_handle = first.start(first_revision)
+            first.activate(first_handle, None)
+
+            second, second_revision = _backend(
+                root,
+                release_id="release-two",
+                content="second\n",
+                operation_id="operation_two",
+                token=2,
+            )
+            second_handle = second.start(second_revision)
+
+            restored = second.restore(first_handle, second_handle)
+
+            self.assertEqual(
+                first_revision.content_digest(), restored.active_revision_digest
+            )
+            self.assertEqual(b"first\n", (second.static_current / "index.html").read_bytes())
+            self.assertFalse(second.activation_record.exists())
+
+    def test_restore_crash_boundaries_are_idempotently_recoverable(self) -> None:
+        for boundary in ("after_caddy_restore", "after_static_restore"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                first, first_revision = _backend(
+                    root, release_id="release-one", content="first\n"
+                )
+                first_handle = first.start(first_revision)
+                first.activate(first_handle, None)
+
+                armed = set()
+
+                def fail_once(at: str) -> None:
+                    if at in armed:
+                        armed.remove(at)
+                        raise RuntimeError("injected")
+
+                second, second_revision = _backend(
+                    root,
+                    release_id="release-two",
+                    content="second\n",
+                    operation_id="operation_two",
+                    token=2,
+                    fault_injector=fail_once,
+                )
+                second_handle = second.start(second_revision)
+                second.activate(second_handle, first_revision.content_digest())
+                armed.add(boundary)
+                with self.assertRaisesRegex(RuntimeError, "injected"):
+                    second.restore(first_handle, second_handle)
+
+                restored = second.restore(first_handle, second_handle)
+                self.assertEqual(
+                    first_revision.content_digest(),
+                    restored.active_revision_digest,
+                )
+                self.assertEqual(
+                    b"first\n", (second.static_current / "index.html").read_bytes()
+                )
 
     def test_switch_boundary_failures_restore_absence(self) -> None:
         for boundary in (

@@ -33,6 +33,22 @@ from .contracts import (
     TrafficActivationResult,
     TrafficActivator,
 )
+from .executor import (
+    BackendContractError,
+    JournaledExecutor,
+    JournaledExecutorError,
+    RecoverableExecutionBackend,
+)
+from .runtime_fence import (
+    FENCE_AREA_NAME,
+    SAME_UID_TRUST_ASSUMPTION,
+    InvalidRuntimeFence,
+    RuntimeFenceError,
+    RuntimeFenceRecordError,
+    RuntimeFenceRejected,
+    RuntimeFenceSafetyError,
+    RuntimeSideEffectFence,
+)
 
 __all__ = [
     "DEFAULT_OPERATION_DB_RELATIVE_PATH",
@@ -64,4 +80,16 @@ __all__ = [
     "StopResult",
     "TrafficActivationResult",
     "TrafficActivator",
+    "BackendContractError",
+    "JournaledExecutor",
+    "JournaledExecutorError",
+    "RecoverableExecutionBackend",
+    "FENCE_AREA_NAME",
+    "SAME_UID_TRUST_ASSUMPTION",
+    "InvalidRuntimeFence",
+    "RuntimeFenceError",
+    "RuntimeFenceRecordError",
+    "RuntimeFenceRejected",
+    "RuntimeFenceSafetyError",
+    "RuntimeSideEffectFence",
 ]

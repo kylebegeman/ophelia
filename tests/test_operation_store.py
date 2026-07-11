@@ -295,7 +295,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         try:
             self.assertEqual("wal", connection.execute("PRAGMA journal_mode").fetchone()[0])
             self.assertEqual(2, connection.execute("PRAGMA synchronous").fetchone()[0])
-            self.assertEqual(2, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -318,6 +318,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
                 "revision_lifecycle",
                 "active_revisions",
                 "atomic_success_commits",
+                "execution_scope_leases",
             }.issubset(tables)
         )
         self.store.integrity_check()
@@ -355,7 +356,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         connection = reopened._connect()
         try:
             self.assertEqual(
-                2, connection.execute("PRAGMA user_version").fetchone()[0]
+                3, connection.execute("PRAGMA user_version").fetchone()[0]
             )
         finally:
             connection.close()
@@ -1317,6 +1318,43 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         )
         self.assertEqual(2, staged.sequence)
 
+    def test_execution_fence_is_monotonic_across_operations_in_one_scope(self) -> None:
+        first_request, first_approval, first_input = _execution_bundle()
+        first = self.store.accept(
+            _actor(), first_request, first_approval, execution_input=first_input
+        )
+        second_request, second_approval, second_input = _execution_bundle(
+            request_id="request_input-2",
+            idempotency_key="deploy-input-2",
+            decision_id="decision_input-2",
+            revision_id="rev_static-2",
+        )
+        second = self.store.accept(
+            _actor(), second_request, second_approval, execution_input=second_input
+        )
+
+        first_fence = self.store.acquire_fence(
+            first.operation_id, "executor-a", 10
+        )
+        with self.assertRaises(LeaseConflict):
+            self.store.acquire_fence(second.operation_id, "executor-b", 10)
+
+        self.now[0] = first_fence.expires_at
+        second_fence = self.store.acquire_fence(
+            second.operation_id, "executor-b", 10
+        )
+        self.assertGreater(
+            second_fence.fencing_token, first_fence.fencing_token
+        )
+        with self.assertRaises(LeaseConflict):
+            self.store.append_revision_state(
+                first.operation_id, RevisionState.CREATED, fence=first_fence
+            )
+        self.store.append_revision_state(
+            second.operation_id, RevisionState.CREATED, fence=second_fence
+        )
+        self.store.integrity_check()
+
     def _ready_input_operation(self, **bundle_kwargs):
         request, approval, execution_input = _execution_bundle(**bundle_kwargs)
         operation = self.store.accept(
@@ -1382,6 +1420,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             receipt.receipt_id,
             self.store.receipt_payload(operation.operation_id)["receipt_id"],
         )
+        self.assertEqual(receipt, self.store.receipt(operation.operation_id))
         self.store.integrity_check()
 
     def test_atomic_success_requires_the_exact_predecessor_revision(self) -> None:
@@ -1399,6 +1438,49 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             self.store.active_revision(request.host_id, request.app, request.environment)
         )
 
+    def test_atomic_success_rechecks_cancellation_and_deadline_in_transaction(self) -> None:
+        cancelled, request, approval, _, cancelled_fence = (
+            self._ready_input_operation()
+        )
+        self.store.request_cancellation(cancelled.operation_id, _actor())
+        with self.assertRaisesRegex(OperationConflict, "cancellation"):
+            self.store.commit_success(
+                _receipt(
+                    cancelled.operation_id,
+                    request,
+                    approval,
+                    previous_revision_id=None,
+                ),
+                None,
+                fence=cancelled_fence,
+            )
+        self.store.release_fence(cancelled_fence)
+
+        deadline, request, approval, _, deadline_fence = (
+            self._ready_input_operation(
+                request_id="request_deadline-2",
+                idempotency_key="deploy-deadline-2",
+                decision_id="decision_deadline-2",
+                revision_id="rev_deadline-2",
+            )
+        )
+        deadline_fence = self.store.heartbeat_fence(deadline_fence, 7200)
+        self.now[0] = datetime.fromisoformat(
+            DEADLINE.replace("Z", "+00:00")
+        ).timestamp()
+        with self.assertRaisesRegex(OperationConflict, "deadline"):
+            self.store.commit_success(
+                _receipt(
+                    deadline.operation_id,
+                    request,
+                    approval,
+                    receipt_id="receipt_deadline-2",
+                    previous_revision_id=None,
+                ),
+                None,
+                fence=deadline_fence,
+            )
+
     def test_historical_atomic_success_survives_a_later_activation(self) -> None:
         first, first_request, first_approval, _, first_fence = (
             self._ready_input_operation()
@@ -1413,6 +1495,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         first_active = self.store.commit_success(
             first_receipt, None, fence=first_fence
         )
+        self.store.release_fence(first_fence)
 
         second, second_request, second_approval, _, second_fence = (
             self._ready_input_operation(
@@ -1439,13 +1522,15 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         self.assertEqual(second.operation_id, second_active.operation_id)
         self.store.integrity_check()
 
-    def test_v1_to_v2_migration_preserves_existing_operation(self) -> None:
+    def test_v1_to_v3_migration_preserves_existing_operation(self) -> None:
         operation, _, _ = self._accept()
         connection = sqlite3.connect(str(self.store.database_path))
         try:
             connection.execute("DROP INDEX operations_recovery_lookup")
             connection.execute("DROP INDEX revision_lifecycle_latest")
+            connection.execute("DROP INDEX execution_scope_lease_operation")
             for table in (
+                "execution_scope_leases",
                 "atomic_success_commits",
                 "active_revisions",
                 "revision_lifecycle",
@@ -1466,7 +1551,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         connection = migrated._connect()
         try:
             self.assertEqual(
-                2, connection.execute("PRAGMA user_version").fetchone()[0]
+                3, connection.execute("PRAGMA user_version").fetchone()[0]
             )
         finally:
             connection.close()

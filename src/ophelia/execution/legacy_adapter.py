@@ -89,9 +89,9 @@ def build_legacy_static_execution(
     evidence = payload.get("evidence_digests")
     if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
         raise StagingError("Confirmed plan evidence digest binding is malformed.")
-    artifact_digests = tuple(
-        sorted({_prefixed_digest(item) for item in evidence} | {artifact_tree_digest})
-    )
+    for item in evidence:
+        _prefixed_digest(item)
+    artifact_digests = (artifact_tree_digest,)
 
     created_at = payload.get("confirmation_created_at")
     expires_at = payload.get("confirmation_expires_at")

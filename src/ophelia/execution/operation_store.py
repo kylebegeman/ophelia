@@ -283,6 +283,56 @@ class SQLiteOperationJournal:
             ).fetchall()
             for row in control_rows:
                 cls._control_tx(connection, row["operation_id"])
+            scope_lease_rows = connection.execute(
+                """
+                SELECT * FROM execution_scope_leases
+                ORDER BY host_id, app, environment
+                """
+            ).fetchall()
+            for row in scope_lease_rows:
+                operation = connection.execute(
+                    """
+                    SELECT host_id, app, environment FROM operations
+                    WHERE operation_id = ?
+                    """,
+                    (row["operation_id"],),
+                ).fetchone()
+                operation_lease = connection.execute(
+                    """
+                    SELECT owner_id, fencing_token, expires_at
+                    FROM operation_leases WHERE operation_id = ?
+                    """,
+                    (row["operation_id"],),
+                ).fetchone()
+                maximum = connection.execute(
+                    """
+                    SELECT MAX(l.fencing_token) AS token
+                    FROM operation_leases AS l
+                    JOIN operations AS o ON o.operation_id = l.operation_id
+                    WHERE o.host_id = ? AND o.app = ? AND o.environment = ?
+                    """,
+                    (row["host_id"], row["app"], row["environment"]),
+                ).fetchone()
+                owner = row["owner_id"]
+                if (
+                    operation is None
+                    or operation["host_id"] != row["host_id"]
+                    or operation["app"] != row["app"]
+                    or operation["environment"] != row["environment"]
+                    or not cls._is_finite_number(row["expires_at"])
+                    or int(row["fencing_token"]) < 1
+                    or maximum is None
+                    or int(maximum["token"] or 0) > int(row["fencing_token"])
+                    or operation_lease is None
+                    or operation_lease["owner_id"] != owner
+                    or int(operation_lease["fencing_token"])
+                    != int(row["fencing_token"])
+                    or float(operation_lease["expires_at"])
+                    != float(row["expires_at"])
+                ):
+                    raise IntegrityError(
+                        "Execution scope lease does not reconcile with its operation."
+                    )
             lifecycle_rows = connection.execute(
                 """
                 SELECT DISTINCT operation_id FROM revision_lifecycle
@@ -1590,33 +1640,255 @@ class SQLiteOperationJournal:
             return
         if owner_id is None or fencing_token is None:
             raise LeaseConflict("A leased operation requires its owner and fencing token.")
-        self._active_lease(
-            connection, operation_id, owner_id, fencing_token, self._clock_sample()
+        now = self._clock_sample()
+        lease = self._active_lease(
+            connection, operation_id, owner_id, fencing_token, now
         )
+        execution_input = connection.execute(
+            "SELECT 1 FROM operation_inputs WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if execution_input is not None:
+            self._active_scope_lease(
+                connection,
+                ExecutionFence(
+                    operation_id,
+                    owner_id,
+                    fencing_token,
+                    float(lease["expires_at"]),
+                ),
+                now,
+            )
 
     def acquire_fence(
         self, operation_id: str, owner_id: str, ttl_seconds: float
     ) -> ExecutionFence:
-        return self.acquire_lease(operation_id, owner_id, ttl_seconds)
+        self._validate_lease_input(owner_id, ttl_seconds)
+        with self._transaction() as connection:
+            self._require_nonterminal_operation(connection, operation_id)
+            scope = self._execution_scope(connection, operation_id)
+            now = self._clock_sample()
+            operation_lease = connection.execute(
+                """
+                SELECT owner_id, fencing_token, expires_at
+                FROM operation_leases WHERE operation_id = ?
+                """,
+                (operation_id,),
+            ).fetchone()
+            if (
+                operation_lease is not None
+                and operation_lease["owner_id"] is not None
+                and float(operation_lease["expires_at"]) > now
+                and operation_lease["owner_id"] != owner_id
+            ):
+                raise LeaseConflict("Operation lease is held by another owner.")
+
+            scope_lease = connection.execute(
+                """
+                SELECT operation_id, owner_id, fencing_token, expires_at
+                FROM execution_scope_leases
+                WHERE host_id = ? AND app = ? AND environment = ?
+                """,
+                (scope["host_id"], scope["app"], scope["environment"]),
+            ).fetchone()
+            scope_active = (
+                scope_lease is not None
+                and scope_lease["owner_id"] is not None
+                and float(scope_lease["expires_at"]) > now
+            )
+            if scope_active and (
+                scope_lease["operation_id"] != operation_id
+                or scope_lease["owner_id"] != owner_id
+            ):
+                raise LeaseConflict(
+                    "Application execution scope is held by another operation."
+                )
+
+            if scope_active:
+                token = int(scope_lease["fencing_token"])
+                expires_at = max(
+                    float(scope_lease["expires_at"]), now + ttl_seconds
+                )
+            else:
+                historical = connection.execute(
+                    """
+                    SELECT MAX(l.fencing_token) AS token
+                    FROM operation_leases AS l
+                    JOIN operations AS o ON o.operation_id = l.operation_id
+                    WHERE o.host_id = ? AND o.app = ? AND o.environment = ?
+                    """,
+                    (scope["host_id"], scope["app"], scope["environment"]),
+                ).fetchone()
+                previous_tokens = [
+                    0,
+                    0
+                    if scope_lease is None
+                    else int(scope_lease["fencing_token"]),
+                    0
+                    if historical is None or historical["token"] is None
+                    else int(historical["token"]),
+                ]
+                token = max(previous_tokens) + 1
+                expires_at = now + ttl_seconds
+
+            connection.execute(
+                """
+                INSERT INTO execution_scope_leases(
+                    host_id, app, environment, operation_id, owner_id,
+                    fencing_token, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(host_id, app, environment) DO UPDATE SET
+                    operation_id = excluded.operation_id,
+                    owner_id = excluded.owner_id,
+                    fencing_token = excluded.fencing_token,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    scope["host_id"],
+                    scope["app"],
+                    scope["environment"],
+                    operation_id,
+                    owner_id,
+                    token,
+                    expires_at,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO operation_leases(
+                    operation_id, owner_id, fencing_token, expires_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(operation_id) DO UPDATE SET
+                    owner_id = excluded.owner_id,
+                    fencing_token = excluded.fencing_token,
+                    expires_at = excluded.expires_at
+                """,
+                (operation_id, owner_id, token, expires_at),
+            )
+            return ExecutionFence(operation_id, owner_id, token, expires_at)
 
     def heartbeat_fence(
         self, fence: ExecutionFence, ttl_seconds: float
     ) -> ExecutionFence:
         if not isinstance(fence, ExecutionFence):
             raise ContractValidationError("fence must be an ExecutionFence.")
-        return self.heartbeat_lease(
-            fence.operation_id,
-            fence.owner_id,
-            fence.fencing_token,
-            ttl_seconds,
-        )
+        self._validate_lease_input(fence.owner_id, ttl_seconds)
+        with self._transaction() as connection:
+            now = self._clock_sample()
+            operation_lease = self._active_lease(
+                connection,
+                fence.operation_id,
+                fence.owner_id,
+                fence.fencing_token,
+                now,
+            )
+            scope_lease = self._active_scope_lease(
+                connection, fence, now
+            )
+            expires_at = max(
+                float(operation_lease["expires_at"]),
+                float(scope_lease["expires_at"]),
+                now + ttl_seconds,
+            )
+            connection.execute(
+                "UPDATE operation_leases SET expires_at = ? WHERE operation_id = ?",
+                (expires_at, fence.operation_id),
+            )
+            connection.execute(
+                """
+                UPDATE execution_scope_leases SET expires_at = ?
+                WHERE host_id = ? AND app = ? AND environment = ?
+                """,
+                (
+                    expires_at,
+                    scope_lease["host_id"],
+                    scope_lease["app"],
+                    scope_lease["environment"],
+                ),
+            )
+            return ExecutionFence(
+                fence.operation_id,
+                fence.owner_id,
+                fence.fencing_token,
+                expires_at,
+            )
 
     def release_fence(self, fence: ExecutionFence) -> None:
         if not isinstance(fence, ExecutionFence):
             raise ContractValidationError("fence must be an ExecutionFence.")
-        self.release_lease(
-            fence.operation_id, fence.owner_id, fence.fencing_token
-        )
+        with self._transaction() as connection:
+            now = self._clock_sample()
+            self._active_lease(
+                connection,
+                fence.operation_id,
+                fence.owner_id,
+                fence.fencing_token,
+                now,
+            )
+            scope = self._active_scope_lease(connection, fence, now)
+            connection.execute(
+                """
+                UPDATE operation_leases SET owner_id = NULL, expires_at = ?
+                WHERE operation_id = ?
+                """,
+                (now, fence.operation_id),
+            )
+            connection.execute(
+                """
+                UPDATE execution_scope_leases
+                SET owner_id = NULL, expires_at = ?
+                WHERE host_id = ? AND app = ? AND environment = ?
+                """,
+                (
+                    now,
+                    scope["host_id"],
+                    scope["app"],
+                    scope["environment"],
+                ),
+            )
+
+    @staticmethod
+    def _execution_scope(
+        connection: sqlite3.Connection, operation_id: str
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            """
+            SELECT host_id, app, environment FROM operations
+            WHERE operation_id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            raise OperationConflict("Unknown operation.")
+        return row
+
+    def _active_scope_lease(
+        self,
+        connection: sqlite3.Connection,
+        fence: ExecutionFence,
+        now: float,
+    ) -> sqlite3.Row:
+        scope = self._execution_scope(connection, fence.operation_id)
+        row = connection.execute(
+            """
+            SELECT host_id, app, environment, operation_id, owner_id,
+                   fencing_token, expires_at
+            FROM execution_scope_leases
+            WHERE host_id = ? AND app = ? AND environment = ?
+            """,
+            (scope["host_id"], scope["app"], scope["environment"]),
+        ).fetchone()
+        if (
+            row is None
+            or row["operation_id"] != fence.operation_id
+            or row["owner_id"] != fence.owner_id
+            or int(row["fencing_token"]) != fence.fencing_token
+            or float(row["expires_at"]) <= now
+        ):
+            raise LeaseConflict(
+                "Application execution scope owner or fencing token is stale."
+            )
+        return row
 
     def _assert_execution_fence(
         self,
@@ -1628,13 +1900,15 @@ class SQLiteOperationJournal:
             raise ContractValidationError("fence must be an ExecutionFence.")
         if fence.operation_id != operation_id:
             raise LeaseConflict("Execution fence identifies a different operation.")
+        now = self._clock_sample()
         self._active_lease(
             connection,
             operation_id,
             fence.owner_id,
             fence.fencing_token,
-            self._clock_sample(),
+            now,
         )
+        self._active_scope_lease(connection, fence, now)
 
     _REVISION_TRANSITIONS = {
         RevisionState.CREATED: {RevisionState.STAGED, RevisionState.FAILED},
@@ -2104,6 +2378,77 @@ class SQLiteOperationJournal:
             )
             self._commit_receipt_tx(connection, validated, receipt_json)
 
+    def _append_success_phase_events_tx(
+        self,
+        connection: sqlite3.Connection,
+        receipt: TerminalReceipt,
+    ) -> None:
+        self._verified_events(connection, receipt.operation_id)
+        existing_types = {
+            json.loads(row["payload_json"])["event_type"]
+            for row in connection.execute(
+                """
+                SELECT payload_json FROM operation_events WHERE operation_id = ?
+                """,
+                (receipt.operation_id,),
+            ).fetchall()
+        }
+        completion_events = (
+            (
+                "phase.commit.completed",
+                (receipt.desired_revision_digest,),
+            ),
+            ("phase.emit_receipt.started", ()),
+            (
+                "phase.emit_receipt.completed",
+                (canonical_digest(receipt),),
+            ),
+        )
+        if any(
+            event_type in existing_types
+            for event_type, _ in completion_events
+        ):
+            raise OperationConflict(
+                "Success phase completion events may only be committed atomically."
+            )
+        required = (
+            ()
+            if "phase.commit.started" in existing_types
+            else (("phase.commit.started", ()),)
+        ) + completion_events
+        previous = connection.execute(
+            """
+            SELECT sequence, event_digest FROM operation_events
+            WHERE operation_id = ? ORDER BY sequence DESC LIMIT 1
+            """,
+            (receipt.operation_id,),
+        ).fetchone()
+        sequence = 1 if previous is None else int(previous["sequence"]) + 1
+        previous_digest = None if previous is None else previous["event_digest"]
+        for event_type, evidence_digests in required:
+            event = OperationEvent(
+                event_id="event_" + uuid.uuid4().hex,
+                operation_id=receipt.operation_id,
+                sequence=sequence,
+                event_type=event_type,
+                occurred_at=receipt.completed_at,
+                state=OperationState.EXECUTING,
+                host_id=receipt.host_id,
+                app=receipt.app,
+                environment=receipt.environment,
+                revision_id=receipt.desired_revision_id,
+                evidence_digests=evidence_digests,
+                previous_event_digest=previous_digest,
+            )
+            self._append_event(
+                connection,
+                event,
+                self._bounded_json(event),
+                allow_terminal=False,
+            )
+            previous_digest = canonical_digest(event)
+            sequence += 1
+
     def commit_success(
         self,
         receipt: TerminalReceipt,
@@ -2162,6 +2507,19 @@ class SQLiteOperationJournal:
                     )
                 return self._active_revision_from_row(active)
 
+            control = self._control_tx(connection, validated.operation_id)
+            now = datetime.fromtimestamp(
+                self._clock_sample(), timezone.utc
+            )
+            if control.cancellation_requested:
+                raise OperationConflict(
+                    "Successful commit is blocked by durable cancellation."
+                )
+            if control.deadline is None or parse_utc(control.deadline) <= now:
+                raise OperationConflict(
+                    "Successful commit is blocked by the execution deadline."
+                )
+
             current = connection.execute(
                 """
                 SELECT revision_id FROM active_revisions
@@ -2188,6 +2546,7 @@ class SQLiteOperationJournal:
                 raise OperationConflict(
                     "Successful receipt does not bind the activated revision."
                 )
+            self._append_success_phase_events_tx(connection, validated)
             self._commit_receipt_tx(connection, validated, receipt_json)
             connection.execute(
                 """
@@ -2227,6 +2586,25 @@ class SQLiteOperationJournal:
                     raise IntegrityError("Terminal receipt payload is invalid.")
                 return payload
             return None
+        finally:
+            connection.close()
+
+    def receipt(self, operation_id: str) -> Optional[TerminalReceipt]:
+        """Return the verified terminal contract for an operation, if present."""
+
+        connection = self._connect()
+        try:
+            self._verified_events(connection, operation_id)
+            row = connection.execute(
+                "SELECT payload_json FROM terminal_receipts WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                return self._receipt_from_payload(json.loads(row["payload_json"]))
+            except Exception as exc:
+                raise IntegrityError("Terminal receipt payload is invalid.") from exc
         finally:
             connection.close()
 

@@ -203,7 +203,9 @@ class StaticRuntimeBackend:
                 )
 
             _publish_immutable_tree(checked.candidate_root, self.bundle_release)
+            self._fault("after_bundle_materialize")
             _publish_immutable_tree(checked.static_source, self.static_release)
+            self._fault("after_static_materialize")
             _reject_symlink_parent(self.revision_record, self.runtime_root)
             record = {
                 "schema_version": 1,
@@ -214,6 +216,7 @@ class StaticRuntimeBackend:
                 "static_digest": _tree_content_digest(self.static_release),
             }
             _publish_immutable_file(self.revision_record, _json_bytes(record))
+            self._fault("after_revision_record")
             self._verify_materialized(record)
             return RuntimeHandle(
                 backend=self.backend_name,
@@ -388,6 +391,21 @@ class StaticRuntimeBackend:
     ) -> TrafficActivationResult:
         self._validate_handle(failed_candidate)
         with self._fence():
+            predecessor_path = self.activation_record / "predecessor.json"
+            if not predecessor_path.exists():
+                observed = self._capture_predecessor()
+                expected_digest = (
+                    None if previous is None else previous.revision_digest
+                )
+                if observed.revision_digest != expected_digest:
+                    raise StaticBackendError(
+                        "Live static state does not match the expected predecessor."
+                    )
+                return self._activation_result(
+                    failed_candidate.revision_digest,
+                    expected_digest,
+                    previous_revision_digest=failed_candidate.revision_digest,
+                )
             predecessor = self._load_predecessor()
             if previous is None:
                 if predecessor.revision_digest is not None:
@@ -396,10 +414,9 @@ class StaticRuntimeBackend:
                 if previous.revision_digest != predecessor.revision_digest:
                     raise StaticBackendError("Restore predecessor does not match captured state.")
             self._restore_predecessor(predecessor)
-            active = predecessor.revision_digest or _digest_text("static-absent")
             return self._activation_result(
                 failed_candidate.revision_digest,
-                active,
+                predecessor.revision_digest,
                 previous_revision_digest=failed_candidate.revision_digest,
             )
 
@@ -412,7 +429,32 @@ class StaticRuntimeBackend:
 
     def remove(self, handle: RuntimeHandle) -> RemoveResult:
         self._validate_handle(handle)
-        return RemoveResult(removed=False, observed_state_digest=self.inspect(handle).digest())
+        with self._fence():
+            if (
+                self.static_current.is_symlink()
+                and self.static_current.readlink()
+                == Path("releases") / self.release_id
+            ):
+                raise StaticBackendError(
+                    "An active static release cannot be removed."
+                )
+            _remove_immutable_tree(self.bundle_release, self.runtime_root)
+            self._fault("after_bundle_remove")
+            _remove_immutable_tree(self.static_release, self.runtime_root)
+            self._fault("after_static_remove")
+            _remove_immutable_file(self.revision_record, self.runtime_root)
+            self._fault("after_revision_record_remove")
+            observed_state_digest = canonical_digest(
+                {
+                    "bundle_present": self.bundle_release.exists(),
+                    "static_present": self.static_release.exists(),
+                    "revision_record_present": self.revision_record.exists(),
+                }
+            )
+            return RemoveResult(
+                removed=True,
+                observed_state_digest=observed_state_digest,
+            )
 
     def logs(self, handle: RuntimeHandle, cursor: Optional[str]) -> LogBatch:
         self._validate_handle(handle)
@@ -546,12 +588,14 @@ class StaticRuntimeBackend:
             _atomic_replace_file(self.caddy_live, data)
         else:
             _atomic_remove(self.caddy_live)
+        self._fault("after_caddy_restore")
         if predecessor.static_target is None:
             _atomic_remove(self.static_current)
         else:
             target = Path(predecessor.static_target)
             _validate_static_target(target)
             _atomic_replace_symlink(self.static_current, target)
+        self._fault("after_static_restore")
 
     def _candidate_is_active(self, revision_digest: str) -> bool:
         try:
@@ -589,7 +633,7 @@ class StaticRuntimeBackend:
     def _activation_result(
         self,
         old_digest: Optional[str],
-        active_digest: str,
+        active_digest: Optional[str],
         *,
         previous_revision_digest: Optional[str] = None,
     ) -> TrafficActivationResult:
@@ -779,6 +823,30 @@ def _atomic_remove(path: Path) -> None:
         _fsync_directory(path.parent)
     elif path.exists():
         raise StaticBackendError("Managed live path has an unsafe type.")
+
+
+def _remove_immutable_tree(path: Path, trusted_root: Path) -> None:
+    _reject_symlink_parent(path, trusted_root)
+    if path.is_symlink():
+        raise StaticBackendError("Immutable release root must not be a symlink.")
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise StaticBackendError("Immutable release root must be a directory.")
+    shutil.rmtree(path)
+    _fsync_directory(path.parent)
+
+
+def _remove_immutable_file(path: Path, trusted_root: Path) -> None:
+    _reject_symlink_parent(path, trusted_root)
+    if path.is_symlink():
+        raise StaticBackendError("Immutable revision evidence must not be a symlink.")
+    if not path.exists():
+        return
+    if not path.is_file():
+        raise StaticBackendError("Immutable revision evidence must be a regular file.")
+    path.unlink()
+    _fsync_directory(path.parent)
 
 
 def _reject_symlink_parent(path: Path, trusted_root: Path) -> None:

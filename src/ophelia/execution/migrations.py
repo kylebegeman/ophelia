@@ -6,7 +6,7 @@ import sqlite3
 from typing import Sequence, Tuple
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
     (
@@ -149,6 +149,27 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
             """
             CREATE INDEX revision_lifecycle_latest
             ON revision_lifecycle(operation_id, sequence DESC)
+            """,
+        ),
+    ),
+    (
+        3,
+        (
+            """
+            CREATE TABLE execution_scope_leases (
+                host_id TEXT NOT NULL,
+                app TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+                owner_id TEXT,
+                fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+                expires_at REAL NOT NULL,
+                PRIMARY KEY (host_id, app, environment)
+            )
+            """,
+            """
+            CREATE INDEX execution_scope_lease_operation
+            ON execution_scope_leases(operation_id)
             """,
         ),
     ),
