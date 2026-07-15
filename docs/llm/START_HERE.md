@@ -84,6 +84,7 @@ make production-hardening-fixtures
 | Review readiness | `./cli/ship live-readiness run ... --json` |
 | Prepare live evidence | `./cli/ship live-hydration report ... --json` |
 | Review operation history | `./cli/ship receipts list --json` |
+| Execute a product operations bundle | `docs/llm/capabilities/product-operations.md`, then `./cli/ship product validate ... --json` |
 
 ## Data Boundaries
 

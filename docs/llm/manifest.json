@@ -65,6 +65,11 @@
       "purpose": "Synthetic apps and runtime observations used for tests and demos."
     },
     {
+      "label": "Product operations bundles",
+      "path": "capabilities/product-operations.md",
+      "purpose": "Strict product contract validation plus release, rollback, backup, and isolated restore execution."
+    },
+    {
       "label": "Open source readiness",
       "path": "../open-source-readiness.md",
       "purpose": "Public-release audit, governance, and hygiene rules."
