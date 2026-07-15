@@ -39,6 +39,7 @@ from .contracts import (
     PreflightResult,
     RemoveResult,
     RuntimeHandle,
+    StopResult,
     TrafficActivationResult,
 )
 from .operation_store import (
@@ -57,7 +58,7 @@ class BackendContractError(JournaledExecutorError):
 
 
 class RecoverableExecutionBackend(Protocol):
-    """Runtime seam required by the first recoverable static vertical slice.
+    """Runtime seam required by the recoverable activation pipeline.
 
     ``start``, ``activate``, ``restore``, ``deactivate``, and ``remove`` must be
     reconcile-first and idempotent for the operation and scope fence supplied
@@ -102,6 +103,11 @@ class RecoverableExecutionBackend(Protocol):
         ...
 
     def deactivate(self, failed_candidate: RuntimeHandle) -> TrafficActivationResult:
+        ...
+
+    def drain_previous(
+        self, previous: RuntimeHandle, candidate: RuntimeHandle
+    ) -> StopResult:
         ...
 
     def remove(self, handle: RuntimeHandle) -> RemoveResult:
@@ -309,7 +315,14 @@ class JournaledExecutor:
             verification, fence = self._phase_external_verify(
                 operation, execution_input, backend, candidate, fence
             )
-            fence = self._phase_drain_previous(operation, execution_input, fence)
+            fence = self._phase_drain_previous(
+                operation,
+                execution_input,
+                backend,
+                candidate,
+                previous,
+                fence,
+            )
             self._checkpoint_control(operation.operation_id, execution_input)
             fence = self._heartbeat(fence)
             self._event(
@@ -509,13 +522,25 @@ class JournaledExecutor:
         self,
         operation: OperationRef,
         execution_input: ExecutionInput,
+        backend: RecoverableExecutionBackend,
+        candidate: RuntimeHandle,
+        previous: Optional[ActiveRevision],
         fence: ExecutionFence,
     ) -> ExecutionFence:
         phase = PlanPhase.DRAIN_PREVIOUS
         if self._phase_completed(operation.operation_id, phase):
             return fence
         fence = self._before_phase(operation, execution_input, phase, fence)
-        self._complete_phase(operation, phase, (), fence)
+        evidence_digests: Tuple[str, ...] = ()
+        drain = getattr(backend, "drain_previous", None)
+        if previous is not None and callable(drain):
+            result = drain(self._previous_handle(backend, previous), candidate)
+            if not isinstance(result, StopResult) or not result.stopped:
+                raise BackendContractError(
+                    "Runtime backend did not verify predecessor drain."
+                )
+            evidence_digests = (result.observed_state_digest,)
+        self._complete_phase(operation, phase, evidence_digests, fence)
         return fence
 
     def _before_phase(
@@ -832,19 +857,35 @@ class JournaledExecutor:
         phases = tuple(step.phase for step in execution_input.plan.steps)
         if phases != _SUPPORTED_PHASES:
             raise BackendContractError(
-                "The current executor only accepts the complete static activation pipeline."
+                "The current executor only accepts the complete activation pipeline."
             )
-        if execution_input.plan.operation != "deploy.apply":
+        if execution_input.plan.operation not in {"deploy.apply", "rollback.apply"}:
             raise BackendContractError(
-                "The current executor only accepts deploy.apply operations."
+                "The current executor only accepts deploy.apply and rollback.apply operations."
+            )
+        workloads = execution_input.revision.workloads
+        if (
+            len(workloads) != 1
+            or workloads[0].workload_kind not in {WorkloadKind.STATIC, WorkloadKind.WEB}
+            or workloads[0].artifact_digest != execution_input.artifact_ref.artifact_digest
+            or execution_input.revision.artifact_digests != (execution_input.artifact_ref.artifact_digest,)
+        ):
+            raise BackendContractError(
+                "The current executor requires one exact static or web workload artifact."
+            )
+        required_steps = dict(_SUPPORTED_STEPS)
+        if workloads[0].workload_kind is WorkloadKind.WEB:
+            required_steps[PlanPhase.DRAIN_PREVIOUS] = (
+                True,
+                CompensationAction.PRESERVE_PREVIOUS,
             )
         if any(
             (step.mutates_runtime, step.compensation)
-            != _SUPPORTED_STEPS[step.phase]
+            != required_steps[step.phase]
             for step in execution_input.plan.steps
         ):
             raise BackendContractError(
-                "Static activation steps do not declare the required mutation and compensation semantics."
+                "Activation steps do not declare the required mutation and compensation semantics."
             )
         revision_digest = execution_input.revision.content_digest()
         artifact_digest = execution_input.artifact_ref.artifact_digest
@@ -858,19 +899,7 @@ class JournaledExecutor:
             step.desired_effect_digest for step in execution_input.plan.steps
         ) != expected_effect_digests:
             raise BackendContractError(
-                "Static activation steps do not declare the exact desired effects."
-            )
-        workloads = execution_input.revision.workloads
-        if (
-            len(workloads) != 1
-            or workloads[0].workload_kind is not WorkloadKind.STATIC
-            or workloads[0].artifact_digest
-            != execution_input.artifact_ref.artifact_digest
-            or execution_input.revision.artifact_digests
-            != (execution_input.artifact_ref.artifact_digest,)
-        ):
-            raise BackendContractError(
-                "The current executor requires one exact static workload artifact."
+                "Activation steps do not declare the exact desired effects."
             )
         artifact_path = PurePosixPath(execution_input.artifact_ref.relative_root)
         if (
@@ -879,7 +908,7 @@ class JournaledExecutor:
             or artifact_path.parts[-1] != "candidate"
         ):
             raise BackendContractError(
-                "Static execution artifacts must reference immutable operation staging."
+                "Execution artifacts must reference immutable operation staging."
             )
 
     @staticmethod
