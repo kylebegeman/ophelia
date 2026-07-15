@@ -30,6 +30,7 @@ from .pack import register as register_pack
 from .plugins import register as register_plugins
 from .policy import register as register_policy
 from .preflight import register as register_preflight
+from .product import register as register_product
 from .providers import register as register_providers
 from .receipts import register as register_receipts
 from .release import register as register_release
@@ -64,6 +65,7 @@ def register_commands(subparsers):
     register_host(subparsers)
     register_registry(subparsers)
     register_preflight(subparsers)
+    register_product(subparsers)
     register_providers(subparsers)
     register_secrets(subparsers)
     register_schema(subparsers)

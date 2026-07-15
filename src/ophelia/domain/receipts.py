@@ -51,6 +51,8 @@ class ReceiptEffect(str, Enum):
     PREVIEW = "preview"
     FILES_ONLY = "files_only"
     RUNTIME_ACTIVATED = "runtime_activated"
+    BACKUP_CREATED = "backup_created"
+    RESTORE_VERIFIED = "restore_verified"
     NONE = "none"
 
 
@@ -180,8 +182,17 @@ class TerminalReceipt(Contract):
             raise ContractValidationError("Kernel receipts must declare inputs_redacted=true.")
 
         if self.outcome is ReceiptOutcome.SUCCEEDED:
-            if self.effect is not ReceiptEffect.RUNTIME_ACTIVATED:
-                raise ContractValidationError("A successful kernel receipt must report runtime_activated.")
+            allowed_effects = {
+                "deploy.apply": ReceiptEffect.RUNTIME_ACTIVATED,
+                "rollback.apply": ReceiptEffect.RUNTIME_ACTIVATED,
+                "backup.apply": ReceiptEffect.BACKUP_CREATED,
+                "restore-drill.apply": ReceiptEffect.RESTORE_VERIFIED,
+            }
+            expected_effect = allowed_effects.get(self.operation)
+            if expected_effect is None or self.effect is not expected_effect:
+                raise ContractValidationError(
+                    "A successful kernel receipt must report the effect for its operation."
+                )
             if self.verification.status is not VerificationStatus.PASSED:
                 raise ContractValidationError("A successful operation requires passed verification.")
             observed = self.verification.observed_revision_digest

@@ -501,6 +501,22 @@ class StaticRuntimeBackend:
         observed = self.inspect(handle)
         return StopResult(stopped=False, observed_state_digest=observed.digest())
 
+    def drain_previous(
+        self, previous: RuntimeHandle, candidate: RuntimeHandle
+    ) -> StopResult:
+        """Static revisions have no process to drain after pointer activation."""
+
+        return StopResult(
+            stopped=True,
+            observed_state_digest=canonical_digest(
+                {
+                    "previous_revision_digest": previous.revision_digest,
+                    "candidate_revision_digest": candidate.revision_digest,
+                    "process_drain_required": False,
+                }
+            ),
+        )
+
     def remove(self, handle: RuntimeHandle) -> RemoveResult:
         self._validate_handle(handle)
         with self._fence():
