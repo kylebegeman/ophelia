@@ -257,12 +257,24 @@ def _validate_runtime(value: Mapping[str, Any]) -> None:
     _id(value["product_id"], "product_id")
     _digest(value["contract_digest"], "contract_digest")
     _digest(value["composition_digest"], "composition_digest")
-    _validate_stack(value["stack"])
+    stack_facets = _validate_stack(value["stack"])
     process_ids = set()
     for item in _list(value["processes"], "processes"):
-        _shape(item, "process", {"id", "artifact_id", "argv", "replicas", "shutdown_seconds"})
+        _shape(
+            item,
+            "process",
+            {"id", "artifact_id", "argv", "replicas", "shutdown_seconds"},
+            {"facet"},
+        )
         _id(item["id"], "process id")
         _id(item["artifact_id"], "artifact id")
+        facet = item.get("facet")
+        if facet is not None:
+            _id(facet, "process facet")
+            if facet not in stack_facets:
+                raise ProductBundleError("Runtime process references an unknown stack facet.")
+        elif len(stack_facets) > 1:
+            raise ProductBundleError("Runtime process must declare a facet for a multi-facet stack.")
         argv = _list(item["argv"], "process argv")
         if not all(isinstance(arg, str) and "\x00" not in arg for arg in argv):
             raise ProductBundleError("Process argv must contain strings without NUL bytes.")
@@ -434,10 +446,15 @@ def _validate_recovery(value: Mapping[str, Any]) -> None:
     for name in ("rpo_hours", "rto_hours", "retention_days"):
         _integer(objectives[name], name, 1)
     dataset_ids = _validate_datasets(value["datasets"], "recovery datasets")
+    recoverable_ids = {
+        item["id"] for item in value["datasets"] if item["backup"] != "excluded"
+    }
     backup = _unique_ids(value["backup_order"], "backup order")
     restore = _unique_ids(value["restore_order"], "restore order")
-    if set(backup) != dataset_ids or set(restore) != dataset_ids:
-        raise ProductBundleError("Backup and restore order must cover every recovery dataset.")
+    if set(backup) != recoverable_ids or set(restore) != recoverable_ids:
+        raise ProductBundleError(
+            "Backup and restore order must cover every non-excluded recovery dataset."
+        )
     validation_ids = []
     for item in _list(value["validation_order"], "validation order"):
         _shape(item, "recovery validation", {"dataset_id", "checks"})
@@ -447,6 +464,10 @@ def _validate_recovery(value: Mapping[str, Any]) -> None:
         validation_ids.append(item["dataset_id"])
     if len(validation_ids) != len(set(validation_ids)):
         raise ProductBundleError("Recovery validation datasets must be unique.")
+    if set(validation_ids) != recoverable_ids:
+        raise ProductBundleError(
+            "Recovery validation must cover every non-excluded recovery dataset."
+        )
 
 
 def _validate_datasets(value: Any, owner: str) -> set[str]:
@@ -633,12 +654,47 @@ def _unique_ids(value: Any, owner: str) -> Tuple[str, ...]:
     return items
 
 
-def _validate_stack(value: Any) -> None:
-    _shape(value, "resolved stack", {"id", "version", "manifest_digest", "blueprint_digest"})
+def _validate_stack(value: Any) -> set[str]:
+    _shape(
+        value,
+        "resolved stack",
+        {"id", "version", "manifest_digest", "blueprint_digest"},
+        {"facets"},
+    )
     _id(value["id"], "stack id")
     _version(value["version"], "stack version")
     _digest(value["manifest_digest"], "stack manifest digest")
     _digest(value["blueprint_digest"], "stack blueprint digest")
+    facet_ids: set[str] = set()
+    facet_roots: list[PurePosixPath] = []
+    for facet in _list(value.get("facets", []), "stack facets", minimum=0):
+        _shape(facet, "stack facet", {"id", "kind", "root", "toolchain"})
+        _id(facet["id"], "stack facet id")
+        if facet["id"] in facet_ids:
+            raise ProductBundleError("Resolved stack repeats a facet id.")
+        if facet["kind"] not in {"server", "web", "mobile", "operations"}:
+            raise ProductBundleError("Resolved stack facet kind is invalid.")
+        _safe_path_or_dot(facet["root"], "stack facet root")
+        _id(facet["toolchain"], "stack facet toolchain")
+        root = PurePosixPath(facet["root"])
+        for existing in facet_roots:
+            if _paths_overlap(root, existing):
+                raise ProductBundleError("Resolved stack facet roots overlap.")
+        facet_ids.add(facet["id"])
+        facet_roots.append(root)
+    return facet_ids
+
+
+def _safe_path_or_dot(value: Any, owner: str) -> None:
+    if value == ".":
+        return
+    _safe_path(value, owner)
+
+
+def _paths_overlap(left: PurePosixPath, right: PurePosixPath) -> bool:
+    if left == PurePosixPath(".") or right == PurePosixPath("."):
+        return True
+    return left == right or left in right.parents or right in left.parents
 
 
 def _digest_bytes(value: bytes) -> str:

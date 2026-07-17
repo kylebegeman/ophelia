@@ -38,14 +38,27 @@ from ophelia.product_recovery import (
 )
 
 
-SHARED_LINKLET_BUNDLE = (
-    Path(__file__).resolve().parents[2]
-    / "forge"
-    / "examples"
-    / "linklet"
-    / ".product"
-    / "operations"
-)
+SHARED_FORGE_ROOT = Path(__file__).resolve().parents[2] / "forge" / "examples"
+SHARED_FORGE_PROFILES = {
+    "linklet": {
+        "product_id": "linklet-reference",
+        "stack_id": "go-hypermedia-sqlite",
+        "facets": {"default"},
+        "bundle_digest": "sha256:0362623447140c055b7f69251b4d307fedd38036ae3d2f1fa8a6866826beacd8",
+    },
+    "linklet-postgres": {
+        "product_id": "linklet-postgres-reference",
+        "stack_id": "go-hypermedia-postgres",
+        "facets": {"default"},
+        "bundle_digest": "sha256:f31c4ee0abba44fee3e6d351ec6a57f1625f98bf21d15467a604b7180bc60cb4",
+    },
+    "linklet-react": {
+        "product_id": "linklet-react-reference",
+        "stack_id": "go-react-postgres",
+        "facets": {"server", "web"},
+        "bundle_digest": "sha256:863e389ce3bc4575db9d65c9984343319e87d09607f837c230531bef8cbd9734",
+    },
+}
 
 
 def _sha(value: bytes) -> str:
@@ -262,16 +275,61 @@ class ProductOperationsTests(unittest.TestCase):
         self.temporary.cleanup()
 
     @unittest.skipUnless(
-        SHARED_LINKLET_BUNDLE.is_dir(),
+        SHARED_FORGE_ROOT.is_dir(),
         "optional sibling Forge checkout is unavailable",
     )
-    def test_shared_linklet_fixture_validates_without_forge_import(self) -> None:
-        bundle = load_product_operations_bundle(SHARED_LINKLET_BUNDLE)
-        self.assertEqual("linklet-reference", bundle.product_id)
-        self.assertEqual(
-            "sha256:64146640565c3b8437d2e89869c035b8e8ba1be5594cd05f8871767481b6d15b",
-            bundle.bundle_digest,
-        )
+    def test_shared_forge_profiles_validate_without_forge_import(self) -> None:
+        for profile, expected in SHARED_FORGE_PROFILES.items():
+            with self.subTest(profile=profile):
+                bundle = load_product_operations_bundle(
+                    SHARED_FORGE_ROOT / profile / ".product" / "operations"
+                )
+                self.assertEqual(expected["product_id"], bundle.product_id)
+                self.assertEqual(expected["stack_id"], bundle.runtime["stack"]["id"])
+                self.assertEqual(
+                    expected["facets"],
+                    {item["id"] for item in bundle.runtime["stack"]["facets"]},
+                )
+                self.assertEqual(expected["bundle_digest"], bundle.bundle_digest)
+
+    def test_multi_facet_process_must_bind_a_known_facet(self) -> None:
+        bundle_root, _ = _fixture(self.root, "fixture-facets", self.port)
+        runtime_path = bundle_root / "runtime-requirements.json"
+        runtime = json.loads(runtime_path.read_text())
+        runtime["stack"]["facets"] = [
+            {"id": "server", "kind": "server", "root": "server", "toolchain": "go"},
+            {"id": "web", "kind": "web", "root": "web", "toolchain": "node"},
+        ]
+        runtime["contract_digest"] = _forge_digest(runtime, "contract_digest")
+        runtime_digest = _write(runtime_path, runtime)
+        release_path = bundle_root / "release-manifest.json"
+        release = json.loads(release_path.read_text())
+        release["stack"] = runtime["stack"]
+        release["manifest_digest"] = _forge_digest(release, "manifest_digest")
+        release_digest = _write(release_path, release)
+        bundle_path = bundle_root / "bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        next(
+            item for item in bundle["documents"] if item["kind"] == "runtime-requirements"
+        )["digest"] = runtime_digest
+        next(
+            item for item in bundle["documents"] if item["kind"] == "release-manifest"
+        )["digest"] = release_digest
+        bundle["bundle_digest"] = _forge_digest(bundle, "bundle_digest")
+        _write(bundle_path, bundle)
+
+        with self.assertRaisesRegex(ProductBundleError, "must declare a facet"):
+            load_product_operations_bundle(bundle_root)
+
+        runtime["processes"][0]["facet"] = "server"
+        runtime["contract_digest"] = _forge_digest(runtime, "contract_digest")
+        runtime_digest = _write(runtime_path, runtime)
+        next(
+            item for item in bundle["documents"] if item["kind"] == "runtime-requirements"
+        )["digest"] = runtime_digest
+        bundle["bundle_digest"] = _forge_digest(bundle, "bundle_digest")
+        _write(bundle_path, bundle)
+        load_product_operations_bundle(bundle_root)
 
     def test_artifact_bytes_and_platform_fail_closed(self) -> None:
         bundle_root, artifact = _fixture(self.root, "fixture-v1", self.port)
