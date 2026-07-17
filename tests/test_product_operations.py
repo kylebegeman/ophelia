@@ -115,7 +115,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 p=argparse.ArgumentParser(); p.add_argument('-addr'); p.add_argument('-db'); a=p.parse_args()
 host, port=a.addr.rsplit(':', 1)
-db=sqlite3.connect(a.db); db.execute('create table if not exists fixture (value text)'); db.commit(); db.close()
+db=sqlite3.connect(a.db); db.execute('pragma journal_mode=WAL'); db.execute('create table if not exists fixture (value text)'); db.commit(); db.close()
 class H(BaseHTTPRequestHandler):
   def do_GET(self):
     if self.path == '/healthz': body=b'ok'
