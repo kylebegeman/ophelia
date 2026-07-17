@@ -33,13 +33,19 @@ and Ophelia digests.
   terminal evidence.
 - Backup honors application-stop quiescence and restore drills boot the exact
   artifact against isolated restored data.
-- Provider-selected restore drills and unprovable release preconditions fail
-  closed instead of overstating application-level recovery verification.
+- One to 32 replicas must all pass health before their complete upstream set is
+  selected. New connections are balanced across that set.
+- Forward startup migrations, active-revision backup evidence, and explicit
+  digest-bound precondition evidence replace blanket release blockers.
+- Filesystem and local object snapshots restore into isolated bindings.
+  PostgreSQL backup and restore use provider-native tools, a drill-specific
+  database name, and applied migration verification without exposing its URL
+  in command arguments or evidence.
 
 ## Verification
 
-- The shared committed Linklet operations bundle validates at its exact current
-  digest without importing Forge.
+- The shared committed SQLite, PostgreSQL, and React Linklet operations bundles
+  validate at their exact current digests without importing Forge.
 - A synthetic executable product deploys v1, creates and verifies a backup,
   boots an isolated restore, upgrades to v2, and rolls back to v1 through the
   same journaled kernel.

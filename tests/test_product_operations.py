@@ -13,6 +13,7 @@ import unittest
 import urllib.request
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -31,6 +32,9 @@ from ophelia.product_execution import (
 )
 from ophelia.execution.process_backend import reap_product_children
 from ophelia.product_recovery import (
+    _backup_postgresql,
+    _isolated_postgres_target,
+    _restore_postgresql,
     apply_product_restore_drill,
     create_product_backup,
     product_backup_plan,
@@ -99,6 +103,7 @@ def _fixture(
     replicas: int = 1,
     release_preconditions: tuple[str, ...] = ("health-probe",),
     with_migration: bool = False,
+    provider_dataset: bool = False,
 ) -> tuple[Path, Path]:
     bundle_root = root / release / "operations"
     bundle_root.mkdir(parents=True)
@@ -106,6 +111,7 @@ def _fixture(
     artifact.write_text(
         """#!/usr/bin/env python3
 import argparse, os, sqlite3
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 p=argparse.ArgumentParser(); p.add_argument('-addr'); p.add_argument('-db'); a=p.parse_args()
 host, port=a.addr.rsplit(':', 1)
@@ -115,6 +121,10 @@ class H(BaseHTTPRequestHandler):
     if self.path == '/healthz': body=b'ok'
     elif self.path == '/version': body=b'RELEASE_VALUE'
     elif self.path == '/instance': body=str(os.getpid()).encode()
+    elif self.path == '/object':
+      root=os.environ.get('OBJECT_STORAGE_LOCAL_ROOT', '')
+      probe=Path(root) / 'probe.txt'
+      body=probe.read_bytes() if probe.is_file() else b'missing'
     else: self.send_response(404); self.end_headers(); return
     self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
   def log_message(self, *args): pass
@@ -171,6 +181,30 @@ ThreadingHTTPServer((host, int(port)), H).serve_forever()
             "shutdown_timeout_seconds": 2,
         },
     }
+    provider = {
+        "id": "storage.object.private",
+        "owner": "storage.object",
+        "kind": "object-storage",
+        "binding": "provider-selected",
+        "consistency": "physical",
+        "consistency_group": "storage.object.private",
+        "backup": "required",
+        "quiescence": "provider-snapshot",
+        "backup_order": 20,
+        "restore_validations": ["provider-restore", "application-validation"],
+    }
+    if provider_dataset:
+        runtime["data"].append(provider)
+        runtime["environment"] = [
+            {
+                "name": "OBJECT_STORAGE_PROVIDER", "owner": "storage.object",
+                "purpose": "Select the object provider.", "required": False, "secret": False,
+            },
+            {
+                "name": "OBJECT_STORAGE_LOCAL_ROOT", "owner": "storage.object",
+                "purpose": "Bind local restored objects.", "required": False, "secret": False,
+            },
+        ]
     if required_secret:
         runtime["environment"] = [{
             "name": "APP_SECRET",
@@ -224,6 +258,11 @@ ThreadingHTTPServer((host, int(port)), H).serve_forever()
             "required": True,
             "secret": True,
         }]
+    if provider_dataset:
+        release_manifest.setdefault("configuration", []).extend([
+            {"name": "OBJECT_STORAGE_LOCAL_ROOT", "required": False, "secret": False},
+            {"name": "OBJECT_STORAGE_PROVIDER", "required": False, "secret": False},
+        ])
     release_manifest["manifest_digest"] = _forge_digest(release_manifest, "manifest_digest")
     recovery = {
         "schema_version": "product.recovery-contract/v1",
@@ -232,13 +271,16 @@ ThreadingHTTPServer((host, int(port)), H).serve_forever()
         "product_id": "fixture-product",
         "composition_digest": _sha(b"composition"),
         "objectives": {"rpo_hours": 24, "rto_hours": 4, "retention_days": 30},
-        "datasets": [dataset],
-        "backup_order": ["product-primary"],
-        "restore_order": ["product-primary"],
+        "datasets": [dataset] + ([provider] if provider_dataset else []),
+        "backup_order": ["product-primary"] + (["storage.object.private"] if provider_dataset else []),
+        "restore_order": (["storage.object.private"] if provider_dataset else []) + ["product-primary"],
         "validation_order": [{
             "dataset_id": "product-primary",
             "checks": ["sqlite-integrity", "application-start", "health-probe"],
-        }],
+        }] + ([{
+            "dataset_id": "storage.object.private",
+            "checks": ["provider-restore", "application-validation"],
+        }] if provider_dataset else []),
     }
     recovery["contract_digest"] = _forge_digest(recovery, "contract_digest")
     documents = []
@@ -565,6 +607,102 @@ class ProductOperationsTests(unittest.TestCase):
             confirm=planned["confirmation_token"],
         )
         self.assertEqual("succeeded", receipt["status"])
+
+    def test_provider_filesystem_backup_and_isolated_restore_are_executable(self) -> None:
+        bundle_root, artifact = _fixture(
+            self.root,
+            "fixture-provider",
+            self.port,
+            provider_dataset=True,
+        )
+        plan = product_release_plan(
+            bundle_root, artifact, runtime_root=self.runtime, environment_values={}
+        )
+        apply_product_release(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            confirm=plan["confirmation_token"],
+        )
+        provider_root = self.root / "provider-objects"
+        provider_root.mkdir()
+        (provider_root / "probe.txt").write_text("restored-provider", encoding="utf-8")
+        bindings = {"storage.object.private": provider_root}
+        backup_plan = product_backup_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="provider-backup",
+            dataset_bindings=bindings,
+        )
+        self.assertTrue(backup_plan["can_apply"])
+        backup = create_product_backup(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="provider-backup",
+            dataset_bindings=bindings,
+            environment_values={},
+            confirm=backup_plan["confirmation_token"],
+        )
+        self.assertEqual("succeeded", backup["status"])
+        drill_plan = product_restore_drill_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="provider-backup",
+            drill_id="provider-drill",
+        )
+        self.assertTrue(drill_plan["can_apply"])
+        drill = apply_product_restore_drill(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="provider-backup",
+            drill_id="provider-drill",
+            environment_values={},
+            confirm=drill_plan["confirmation_token"],
+        )
+        restored = (
+            Path(drill["restore_path"])
+            / "providers"
+            / "storage-object-private"
+            / "probe.txt"
+        )
+        self.assertEqual("restored-provider", restored.read_text(encoding="utf-8"))
+
+    def test_postgres_provider_adapter_keeps_credentials_out_of_argv(self) -> None:
+        target = self.root / "postgres.dump"
+        database_url = "postgresql://operator:secret@example.com/fixture_ophelia_drill_drill_v1"
+        contract = {
+            "id": "product-primary",
+            "kind": "postgresql",
+            "restore_validations": ["postgres-restore", "migration-version"],
+        }
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            if command[0] == "/tools/pg_dump":
+                Path(command[command.index("--file") + 1]).write_bytes(b"pgdump")
+                return SimpleNamespace(returncode=0, stdout=None)
+            if command[0] == "/tools/psql":
+                return SimpleNamespace(returncode=0, stdout="63\n")
+            return SimpleNamespace(returncode=0, stdout=None)
+
+        with mock.patch(
+            "ophelia.product_recovery.shutil.which",
+            side_effect=lambda name: "/tools/" + name,
+        ), mock.patch("ophelia.product_recovery.subprocess.run", side_effect=run):
+            record = _backup_postgresql(contract, database_url, target)
+            self.assertEqual("postgresql", record["kind"])
+            self.assertTrue(_isolated_postgres_target(database_url, "drill-v1"))
+            _restore_postgresql(target, database_url, "drill-v1")
+
+        self.assertTrue(calls)
+        self.assertNotIn(database_url, repr(calls))
+        self.assertFalse(
+            _isolated_postgres_target(
+                "postgresql://operator:secret@example.com/production", "drill-v1"
+            )
+        )
 
     def test_deploy_upgrade_and_rollback_use_health_and_atomic_proxy(self) -> None:
         first_root, first_artifact = _fixture(self.root, "fixture-v1", self.port)
