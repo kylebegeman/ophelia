@@ -951,7 +951,11 @@ def _backup_dataset(contract: Mapping[str, Any], source: Path, target: Path) -> 
         if not source.is_file():
             raise ProductRecoveryError("SQLite dataset source must be a regular file.")
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        source_connection = sqlite3.connect(_sqlite_readonly_uri(source), uri=True)
+        # WAL-mode databases may need SQLite to recover or checkpoint their
+        # sidecars before the online backup can begin. The application is
+        # quiesced above, and mode=rw prevents accidental database creation
+        # while permitting that SQLite-managed recovery work.
+        source_connection = sqlite3.connect(_sqlite_existing_rw_uri(source), uri=True)
         destination = sqlite3.connect(target)
         try:
             source_connection.backup(destination)
@@ -1584,7 +1588,11 @@ def _recovery_id(value: str, owner: str) -> None:
 
 def _verify_sqlite(path: Path) -> None:
     try:
-        connection = sqlite3.connect(_sqlite_readonly_uri(path), uri=True)
+        # Backups can retain WAL journal mode without carrying transient WAL or
+        # SHM sidecars. Open the already-existing managed copy read/write so
+        # SQLite can initialize or recover those sidecars before integrity
+        # verification. mode=rw still refuses to create a missing database.
+        connection = sqlite3.connect(_sqlite_existing_rw_uri(path), uri=True)
         try:
             result = connection.execute("PRAGMA integrity_check").fetchone()
         finally:
@@ -1709,8 +1717,8 @@ def _update_file_digest(digest, path: Path) -> None:
             digest.update(chunk)
 
 
-def _sqlite_readonly_uri(path: Path) -> str:
-    return path.resolve().as_uri() + "?mode=ro"
+def _sqlite_existing_rw_uri(path: Path) -> str:
+    return path.resolve().as_uri() + "?mode=rw"
 
 
 def _is_digest(value: Any) -> bool:

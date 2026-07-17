@@ -41,6 +41,8 @@ and Ophelia digests.
   PostgreSQL backup and restore use provider-native tools, a drill-specific
   database name, and applied migration verification without exposing its URL
   in command arguments or evidence.
+- SQLite backup and integrity verification support WAL-mode databases without
+  weakening missing-file or symlink protections.
 
 ## Verification
 
@@ -51,5 +53,8 @@ and Ophelia digests.
   same journaled kernel.
 - Fault injection verifies that a commit failure after predecessor drain
   restarts v1, restores traffic, and records a compensated terminal outcome.
+- A clean-host proof executes the current Forge Linklet release, captures its
+  WAL-mode SQLite database and all required provider datasets, and boots the
+  restored artifact in an isolated drill without modifying active traffic.
 - Kernel, operation journal, static integration, command catalog, and product
   lifecycle test suites pass together.

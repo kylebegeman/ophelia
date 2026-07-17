@@ -82,10 +82,14 @@ ship product backup apply .product/operations \
 ```
 
 SQLite datasets use the SQLite backup API after the application process has
-quiesced. Filesystem datasets reject symlinks and special files. The process set
-is restored on its retained revision and must pass its public health probe
-before backup success is recorded. Provider-snapshot datasets do not stop a
-healthy application process.
+quiesced. Existing database files are opened read/write without create access
+so SQLite can recover or checkpoint WAL sidecars before copying. Backup copies
+receive the same existing-file access for their integrity check because a
+WAL-mode database can require SQLite to initialize fresh sidecars on its first
+open. Filesystem datasets reject symlinks and special files. The process set is
+restored on its retained revision and must pass its public health probe before
+backup success is recorded. Provider-snapshot datasets do not stop a healthy
+application process.
 
 Run an isolated restore drill:
 
@@ -182,10 +186,12 @@ The integration test loads Forge's committed SQLite, PostgreSQL, and React
 Linklet bundles directly from their `.product/operations` directories and
 verifies their current bundle digests. This checks facets, shared-provider
 profiles, multi-replica declarations, and the shared wire contract without
-importing Forge packages. Executable lifecycle coverage uses synthetic
-artifacts for SQLite, replica balancing, startup migrations, release evidence,
+importing Forge packages. Executable lifecycle coverage uses WAL-mode synthetic
+SQLite artifacts for replica balancing, startup migrations, release evidence,
 local object recovery, PostgreSQL provider commands, upgrade, isolated restore,
-and rollback.
+and rollback. A clean-host proof also executes the current Forge Linklet
+artifact through release, quiesced backup, provider capture, and isolated
+restore boot.
 
 ## Current v1 boundaries
 
