@@ -15,7 +15,7 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, BinaryIO, Dict, Iterable, Mapping, Optional, Tuple, Type
 
 
 MAX_CONTRACT_BYTES = 4 << 20
@@ -132,18 +132,26 @@ def verify_product_artifact(
 
     declaration = bundle.artifact(artifact_id)
     path = Path(path)
-    try:
-        metadata = path.lstat()
-    except OSError as exc:
-        raise ProductBundleError(f"Artifact is unavailable: {artifact_id}") from exc
-    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
-        raise ProductBundleError(f"Artifact must be a real regular file: {artifact_id}")
-    size = metadata.st_size
-    if size < 1 or size > MAX_ARTIFACT_BYTES:
-        raise ProductBundleError(f"Artifact size is outside Ophelia's bounds: {artifact_id}")
-    if size != declaration["size_bytes"]:
-        raise ProductBundleError(f"Artifact size does not match the release: {artifact_id}")
-    actual = _digest_file(path)
+    with _open_stable_regular(
+        path, f"Artifact must be a real regular file: {artifact_id}"
+    ) as (handle, metadata):
+        size = metadata.st_size
+        if size < 1 or size > MAX_ARTIFACT_BYTES:
+            raise ProductBundleError(f"Artifact size is outside Ophelia's bounds: {artifact_id}")
+        if size != declaration["size_bytes"]:
+            raise ProductBundleError(f"Artifact size does not match the release: {artifact_id}")
+        digest = hashlib.sha256()
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        _assert_unchanged(
+            handle,
+            metadata,
+            f"Artifact changed while it was verified: {artifact_id}",
+        )
+        actual = "sha256:" + digest.hexdigest()
     if actual != declaration["digest"]:
         raise ProductBundleError(f"Artifact digest does not match the release: {artifact_id}")
     target = declaration["platform"]
@@ -158,7 +166,7 @@ def verify_product_artifact(
         )
     return VerifiedProductArtifact(
         artifact_id=artifact_id,
-        path=path.resolve(),
+        path=path.absolute(),
         digest=actual,
         size_bytes=size,
         compatible=compatible,
@@ -192,12 +200,21 @@ def bundle_report(bundle: ProductOperationsBundle) -> Dict[str, Any]:
 
 def _read_json(path: Path) -> Tuple[Mapping[str, Any], bytes]:
     try:
-        metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
-            raise ProductBundleError(f"Contract must be a real regular file: {path.name}")
-        if metadata.st_size > MAX_CONTRACT_BYTES:
-            raise ProductBundleError(f"Contract exceeds {MAX_CONTRACT_BYTES} bytes: {path.name}")
-        raw = path.read_bytes()
+        with _open_stable_regular(
+            path, f"Contract must be a real regular file: {path.name}"
+        ) as (handle, metadata):
+            if metadata.st_size > MAX_CONTRACT_BYTES:
+                raise ProductBundleError(
+                    f"Contract exceeds {MAX_CONTRACT_BYTES} bytes: {path.name}"
+                )
+            raw = handle.read(MAX_CONTRACT_BYTES + 1)
+            if len(raw) > MAX_CONTRACT_BYTES:
+                raise ProductBundleError(
+                    f"Contract exceeds {MAX_CONTRACT_BYTES} bytes: {path.name}"
+                )
+            _assert_unchanged(
+                handle, metadata, f"Contract changed while it was read: {path.name}"
+            )
         value = json.loads(raw, object_pairs_hook=_strict_object)
     except ProductBundleError:
         raise
@@ -206,6 +223,64 @@ def _read_json(path: Path) -> Tuple[Mapping[str, Any], bytes]:
     if not isinstance(value, dict):
         raise ProductBundleError(f"Contract root must be an object: {path.name}")
     return value, raw
+
+
+class _StableRegularFile:
+    def __init__(self, path: Path, error_message: str) -> None:
+        self.path = path
+        self.error_message = error_message
+        self.handle: Optional[BinaryIO] = None
+        self.metadata: Optional[os.stat_result] = None
+
+    def __enter__(self) -> Tuple[BinaryIO, os.stat_result]:
+        descriptor: Optional[int] = None
+        try:
+            initial = self.path.lstat()
+            if not stat.S_ISREG(initial.st_mode) or self.path.is_symlink():
+                raise ProductBundleError(self.error_message)
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(self.path, flags)
+            self.handle = os.fdopen(descriptor, "rb")
+            descriptor = None
+            self.metadata = os.fstat(self.handle.fileno())
+            if not stat.S_ISREG(self.metadata.st_mode) or not os.path.samestat(
+                initial, self.metadata
+            ):
+                raise ProductBundleError(self.error_message)
+            return self.handle, self.metadata
+        except ProductBundleError:
+            if self.handle is not None:
+                self.handle.close()
+            elif descriptor is not None:
+                os.close(descriptor)
+            raise
+        except OSError as exc:
+            if self.handle is not None:
+                self.handle.close()
+            elif descriptor is not None:
+                os.close(descriptor)
+            raise ProductBundleError(self.error_message) from exc
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: object,
+    ) -> None:
+        if self.handle is not None:
+            self.handle.close()
+
+
+def _open_stable_regular(path: Path, error_message: str) -> _StableRegularFile:
+    return _StableRegularFile(path, error_message)
+
+
+def _assert_unchanged(
+    handle: BinaryIO, initial: os.stat_result, error_message: str
+) -> None:
+    final = os.fstat(handle.fileno())
+    if final.st_size != initial.st_size or final.st_mtime_ns != initial.st_mtime_ns:
+        raise ProductBundleError(error_message)
 
 
 def _strict_object(pairs: Iterable[Tuple[str, Any]]) -> Dict[str, Any]:
@@ -699,17 +774,6 @@ def _paths_overlap(left: PurePosixPath, right: PurePosixPath) -> bool:
 
 def _digest_bytes(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
-
-
-def _digest_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _normalize_arch(value: str) -> str:

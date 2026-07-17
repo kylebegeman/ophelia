@@ -15,7 +15,10 @@ Ophelia rejects duplicate JSON keys, unknown fields, unsafe paths, oversized
 documents, inconsistent cross-document identities, invalid canonical contract
 digests, and document byte-digest mismatches. Executable size, SHA-256 digest,
 operating system, and architecture are checked before execution. Contract
-parsing never loads secret values.
+parsing never loads secret values. Contracts and artifacts are read through
+stable regular-file handles that reject symlinks. Ophelia validates both the
+staged copy and the final immutable revision copy, so changing source bytes
+between planning, staging, and materialization fails before a process starts.
 
 ## Operator workflow
 

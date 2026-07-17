@@ -434,6 +434,12 @@ def _stage_release(
         target = staging.candidate / PurePosixPath(str(declaration["path"]))
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copyfile(artifact_path, target, follow_symlinks=False)
+        staged_bundle = load_product_operations_bundle(operations_target)
+        if staged_bundle.bundle_digest != bundle.bundle_digest:
+            raise ProductExecutionError(
+                "Staged product bundle differs from the approved bundle."
+            )
+        verify_product_artifact(staged_bundle, str(declaration["id"]), target)
         target.chmod(0o700)
         created_at = _utc_now()
         staging.write_evidence(
@@ -452,17 +458,43 @@ def _stage_release(
         )
         return staging, created_at
     except StagingError:
-        staging = OperationStaging.open_confirmed(runtime_root, operation_id)
-        evidence = staging.evidence / "product-release.json"
-        if evidence.is_symlink() or not evidence.is_file():
-            raise ProductExecutionError("Existing product staging has no release evidence.")
-        value = json.loads(evidence.read_text(encoding="utf-8"))
-        if value.get("bundle_digest") != bundle.bundle_digest:
-            raise ProductExecutionError("Existing product staging binds a different bundle.")
-        declaration = bundle.artifact(str(bundle.runtime["processes"][0]["artifact_id"]))
-        staged_artifact = staging.candidate / PurePosixPath(str(declaration["path"]))
-        verify_product_artifact(bundle, str(declaration["id"]), staged_artifact)
-        return staging, str(value["created_at"])
+        try:
+            staging = OperationStaging.open_confirmed(runtime_root, operation_id)
+            evidence = staging.evidence / "product-release.json"
+            if evidence.is_symlink() or not evidence.is_file():
+                raise ProductExecutionError(
+                    "Existing product staging has no release evidence."
+                )
+            value = json.loads(evidence.read_text(encoding="utf-8"))
+            if value.get("bundle_digest") != bundle.bundle_digest:
+                raise ProductExecutionError(
+                    "Existing product staging binds a different bundle."
+                )
+            declaration = bundle.artifact(
+                str(bundle.runtime["processes"][0]["artifact_id"])
+            )
+            staged_artifact = staging.candidate / PurePosixPath(
+                str(declaration["path"])
+            )
+            staged_bundle = load_product_operations_bundle(
+                staging.candidate / ".product" / "operations"
+            )
+            if staged_bundle.bundle_digest != bundle.bundle_digest:
+                raise ProductExecutionError(
+                    "Existing product staging binds different bundle bytes."
+                )
+            verify_product_artifact(
+                staged_bundle, str(declaration["id"]), staged_artifact
+            )
+            return staging, str(value["created_at"])
+        except (OSError, ValueError) as exc:
+            raise ProductExecutionError(
+                "Existing product staging failed verification."
+            ) from exc
+    except (OSError, ProductBundleError) as exc:
+        raise ProductExecutionError(
+            "Staged product release failed verification."
+        ) from exc
 
 
 def _correlated_receipt(bundle: ProductOperationsBundle, receipt) -> Dict[str, Any]:
