@@ -96,13 +96,16 @@ def _fixture(
     public_port: int,
     *,
     required_secret: bool = False,
+    replicas: int = 1,
+    release_preconditions: tuple[str, ...] = ("health-probe",),
+    with_migration: bool = False,
 ) -> tuple[Path, Path]:
     bundle_root = root / release / "operations"
     bundle_root.mkdir(parents=True)
     artifact = root / release / "server"
     artifact.write_text(
         """#!/usr/bin/env python3
-import argparse, sqlite3
+import argparse, os, sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 p=argparse.ArgumentParser(); p.add_argument('-addr'); p.add_argument('-db'); a=p.parse_args()
 host, port=a.addr.rsplit(':', 1)
@@ -111,6 +114,7 @@ class H(BaseHTTPRequestHandler):
   def do_GET(self):
     if self.path == '/healthz': body=b'ok'
     elif self.path == '/version': body=b'RELEASE_VALUE'
+    elif self.path == '/instance': body=str(os.getpid()).encode()
     else: self.send_response(404); self.end_headers(); return
     self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
   def log_message(self, *args): pass
@@ -150,7 +154,7 @@ ThreadingHTTPServer((host, int(port)), H).serve_forever()
         "processes": [{
             "id": "web", "artifact_id": "server",
             "argv": ["./server", "-addr", f"0.0.0.0:{public_port}", "-db", "product.db"],
-            "replicas": 1, "shutdown_seconds": 2,
+            "replicas": replicas, "shutdown_seconds": 2,
         }],
         "ports": [{
             "id": "http", "process_id": "web", "protocol": "http",
@@ -205,9 +209,15 @@ ThreadingHTTPServer((host, int(port)), H).serve_forever()
         },
         "rollout": {
             "strategy": "replace", "migration_behavior": "forward-only-at-startup",
-            "rollback": "artifact-only", "preconditions": ["health-probe"],
+            "rollback": "artifact-only", "preconditions": list(release_preconditions),
         },
     }
+    if with_migration:
+        release_manifest["migrations"] = [{
+            "id": "fixture.startup.v1",
+            "capability_id": "fixture.startup",
+            "digest": _sha(b"fixture-startup-v1"),
+        }]
     if required_secret:
         release_manifest["configuration"] = [{
             "name": "APP_SECRET",
@@ -262,8 +272,10 @@ class ProductOperationsTests(unittest.TestCase):
     def tearDown(self) -> None:
         for path in self.runtime.glob("apps/*/environments/*/revisions/*/ophelia-process.json"):
             try:
-                pid = int(json.loads(path.read_text())["pid"])
-                os.kill(pid, signal.SIGKILL)
+                record = json.loads(path.read_text())
+                replicas = record.get("replicas", [record])
+                for replica in replicas:
+                    os.kill(int(replica["pid"]), signal.SIGKILL)
             except (OSError, ValueError, KeyError, json.JSONDecodeError):
                 pass
         for path in self.runtime.glob("apps/*/environments/*/traffic/proxy.pid"):
@@ -442,6 +454,117 @@ class ProductOperationsTests(unittest.TestCase):
                 runtime_root=self.runtime,
                 environment_values={},
             )
+
+    def test_multi_replica_release_health_checks_and_balances_the_full_set(self) -> None:
+        bundle_root, artifact = _fixture(
+            self.root, "fixture-replicated", self.port, replicas=3
+        )
+        plan = product_release_plan(
+            bundle_root, artifact, runtime_root=self.runtime, environment_values={}
+        )
+        receipt = apply_product_release(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            confirm=plan["confirmation_token"],
+        )
+        self.assertEqual("succeeded", receipt["status"])
+        active_path = next(self.runtime.glob("apps/*/environments/*/traffic/active.json"))
+        active = json.loads(active_path.read_text())
+        self.assertEqual(2, active["schema_version"])
+        self.assertEqual(3, len(active["upstreams"]))
+        instances = {
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{self.port}/instance"
+            ).read()
+            for _ in range(9)
+        }
+        self.assertEqual(3, len(instances))
+
+    def test_startup_migrations_and_release_preconditions_use_current_evidence(self) -> None:
+        preconditions = ("backup-complete", "expand-contract-compatible", "health-probe")
+        first_root, first_artifact = _fixture(
+            self.root,
+            "fixture-evidence-v1",
+            self.port,
+            release_preconditions=preconditions,
+            with_migration=True,
+        )
+        first_plan = product_release_plan(
+            first_root, first_artifact, runtime_root=self.runtime, environment_values={}
+        )
+        self.assertTrue(first_plan["can_apply"])
+        self.assertEqual(1, first_plan["migration_count"])
+        self.assertEqual(
+            {"not-required-initial-release", "verified-during-execution"},
+            {item["status"] for item in first_plan["preconditions"]},
+        )
+        apply_product_release(
+            first_root,
+            first_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            confirm=first_plan["confirmation_token"],
+        )
+
+        second_root, second_artifact = _fixture(
+            self.root,
+            "fixture-evidence-v2",
+            self.port,
+            release_preconditions=preconditions,
+            with_migration=True,
+        )
+        blocked = product_release_plan(
+            second_root, second_artifact, runtime_root=self.runtime, environment_values={}
+        )
+        self.assertFalse(blocked["can_apply"])
+        self.assertEqual(
+            {"backup-complete", "expand-contract-compatible"},
+            {
+                item["precondition"]
+                for item in blocked["blockers"]
+                if item["code"] == "product_release_precondition_missing"
+            },
+        )
+
+        backup_plan = product_backup_plan(
+            first_root,
+            runtime_root=self.runtime,
+            backup_id="before-evidence-v2",
+            dataset_bindings={},
+        )
+        create_product_backup(
+            first_root,
+            runtime_root=self.runtime,
+            backup_id="before-evidence-v2",
+            dataset_bindings={},
+            environment_values={},
+            confirm=backup_plan["confirmation_token"],
+        )
+        evidence = self.root / "expand-contract-reviewed.json"
+        evidence.write_text('{"compatible":true}\n', encoding="utf-8")
+        planned = product_release_plan(
+            second_root,
+            second_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            precondition_evidence={"expand-contract-compatible": evidence},
+        )
+        self.assertTrue(planned["can_apply"])
+        self.assertEqual(
+            {"verified", "verified-during-execution"},
+            {item["status"] for item in planned["preconditions"]},
+        )
+        receipt = apply_product_release(
+            second_root,
+            second_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            precondition_evidence={"expand-contract-compatible": evidence},
+            confirm=planned["confirmation_token"],
+        )
+        self.assertEqual("succeeded", receipt["status"])
 
     def test_deploy_upgrade_and_rollback_use_health_and_atomic_proxy(self) -> None:
         first_root, first_artifact = _fixture(self.root, "fixture-v1", self.port)

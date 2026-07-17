@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import shutil
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -49,6 +50,7 @@ def product_release_plan(
     environment_values: Mapping[str, str],
     host_id: Optional[str] = None,
     operation: str = "deploy.apply",
+    precondition_evidence: Optional[Mapping[str, Path]] = None,
 ) -> Dict[str, Any]:
     bundle = load_product_operations_bundle(bundle_root)
     artifact_id = str(bundle.runtime["processes"][0]["artifact_id"])
@@ -60,6 +62,8 @@ def product_release_plan(
         if current is None
         else _retained_bundle(runtime_root, bundle.product_id, current)
     )
+    evidence, evidence_blockers = _precondition_evidence(precondition_evidence or {})
+    blockers.extend(evidence_blockers)
     try:
         artifact = verify_product_artifact(bundle, artifact_id, artifact_path)
     except ProductBundleError as exc:
@@ -117,30 +121,35 @@ def product_release_plan(
                 "message": "Host configuration values must be strings without NUL bytes.",
             }
         )
-    if bundle.release.get("migrations"):
-        blockers.append(
-            {
-                "code": "product_migrations_unsupported",
-                "message": "This backend does not yet execute or verify release migrations.",
-            }
+    preconditions = []
+    for precondition in bundle.release["rollout"]["preconditions"]:
+        status, digest = _release_precondition(
+            precondition,
+            runtime_root=runtime_root,
+            target=bundle,
+            predecessor=predecessor_bundle,
+            active=current,
+            evidence=evidence,
         )
-    supported_preconditions = {
-        "artifact-digest-verified",
-        "configuration-valid",
-        "health-probe",
-    }
-    unsupported_preconditions = sorted(
-        set(bundle.release["rollout"]["preconditions"])
-        - supported_preconditions
-    )
-    if unsupported_preconditions:
-        blockers.append(
-            {
-                "code": "product_release_precondition_unsupported",
-                "message": "The release declares preconditions this backend cannot prove.",
-                "preconditions": unsupported_preconditions,
-            }
+        preconditions.append(
+            {"id": precondition, "status": status, "evidence_digest": digest}
         )
+        if status == "missing":
+            blockers.append(
+                {
+                    "code": "product_release_precondition_missing",
+                    "message": f"Release precondition {precondition} lacks current evidence.",
+                    "precondition": precondition,
+                }
+            )
+        elif status == "unsupported":
+            blockers.append(
+                {
+                    "code": "product_release_precondition_unsupported",
+                    "message": f"Release precondition {precondition} is not supported by this backend.",
+                    "precondition": precondition,
+                }
+            )
     rollback_policy = bundle.release["rollout"]["rollback"]
     if operation == "rollback.apply" and rollback_policy != "artifact-only":
         blockers.append(
@@ -166,6 +175,11 @@ def product_release_plan(
         "artifact_digest": artifact_digest,
         "environment": "production",
         "configuration_names": sorted(environment_values),
+        "precondition_evidence": {
+            item["id"]: item["evidence_digest"]
+            for item in preconditions
+            if item["evidence_digest"] is not None
+        },
         "expected_active_revision_digest": (
             None if current is None else current.get("revision_digest")
         ),
@@ -187,6 +201,9 @@ def product_release_plan(
         "current_revision_digest": None if current is None else current.get("revision_digest"),
         "required_configuration_names": sorted(required_configuration),
         "provided_configuration_names": sorted(environment_values),
+        "migration_count": len(bundle.release.get("migrations", [])),
+        "migration_behavior": bundle.release["rollout"]["migration_behavior"],
+        "preconditions": preconditions,
         "blockers": blockers,
         "warnings": [],
         "confirmation_token": None if blockers else token,
@@ -208,6 +225,7 @@ def apply_product_release(
     host_id: Optional[str] = None,
     owner_id: str = "product-cli-worker",
     operation: str = "deploy.apply",
+    precondition_evidence: Optional[Mapping[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Execute one confirmed release and persist a correlated receipt."""
 
@@ -218,6 +236,7 @@ def apply_product_release(
         environment_values=environment_values,
         host_id=host_id,
         operation=operation,
+        precondition_evidence=precondition_evidence,
     )
     expected = plan_report.get("confirmation_token")
     if not isinstance(expected, str) or not confirm or not hmac.compare_digest(expected, confirm):
@@ -513,6 +532,117 @@ def _sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _precondition_evidence(
+    supplied: Mapping[str, Path],
+) -> Tuple[Dict[str, str], list[Dict[str, Any]]]:
+    evidence: Dict[str, str] = {}
+    blockers: list[Dict[str, Any]] = []
+    for identifier, raw_path in sorted(supplied.items()):
+        if not isinstance(identifier, str) or not identifier or identifier in evidence:
+            blockers.append(
+                {
+                    "code": "product_precondition_evidence_invalid",
+                    "message": "Precondition evidence ids must be unique non-empty strings.",
+                }
+            )
+            continue
+        path = Path(raw_path)
+        try:
+            metadata = path.lstat()
+            if (
+                path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size < 1
+                or metadata.st_size > 4 << 20
+            ):
+                raise ValueError
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except (OSError, ValueError):
+            blockers.append(
+                {
+                    "code": "product_precondition_evidence_invalid",
+                    "message": f"Precondition evidence {identifier} is unavailable or unsafe.",
+                    "precondition": identifier,
+                }
+            )
+            continue
+        evidence[identifier] = "sha256:" + digest
+    return evidence, blockers
+
+
+def _release_precondition(
+    identifier: str,
+    *,
+    runtime_root: Path,
+    target: ProductOperationsBundle,
+    predecessor: Optional[ProductOperationsBundle],
+    active: Optional[Mapping[str, Any]],
+    evidence: Mapping[str, str],
+) -> Tuple[str, Optional[str]]:
+    if identifier in {"artifact-digest-verified", "configuration-valid"}:
+        return "verified-at-plan", None
+    if identifier in {"health-probe", "readiness-probe"}:
+        return "verified-during-execution", None
+    if identifier == "backup-complete":
+        if active is None or predecessor is None:
+            return "not-required-initial-release", None
+        digest = _current_backup_evidence(runtime_root, predecessor, active)
+        return ("verified", digest) if digest is not None else ("missing", None)
+    if identifier == "expand-contract-compatible":
+        if active is None:
+            return "not-required-initial-release", None
+        digest = evidence.get(identifier)
+        return ("verified", digest) if digest is not None else ("missing", None)
+    digest = evidence.get(identifier)
+    return ("verified", digest) if digest is not None else ("unsupported", None)
+
+
+def _current_backup_evidence(
+    runtime_root: Path,
+    predecessor: ProductOperationsBundle,
+    active: Mapping[str, Any],
+) -> Optional[str]:
+    backup_root = (
+        Path(runtime_root)
+        / "backups"
+        / "product"
+        / _slug(predecessor.product_id)
+    )
+    if backup_root.is_symlink() or not backup_root.is_dir():
+        return None
+    matches = []
+    for manifest_path in backup_root.glob("*/backup-manifest.json"):
+        try:
+            if manifest_path.is_symlink() or not manifest_path.is_file():
+                continue
+            value = json.loads(
+                manifest_path.read_text(encoding="utf-8"),
+                object_pairs_hook=_strict_json_object,
+            )
+            if (
+                not isinstance(value, dict)
+                or value.get("schema_version") != 1
+                or value.get("kind") != "ophelia.product-backup"
+                or value.get("product_id") != predecessor.product_id
+                or value.get("bundle_digest") != predecessor.bundle_digest
+                or value.get("recovery_contract_digest")
+                != predecessor.recovery["contract_digest"]
+                or value.get("revision_id") != active.get("revision_id")
+                or value.get("revision_digest") != active.get("revision_digest")
+                or value.get("inputs_redacted") is not True
+            ):
+                continue
+            matches.append(
+                (
+                    str(value.get("created_at", "")),
+                    "sha256:" + hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                )
+            )
+        except (OSError, ValueError, json.JSONDecodeError, ProductExecutionError):
+            continue
+    return None if not matches else max(matches)[1]
+
+
 def _active_state(
     runtime_root: Path, product_id: str, host_id: str
 ) -> Optional[Mapping[str, Any]]:
@@ -548,19 +678,24 @@ def _active_state(
         )
     except (OSError, json.JSONDecodeError) as exc:
         raise ProductExecutionError("Active product state is malformed.") from exc
-    required = {
-        "schema_version",
-        "revision_id",
-        "revision_digest",
-        "upstream_host",
-        "upstream_port",
+    legacy = {
+        "schema_version", "revision_id", "revision_digest", "upstream_host",
+        "upstream_port", "artifact_digest",
+    }
+    replicated = {
+        "schema_version", "revision_id", "revision_digest", "upstreams",
         "artifact_digest",
     }
-    if (
-        not isinstance(value, dict)
-        or set(value) != required
-        or value.get("schema_version") != 1
-    ):
+    shape_valid = isinstance(value, dict) and (
+        (value.get("schema_version") == 1 and set(value) == legacy)
+        or (
+            value.get("schema_version") == 2
+            and set(value) == replicated
+            and isinstance(value.get("upstreams"), list)
+            and bool(value.get("upstreams"))
+        )
+    )
+    if not shape_valid:
         raise ProductExecutionError("Active product state is malformed.")
     if journal_active is None:
         raise ProductExecutionError(

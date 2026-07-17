@@ -1,4 +1,4 @@
-"""Recoverable single-process backend for product operations bundles."""
+"""Recoverable process-set backend for product operations bundles."""
 
 from __future__ import annotations
 
@@ -54,11 +54,12 @@ class ProductProcessBackendError(RuntimeError):
 
 
 class ProductProcessBackend:
-    """Run one executable process behind an atomic local TCP switch.
+    """Run one executable process set behind an atomic local TCP switch.
 
-    The v1 backend is intentionally narrow: one process, one replica, and one
-    HTTP port.  Unsupported shapes fail during preflight rather than degrading
-    deployment or rollback safety.
+    One process declaration may request one or more replicas. Every candidate
+    replica receives an isolated loopback port, passes the declared readiness
+    probe, and is published as one atomic upstream set. Unsupported runtime
+    shapes fail during preflight rather than degrading deployment safety.
     """
 
     backend_name = "product-process-v1"
@@ -155,7 +156,8 @@ class ProductProcessBackend:
                 "bundle_digest": self.bundle.bundle_digest,
                 "artifact_digest": self._artifact_declaration()["digest"],
                 "required_configuration_present": not blockers,
-                "shape": "single-process-http-v1",
+                "shape": "replicated-process-http-v1",
+                "replicas": self._replica_count(),
             }
         )
         return PreflightResult(
@@ -179,15 +181,10 @@ class ProductProcessBackend:
                 raise ProductProcessBackendError(checked.blocker_codes[0])
             revision_root = self._materialize(revision)
             existing = self._read_process_record(revision.revision_id, required=False)
-            if existing is not None and self._record_process_alive(existing):
-                self._wait_healthy(int(existing["internal_port"]))
+            if existing is not None and self._record_healthy(existing):
                 return handle
-            port = (
-                int(existing["internal_port"])
-                if existing is not None and self._port_available(int(existing["internal_port"]))
-                else self._allocate_internal_port(revision.content_digest())
-            )
-            argv = self._rewrite_argv(self._declared_port(), port)
+            if existing is not None:
+                self._terminate_record(existing, self._shutdown_seconds())
             executable = revision_root / str(self._artifact_declaration()["path"])
             self.data_root.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self.data_root, 0o700)
@@ -207,35 +204,51 @@ class ProductProcessBackend:
                     if name in declared_environment
                 }
             )
-            process = subprocess.Popen(
-                [os.fspath(executable), *argv[1:]],
-                cwd=self.data_root,
-                env=child_environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
-            )
-            _CHILDREN[process.pid] = process
+            replicas = []
+            reserved_ports: set[int] = set()
+            try:
+                for index in range(self._replica_count()):
+                    port = self._allocate_internal_port(
+                        revision.content_digest(), index, reserved_ports
+                    )
+                    reserved_ports.add(port)
+                    argv = self._rewrite_argv(self._declared_port(), port)
+                    process = subprocess.Popen(
+                        [os.fspath(executable), *argv[1:]],
+                        cwd=self.data_root,
+                        env=child_environment,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                        close_fds=True,
+                    )
+                    _CHILDREN[process.pid] = process
+                    replica = {
+                        "index": index,
+                        "pid": process.pid,
+                        "internal_port": port,
+                        "argv_digest": canonical_digest(argv),
+                        "started_at_epoch": self._clock(),
+                    }
+                    replicas.append(replica)
+                    self._wait_healthy(port)
+            except BaseException:
+                for replica in replicas:
+                    self._terminate_replica(
+                        replica, os.fspath(executable), self._shutdown_seconds()
+                    )
+                raise
             record = {
-                "schema_version": 1,
-                "pid": process.pid,
+                "schema_version": 2,
                 "revision_id": revision.revision_id,
                 "revision_digest": revision.content_digest(),
                 "artifact_digest": self._artifact_declaration()["digest"],
-                "internal_port": port,
                 "declared_port": self._declared_port(),
                 "executable": os.fspath(executable),
-                "argv_digest": canonical_digest(argv),
-                "started_at_epoch": self._clock(),
+                "replicas": replicas,
             }
             self._write_process_record(revision.revision_id, record)
-            try:
-                self._wait_healthy(port)
-            except BaseException:
-                self._terminate_record(record, self._shutdown_seconds())
-                raise
         return handle
 
     def handle_for(self, revision: Revision) -> RuntimeHandle:
@@ -253,8 +266,7 @@ class ProductProcessBackend:
             record is not None
             and record.get("revision_digest") == handle.revision_digest
             and record.get("artifact_digest") == self._artifact_declaration()["digest"]
-            and self._record_process_alive(record)
-            and self._probe(int(record["internal_port"]))
+            and self._record_healthy(record)
         )
         workload = self._revision_workload(handle.revision_id)
         observed = ObservedWorkload(
@@ -303,7 +315,7 @@ class ProductProcessBackend:
         expected_active_revision_digest: Optional[str],
     ) -> TrafficActivationResult:
         record = self._read_process_record(candidate.revision_id, required=True)
-        if not self._record_process_alive(record) or not self._probe(int(record["internal_port"])):
+        if not self._record_healthy(record):
             raise ProductProcessBackendError("Candidate is not healthy at activation.")
         with self._fence():
             previous = self._read_active(required=False)
@@ -313,15 +325,7 @@ class ProductProcessBackend:
                     return self._activation_result(previous_digest, candidate.revision_digest)
                 raise ProductProcessBackendError("Active product revision changed before activation.")
             self._ensure_proxy()
-            state = {
-                "schema_version": 1,
-                "revision_id": candidate.revision_id,
-                "revision_digest": candidate.revision_digest,
-                "upstream_host": "127.0.0.1",
-                "upstream_port": int(record["internal_port"]),
-                "artifact_digest": str(record["artifact_digest"]),
-            }
-            _atomic_json(self.active_path, state)
+            _atomic_json(self.active_path, self._active_state(candidate, record))
         return self._activation_result(previous_digest, candidate.revision_digest)
 
     def verify_active(self, revision: Revision, handle: RuntimeHandle) -> VerificationResult:
@@ -361,33 +365,15 @@ class ProductProcessBackend:
             failed_candidate.revision_id, required=True
         )
         with self._fence():
-            _atomic_json(
-                self.active_path,
-                {
-                    "schema_version": 1,
-                    "revision_id": previous.revision_id,
-                    "revision_digest": previous.revision_digest,
-                    "upstream_host": "127.0.0.1",
-                    "upstream_port": int(record["internal_port"]),
-                    "artifact_digest": str(record["artifact_digest"]),
-                },
-            )
+            _atomic_json(self.active_path, self._active_state(previous, record))
         if not self._probe(self._declared_port()):
             if (
-                self._record_process_alive(candidate_record)
-                and self._probe(int(candidate_record["internal_port"]))
+                self._record_healthy(candidate_record)
             ):
                 with self._fence():
                     _atomic_json(
                         self.active_path,
-                        {
-                            "schema_version": 1,
-                            "revision_id": failed_candidate.revision_id,
-                            "revision_digest": failed_candidate.revision_digest,
-                            "upstream_host": "127.0.0.1",
-                            "upstream_port": int(candidate_record["internal_port"]),
-                            "artifact_digest": str(candidate_record["artifact_digest"]),
-                        },
+                        self._active_state(failed_candidate, candidate_record),
                     )
             raise ProductProcessBackendError(
                 "Restored product revision did not pass its public health probe."
@@ -622,11 +608,20 @@ class ProductProcessBackend:
             )
         return result
 
-    def _allocate_internal_port(self, revision_digest: str) -> int:
-        base = 20000 + int(revision_digest[7:15], 16) % 30000
+    def _allocate_internal_port(
+        self, revision_digest: str, replica_index: int, reserved: set[int]
+    ) -> int:
+        seed = hashlib.sha256(
+            f"{revision_digest}:{replica_index}".encode("utf-8")
+        ).hexdigest()
+        base = 20000 + int(seed[:8], 16) % 30000
         for offset in range(512):
             port = 20000 + ((base - 20000 + offset) % 30000)
-            if port != self._declared_port() and self._port_available(port):
+            if (
+                port != self._declared_port()
+                and port not in reserved
+                and self._port_available(port)
+            ):
                 return port
         raise ProductProcessBackendError("No candidate loopback port is available.")
 
@@ -651,7 +646,7 @@ class ProductProcessBackend:
     def _validate_shape(self) -> None:
         if (
             len(self.bundle.runtime["processes"]) != 1
-            or self._process()["replicas"] != 1
+            or not 1 <= self._replica_count() <= 32
             or len(self.bundle.runtime["ports"]) != 1
             or self._port()["protocol"] != "http"
             or len(self.bundle.runtime["health"]) < 1
@@ -659,8 +654,6 @@ class ProductProcessBackend:
             raise ProductProcessBackendError("product_runtime_shape_unsupported")
         if self._artifact_declaration()["kind"] != "executable":
             raise ProductProcessBackendError("product_artifact_kind_unsupported")
-        if self.bundle.release.get("migrations"):
-            raise ProductProcessBackendError("product_migrations_unsupported")
 
     def _validate_managed_paths(self) -> None:
         for managed, boundary in (
@@ -729,6 +722,9 @@ class ProductProcessBackend:
     def _shutdown_seconds(self) -> int:
         return int(self._process()["shutdown_seconds"])
 
+    def _replica_count(self) -> int:
+        return int(self._process()["replicas"])
+
     def shutdown_seconds(self) -> int:
         """Return the contract-declared graceful shutdown bound."""
 
@@ -738,11 +734,7 @@ class ProductProcessBackend:
         self, previous: RuntimeHandle
     ) -> Mapping[str, object]:
         record = self._read_process_record(previous.revision_id, required=False)
-        if (
-            record is not None
-            and self._record_process_alive(record)
-            and self._probe(int(record["internal_port"]))
-        ):
+        if record is not None and self._record_healthy(record):
             return record
 
         revision_root = self._revision_root(previous.revision_id)
@@ -819,11 +811,31 @@ class ProductProcessBackend:
                 raise ProductProcessBackendError("Product process evidence is unavailable.")
             return None
         value = _read_json(path)
-        required_fields = {
-            "schema_version", "pid", "revision_id", "revision_digest", "artifact_digest",
-            "internal_port", "declared_port", "executable", "argv_digest", "started_at_epoch",
+        common = {
+            "schema_version", "revision_id", "revision_digest", "artifact_digest",
+            "declared_port", "executable",
         }
-        if set(value) != required_fields or value.get("schema_version") != 1:
+        if value.get("schema_version") == 1:
+            expected = common | {"pid", "internal_port", "argv_digest", "started_at_epoch"}
+            valid = set(value) == expected
+        elif value.get("schema_version") == 2:
+            valid = set(value) == common | {"replicas"}
+            replicas = value.get("replicas")
+            valid = valid and isinstance(replicas, list) and len(replicas) == self._replica_count()
+            if valid:
+                for index, replica in enumerate(replicas):
+                    if (
+                        not isinstance(replica, dict)
+                        or set(replica) != {
+                            "index", "pid", "internal_port", "argv_digest", "started_at_epoch"
+                        }
+                        or replica.get("index") != index
+                    ):
+                        valid = False
+                        break
+        else:
+            valid = False
+        if not valid:
             raise ProductProcessBackendError("Product process evidence is malformed.")
         return value
 
@@ -842,18 +854,34 @@ class ProductProcessBackend:
                 raise ProductProcessBackendError("Active product state is unavailable.")
             return None
         value = _read_json(self.active_path)
-        required_fields = {
+        common = {
             "schema_version", "revision_id", "revision_digest", "upstream_host",
             "upstream_port", "artifact_digest",
         }
-        if set(value) != required_fields or value.get("schema_version") != 1:
+        legacy = value.get("schema_version") == 1 and set(value) == common
+        replicated = (
+            value.get("schema_version") == 2
+            and set(value) == {
+                "schema_version", "revision_id", "revision_digest", "upstreams",
+                "artifact_digest",
+            }
+            and isinstance(value.get("upstreams"), list)
+            and bool(value.get("upstreams"))
+            and all(
+                isinstance(item, dict)
+                and set(item) == {"host", "port"}
+                and item.get("host") == "127.0.0.1"
+                and isinstance(item.get("port"), int)
+                for item in value.get("upstreams", [])
+            )
+        )
+        if not legacy and not replicated:
             raise ProductProcessBackendError("Active product state is malformed.")
         return value
 
     @staticmethod
-    def _record_process_alive(record: Mapping[str, object]) -> bool:
-        pid = record.get("pid")
-        executable = record.get("executable")
+    def _replica_alive(replica: Mapping[str, object], executable: object) -> bool:
+        pid = replica.get("pid")
         if isinstance(pid, bool) or not isinstance(pid, int) or not isinstance(executable, str):
             return False
         if not _pid_alive(pid):
@@ -870,10 +898,42 @@ class ProductProcessBackend:
             return False
         return executable in command
 
+    def _replica_records(
+        self, record: Mapping[str, object]
+    ) -> Tuple[Mapping[str, object], ...]:
+        if record.get("schema_version") == 1:
+            return (record,)
+        replicas = record.get("replicas")
+        if not isinstance(replicas, list):
+            return ()
+        return tuple(item for item in replicas if isinstance(item, dict))
+
+    def _record_process_alive(self, record: Mapping[str, object]) -> bool:
+        replicas = self._replica_records(record)
+        return len(replicas) == self._replica_count() and all(
+            self._replica_alive(replica, record.get("executable"))
+            for replica in replicas
+        )
+
+    def _record_healthy(self, record: Mapping[str, object]) -> bool:
+        return self._record_process_alive(record) and all(
+            self._probe(int(replica["internal_port"]))
+            for replica in self._replica_records(record)
+        )
+
     def _terminate_record(self, record: Mapping[str, object], grace_seconds: int) -> None:
-        if not self._record_process_alive(record):
+        for replica in self._replica_records(record):
+            self._terminate_replica(replica, record.get("executable"), grace_seconds)
+
+    def _terminate_replica(
+        self,
+        replica: Mapping[str, object],
+        executable: object,
+        grace_seconds: int,
+    ) -> None:
+        if not self._replica_alive(replica, executable):
             return
-        pid = int(record["pid"])
+        pid = int(replica["pid"])
         shutdown_signal = (
             signal.SIGINT
             if self.bundle.runtime["lifecycle"]["shutdown_signal"] == "SIGINT"
@@ -889,6 +949,30 @@ class ProductProcessBackend:
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline and _pid_alive(pid):
             time.sleep(0.05)
+
+    def _active_state(
+        self, handle: RuntimeHandle, record: Mapping[str, object]
+    ) -> Mapping[str, object]:
+        replicas = self._replica_records(record)
+        if len(replicas) == 1:
+            return {
+                "schema_version": 1,
+                "revision_id": handle.revision_id,
+                "revision_digest": handle.revision_digest,
+                "upstream_host": "127.0.0.1",
+                "upstream_port": int(replicas[0]["internal_port"]),
+                "artifact_digest": str(record["artifact_digest"]),
+            }
+        return {
+            "schema_version": 2,
+            "revision_id": handle.revision_id,
+            "revision_digest": handle.revision_digest,
+            "upstreams": [
+                {"host": "127.0.0.1", "port": int(item["internal_port"])}
+                for item in replicas
+            ],
+            "artifact_digest": str(record["artifact_digest"]),
+        }
 
     def _activation_result(
         self,

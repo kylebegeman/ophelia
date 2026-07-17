@@ -13,6 +13,7 @@ import os
 import selectors
 import socket
 import socketserver
+import threading
 from pathlib import Path
 from typing import Tuple
 
@@ -21,33 +22,49 @@ MAX_STATE_BYTES = 16 * 1024
 BUFFER_BYTES = 64 * 1024
 
 
-def _upstream(path: Path) -> Tuple[str, int]:
+def _upstreams(path: Path) -> Tuple[Tuple[str, int], ...]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_STATE_BYTES:
         raise ValueError("active state is unavailable")
     value = json.loads(
         path.read_text(encoding="utf-8"),
         object_pairs_hook=_strict_json_object,
     )
-    required = {
+    common = {
         "schema_version",
         "revision_id",
         "revision_digest",
-        "upstream_host",
-        "upstream_port",
         "artifact_digest",
     }
-    if (
-        not isinstance(value, dict)
-        or set(value) != required
-        or value.get("schema_version") != 1
-    ):
+    if not isinstance(value, dict):
         raise ValueError("active state is malformed")
-    host, port = value.get("upstream_host"), value.get("upstream_port")
-    if host not in {"127.0.0.1", "::1"}:
-        raise ValueError("active upstream must be loopback")
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        raise ValueError("active upstream port is invalid")
-    return host, port
+    if value.get("schema_version") == 1 and set(value) == common | {
+        "upstream_host",
+        "upstream_port",
+    }:
+        candidates = ((value.get("upstream_host"), value.get("upstream_port")),)
+    elif value.get("schema_version") == 2 and set(value) == common | {"upstreams"}:
+        raw = value.get("upstreams")
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("active upstream set is malformed")
+        candidates = tuple(
+            (item.get("host"), item.get("port"))
+            for item in raw
+            if isinstance(item, dict) and set(item) == {"host", "port"}
+        )
+        if len(candidates) != len(raw):
+            raise ValueError("active upstream set is malformed")
+    else:
+        raise ValueError("active state is malformed")
+    upstreams = []
+    for host, port in candidates:
+        if host not in {"127.0.0.1", "::1"}:
+            raise ValueError("active upstream must be loopback")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError("active upstream port is invalid")
+        upstreams.append((host, port))
+    if len(upstreams) != len(set(upstreams)):
+        raise ValueError("active upstream set repeats an endpoint")
+    return tuple(upstreams)
 
 
 def _strict_json_object(pairs):
@@ -66,7 +83,7 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             return
         try:
             target = socket.create_connection(
-                _upstream(server.state_path), timeout=server.connect_timeout
+                server.next_upstream(), timeout=server.connect_timeout
             )
         except (OSError, ValueError, json.JSONDecodeError):
             return
@@ -111,7 +128,16 @@ class ProductTCPProxy(socketserver.ThreadingTCPServer):
         self.state_path = state_path
         self.connect_timeout = connect_timeout
         self.idle_timeout = idle_timeout
+        self._upstream_index = 0
+        self._upstream_lock = threading.Lock()
         super().__init__(address, _ProxyHandler)
+
+    def next_upstream(self) -> Tuple[str, int]:
+        upstreams = _upstreams(self.state_path)
+        with self._upstream_lock:
+            selected = upstreams[self._upstream_index % len(upstreams)]
+            self._upstream_index += 1
+        return selected
 
 
 def main(argv=None) -> int:

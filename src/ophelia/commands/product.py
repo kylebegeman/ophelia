@@ -91,6 +91,13 @@ def _register_release_pair(commands, name: str, help_text: str) -> None:
         _bundle_runtime_args(parser)
         parser.add_argument("--artifact", type=Path, required=True)
         parser.add_argument("--env-file", type=Path)
+        parser.add_argument(
+            "--evidence",
+            action="append",
+            default=[],
+            metavar="PRECONDITION=PATH",
+            help="Bind reviewed release precondition evidence; repeatable",
+        )
         if action == "apply":
             parser.add_argument("--confirm", required=True)
             parser.set_defaults(
@@ -146,6 +153,7 @@ def run_release_plan(args: Namespace) -> int:
             environment_values=_environment(args.env_file),
             host_id=args.host_id,
             operation=args.product_operation,
+            precondition_evidence=_bindings(args.evidence, owner="Precondition evidence"),
         )
     except (ProductBundleError, ProductExecutionError, OSError, ValueError) as exc:
         return _failure(args, exc)
@@ -163,6 +171,7 @@ def run_release_apply(args: Namespace) -> int:
             confirm=args.confirm,
             host_id=args.host_id,
             operation=args.product_operation,
+            precondition_evidence=_bindings(args.evidence, owner="Precondition evidence"),
         )
     except (ProductBundleError, ProductExecutionError, OSError, ValueError) as exc:
         return _failure(args, exc)
@@ -266,14 +275,14 @@ def _environment(path: Path | None) -> Dict[str, str]:
     return values
 
 
-def _bindings(values) -> Dict[str, Path]:
+def _bindings(values, *, owner: str = "Dataset bindings") -> Dict[str, Path]:
     result: Dict[str, Path] = {}
     for value in values:
         if "=" not in value:
-            raise ValueError("Dataset bindings must use ID=PATH.")
+            raise ValueError(f"{owner} must use ID=PATH.")
         identifier, path = value.split("=", 1)
         if not identifier or not path or identifier in result:
-            raise ValueError("Dataset bindings must have unique non-empty ids and paths.")
+            raise ValueError(f"{owner} must have unique non-empty ids and paths.")
         result[identifier] = Path(path)
     return result
 
@@ -321,6 +330,7 @@ def _descriptor_args(command: str) -> Dict[str, object]:
         )
     if " release " in command or " rollback " in command:
         properties["artifact"] = {"type": "string"}
+        properties["evidence"] = {"type": "array", "items": {"type": "string"}}
         required.append("artifact")
     elif command == "ship product validate":
         properties["artifact"] = {"type": "string"}
