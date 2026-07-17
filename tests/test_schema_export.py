@@ -78,6 +78,11 @@ class SchemaExportTests(unittest.TestCase):
         self.assertEqual(props["networking"]["properties"]["edge"]["enum"], ["shared"])
         self.assertEqual(props["networking"]["properties"]["internal"]["enum"], ["shared", "per-app"])
         self.assertEqual(props["edge"]["properties"]["tls"]["properties"]["mode"]["enum"], ["auto", "internal", "custom"])
+        response_header = props["edge"]["properties"]["response_headers"]["items"]
+        self.assertEqual(response_header["properties"]["name"]["type"], "string")
+        self.assertEqual(response_header["properties"]["path_prefix"]["type"], "string")
+        self.assertNotIn("path_prefix", response_header["required"])
+        self.assertEqual(response_header["properties"]["exclude_paths"]["type"], "array")
         self.assertEqual(props["console"]["properties"]["surface"]["enum"], ["console", "root"])
         self.assertEqual(props["verify_policy"]["properties"]["failure_mode"]["enum"], ["hard", "warn"])
         self.assertEqual(props["verify"]["items"]["properties"]["type"]["enum"], ["http", "command", "internal"])

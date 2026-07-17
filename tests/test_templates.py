@@ -145,6 +145,63 @@ edge:
             rendered,
         )
 
+    def test_response_headers_render_global_and_path_scoped_policies(self) -> None:
+        manifest = self._load(
+            """
+version: 1
+app: secure-static
+kind: static
+static_root: public
+routes:
+  - domain: secure-static.example.net
+edge:
+  response_headers:
+    - name: Content-Security-Policy
+      value: "default-src 'self'; object-src 'none'"
+    - name: Cache-Control
+      value: no-cache
+      exclude_path_prefixes:
+        - /assets
+    - name: Cache-Control
+      value: public, max-age=31536000, immutable
+      path_prefix: /assets
+      exclude_paths:
+        - /assets/data/career.json
+    - name: Cache-Control
+      value: no-cache
+      path: /assets/data/career.json
+"""
+        )
+
+        rendered = render_caddy(manifest)
+
+        self.assertIn(
+            "        Content-Security-Policy \"default-src 'self'; object-src 'none'\"",
+            rendered,
+        )
+        self.assertNotIn('        Cache-Control "no-cache"', rendered)
+        self.assertIn("    @ophelia_response_header_2 {", rendered)
+        self.assertIn("        not path /assets /assets/*", rendered)
+        self.assertIn(
+            '    header @ophelia_response_header_2 Cache-Control "no-cache"',
+            rendered,
+        )
+        self.assertIn("    @ophelia_response_header_3 {", rendered)
+        self.assertIn("        path /assets /assets/*", rendered)
+        self.assertIn("        not path /assets/data/career.json", rendered)
+        self.assertIn(
+            '    header @ophelia_response_header_3 Cache-Control "public, max-age=31536000, immutable"',
+            rendered,
+        )
+        self.assertIn(
+            "    @ophelia_response_header_4 path /assets/data/career.json",
+            rendered,
+        )
+        self.assertIn(
+            '    header @ophelia_response_header_4 Cache-Control "no-cache"',
+            rendered,
+        )
+
     def _load(self, content: str):
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest_path = Path(temp_dir) / "app.ophelia.yml"

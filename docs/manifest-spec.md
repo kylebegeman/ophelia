@@ -165,6 +165,21 @@ Use `edge` for public-edge behavior that is not tied to one explicit domain.
 - `edge.catch_all.upstream`: direct upstream target for a catch-all `https://` site block
 - `edge.catch_all.http_redirect`: whether to render a catch-all `http://` to HTTPS redirect, default `true`
 - `edge.catch_all.http_redirect_status`: redirect status for that HTTP redirect, default `308`
+- `edge.response_headers`: ordered response-header rules applied to every domain rendered by the manifest
+- `edge.response_headers[].name`: HTTP response field name
+- `edge.response_headers[].value`: literal response field value
+- `edge.response_headers[].path`: optional exact request path matcher
+- `edge.response_headers[].path_prefix`: optional request path-prefix matcher
+- `edge.response_headers[].exclude_paths`: optional exact paths excluded from the rule
+- `edge.response_headers[].exclude_path_prefixes`: optional path prefixes excluded from the rule
+
+Response-header rules without path conditions are merged into Ophelia's default
+security-header block. Rules with includes or exclusions render as named Caddy
+matchers. Use exclusions to make rules for the same field mutually exclusive
+instead of relying on repeated-header precedence. A rule may set either `path`
+or `path_prefix`, not both. Duplicate name-and-selector pairs, duplicate paths,
+hop-by-hop headers, control characters, and Caddy placeholders are rejected
+before rendering.
 
 For Cloudflare-protected private hostnames, prefer a Cloudflare Origin CA
 certificate rendered with `mode: custom` when the operator has one available.
@@ -192,6 +207,25 @@ edge:
     mode: custom
     cert_file: /etc/caddy/certs/app-origin.pem
     key_file: /etc/caddy/certs/app-origin.key
+```
+
+```yaml
+edge:
+  response_headers:
+    - name: Content-Security-Policy
+      value: "default-src 'self'; object-src 'none'; frame-ancestors 'none'"
+    - name: Cache-Control
+      value: no-cache
+      exclude_path_prefixes:
+        - /assets
+    - name: Cache-Control
+      value: public, max-age=31536000, immutable
+      path_prefix: /assets
+      exclude_paths:
+        - /assets/data/public.json
+    - name: Cache-Control
+      value: no-cache
+      path: /assets/data/public.json
 ```
 
 ```yaml

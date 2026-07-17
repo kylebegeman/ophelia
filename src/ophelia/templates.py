@@ -25,6 +25,13 @@ RUNTIME_INJECTED_ENV_KEYS = frozenset(
     }
 )
 
+DEFAULT_RESPONSE_HEADERS = (
+    ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "strict-origin-when-cross-origin"),
+)
+
 
 def render_compose(manifest: Manifest, release_metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
     if manifest.kind in {"static", "tunnel", "redirect"}:
@@ -419,13 +426,8 @@ def _render_site_block(manifest: Manifest, domain: str, routes: List[RouteConfig
     lines = [
         f"{domain} {{",
         "    encode zstd gzip",
-        "    header {",
-        '        Strict-Transport-Security "max-age=31536000; includeSubDomains"',
-        "        X-Content-Type-Options nosniff",
-        "        X-Frame-Options DENY",
-        "        Referrer-Policy strict-origin-when-cross-origin",
-        "    }",
     ]
+    lines.extend(_render_response_headers(manifest))
     lines.extend(_render_edge_tls_block(manifest))
 
     if manifest.kind == "static":
@@ -471,6 +473,53 @@ def _render_edge_tls_block(manifest: Manifest) -> List[str]:
     return []
 
 
+def _render_response_headers(manifest: Manifest) -> List[str]:
+    global_headers = OrderedDict((name.lower(), (name, value)) for name, value in DEFAULT_RESPONSE_HEADERS)
+    for header in manifest.edge.response_headers:
+        if (
+            header.path is None
+            and header.path_prefix is None
+            and not header.exclude_paths
+            and not header.exclude_path_prefixes
+        ):
+            global_headers[header.name.lower()] = (header.name, header.value)
+
+    lines = ["    header {"]
+    for name, value in global_headers.values():
+        lines.append(f"        {name} {json.dumps(value)}")
+    lines.append("    }")
+
+    for index, header in enumerate(manifest.edge.response_headers):
+        if (
+            header.path is None
+            and header.path_prefix is None
+            and not header.exclude_paths
+            and not header.exclude_path_prefixes
+        ):
+            continue
+        matcher_name = f"ophelia_response_header_{index + 1}"
+        includes = []
+        if header.path is not None:
+            includes.append(header.path)
+        elif header.path_prefix is not None:
+            includes.extend([header.path_prefix, f"{header.path_prefix}/*"])
+        excludes = list(header.exclude_paths)
+        for prefix in header.exclude_path_prefixes:
+            excludes.extend([prefix, f"{prefix}/*"])
+
+        if includes and not excludes:
+            lines.append(f"    @{matcher_name} path {' '.join(includes)}")
+        else:
+            lines.append(f"    @{matcher_name} {{")
+            if includes:
+                lines.append(f"        path {' '.join(includes)}")
+            if excludes:
+                lines.append(f"        not path {' '.join(excludes)}")
+            lines.append("    }")
+        lines.append(f"    header @{matcher_name} {header.name} {json.dumps(header.value)}")
+    return lines
+
+
 def _render_catch_all_edge_block(manifest: Manifest, catch_all: CatchAllEdgeConfig) -> str:
     lines: List[str] = []
     if catch_all.http_redirect:
@@ -487,12 +536,11 @@ def _render_catch_all_edge_block(manifest: Manifest, catch_all: CatchAllEdgeConf
         [
             "https:// {",
             "    encode zstd gzip",
-            "    header {",
-            '        Strict-Transport-Security "max-age=31536000; includeSubDomains"',
-            "        X-Content-Type-Options nosniff",
-            "        X-Frame-Options DENY",
-            "        Referrer-Policy strict-origin-when-cross-origin",
-            "    }",
+        ]
+    )
+    lines.extend(_render_response_headers(manifest))
+    lines.extend(
+        [
             "    tls {",
             "        on_demand",
             "    }",

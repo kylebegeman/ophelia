@@ -80,3 +80,4 @@
 | [0076](0076-release-043.md) | 2026-06-28 | landed | Release 0.4.3 | release, caddy, deploy, static-sites, safety, tests |
 | [0077](0077-release-044.md) | 2026-06-28 | landed | Release 0.4.4 | release, remote-deploy, ssh, tests |
 | [0079](0079-product-operations-execution-bridge.md) | 2026-07-14 | landed | Product operations execution bridge | product-contracts, forge, execution, traffic, backup, restore, rollback, receipts, cli, docs, tests |
+| [0080](0080-validated-response-headers.md) | 2026-07-16 | landed | Validated response-header policies | manifest, caddy, static-sites, security, caching, docs, tests |

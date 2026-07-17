@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
+import re
 import shlex
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -262,10 +263,21 @@ class CatchAllEdgeConfig:
 
 
 @dataclass
+class ResponseHeaderConfig:
+    name: str
+    value: str
+    path: Optional[str] = None
+    path_prefix: Optional[str] = None
+    exclude_paths: List[str] = field(default_factory=list)
+    exclude_path_prefixes: List[str] = field(default_factory=list)
+
+
+@dataclass
 class EdgeConfig:
     on_demand_tls: Optional[OnDemandTLSConfig] = None
     tls: Optional[EdgeTLSConfig] = None
     catch_all: Optional[CatchAllEdgeConfig] = None
+    response_headers: List[ResponseHeaderConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -466,7 +478,7 @@ _TOP_LEVEL_KEYS = frozenset(
 _FIXED_MAPPING_KEYS = {
     "addons": frozenset({"postgres", "redis"}),
     "resources": frozenset({"memory"}),
-    "edge": frozenset({"on_demand_tls", "tls", "catch_all"}),
+    "edge": frozenset({"on_demand_tls", "tls", "catch_all", "response_headers"}),
     "edge.on_demand_tls": frozenset({"ask"}),
     "edge.tls": frozenset({"mode", "cert_file", "key_file"}),
     "edge.catch_all": frozenset(
@@ -530,6 +542,9 @@ _ROUTE_KEYS = frozenset(
         "strip_prefix",
         "rewrite_prefix",
     }
+)
+_RESPONSE_HEADER_KEYS = frozenset(
+    {"name", "value", "path", "path_prefix", "exclude_paths", "exclude_path_prefixes"}
 )
 _VERIFY_KEYS = frozenset(
     {
@@ -602,6 +617,18 @@ def _collect_unknown_key_diagnostics(
     if isinstance(routes, list):
         for index, route in enumerate(routes):
             _diagnose_mapping(route, _ROUTE_KEYS, f"routes[{index}]", diagnostics)
+
+    edge = raw.get("edge")
+    if isinstance(edge, dict):
+        response_headers = edge.get("response_headers")
+        if isinstance(response_headers, list):
+            for index, header in enumerate(response_headers):
+                _diagnose_mapping(
+                    header,
+                    _RESPONSE_HEADER_KEYS,
+                    f"edge.response_headers[{index}]",
+                    diagnostics,
+                )
 
     verify = raw.get("verify")
     if isinstance(verify, list):
@@ -826,7 +853,98 @@ def _parse_edge(raw: Any) -> EdgeConfig:
     on_demand_tls = _parse_on_demand_tls(raw.get("on_demand_tls"))
     tls = _parse_edge_tls(raw.get("tls"))
     catch_all = _parse_catch_all_edge(raw.get("catch_all"))
-    return EdgeConfig(on_demand_tls=on_demand_tls, tls=tls, catch_all=catch_all)
+    response_headers = _parse_response_headers(raw.get("response_headers"))
+    return EdgeConfig(
+        on_demand_tls=on_demand_tls,
+        tls=tls,
+        catch_all=catch_all,
+        response_headers=response_headers,
+    )
+
+
+def _parse_response_headers(raw: Any) -> List[ResponseHeaderConfig]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ManifestError("`edge.response_headers` must be a list.")
+    if len(raw) > 64:
+        raise ManifestError("`edge.response_headers` may contain at most 64 entries.")
+
+    headers: List[ResponseHeaderConfig] = []
+    forbidden_names = {
+        "connection",
+        "content-length",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+    for index, item in enumerate(raw):
+        prefix = f"edge.response_headers[{index}]"
+        if not isinstance(item, dict):
+            raise ManifestError(f"`{prefix}` must be a mapping.")
+
+        name = _require_str(item, "name", prefix=prefix)
+        if re.fullmatch(r"[0-9A-Za-z][!#$%&'*+.^_`|~0-9A-Za-z-]{0,127}", name) is None:
+            raise ManifestError(
+                f"`{prefix}.name` must be a valid HTTP field name that starts with a letter or digit."
+            )
+        if name.lower() in forbidden_names:
+            raise ManifestError(f"`{prefix}.name` may not set the hop-by-hop header `{name}`.")
+
+        value = _require_str(item, "value", prefix=prefix)
+        if len(value) > 8192:
+            raise ManifestError(f"`{prefix}.value` may not exceed 8192 characters.")
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ManifestError(f"`{prefix}.value` contains a control character.")
+        if "{" in value or "}" in value:
+            raise ManifestError(f"`{prefix}.value` may not contain Caddy placeholders.")
+
+        path = _optional_http_path(item.get("path"), f"{prefix}.path")
+        path_prefix = _optional_http_path(
+            item.get("path_prefix"),
+            f"{prefix}.path_prefix",
+            kind=HTTPPathKind.PREFIX,
+        )
+        if path is not None and path_prefix is not None:
+            raise ManifestError(f"`{prefix}` may not set both `path` and `path_prefix`.")
+        exclude_paths = _parse_http_path_list(
+            item.get("exclude_paths"),
+            f"{prefix}.exclude_paths",
+        )
+        exclude_path_prefixes = _parse_http_path_list(
+            item.get("exclude_path_prefixes"),
+            f"{prefix}.exclude_path_prefixes",
+            kind=HTTPPathKind.PREFIX,
+        )
+        headers.append(ResponseHeaderConfig(
+            name=name,
+            value=value,
+            path=path,
+            path_prefix=path_prefix,
+            exclude_paths=exclude_paths,
+            exclude_path_prefixes=exclude_path_prefixes,
+        ))
+    return headers
+
+
+def _parse_http_path_list(
+    raw: Any,
+    field_name: str,
+    *,
+    kind: HTTPPathKind = HTTPPathKind.EXACT,
+) -> List[str]:
+    paths = []
+    for index, value in enumerate(_string_list([] if raw is None else raw, field_name)):
+        path = _optional_http_path(value, f"{field_name}[{index}]", kind=kind)
+        assert path is not None
+        paths.append(path)
+    if len(paths) != len(set(paths)):
+        raise ManifestError(f"`{field_name}` may not contain duplicate paths.")
+    return paths
 
 
 def _parse_on_demand_tls(raw: Any) -> Optional[OnDemandTLSConfig]:
@@ -1534,6 +1652,18 @@ def _validate_verification_checks(manifest: Manifest) -> None:
 
 
 def _validate_edge(manifest: Manifest) -> None:
+    seen_headers: Dict[tuple[str, str, str], int] = {}
+    for index, header in enumerate(manifest.edge.response_headers):
+        selector_kind = "path" if header.path is not None else "path_prefix" if header.path_prefix is not None else "global"
+        selector = header.path or header.path_prefix or "*"
+        key = (header.name.lower(), selector_kind, selector)
+        if key in seen_headers:
+            raise ManifestError(
+                f"`edge.response_headers[{index}]` duplicates `edge.response_headers[{seen_headers[key]}]` "
+                f"for `{header.name}` and {selector_kind} `{selector}`."
+            )
+        seen_headers[key] = index
+
     catch_all = manifest.edge.catch_all
     if catch_all is None:
         return

@@ -952,6 +952,58 @@ console:
             [item.url for item in checks],
         )
 
+    def test_response_headers_round_trip_and_reject_unsafe_values(self) -> None:
+        manifest = """
+version: 1
+app: response-headers
+kind: static
+static_root: public
+routes:
+  - domain: response-headers.example.com
+edge:
+  response_headers:
+    - name: Content-Security-Policy
+      value: "default-src 'self'"
+    - name: Cache-Control
+      value: public, max-age=31536000, immutable
+      path_prefix: /assets
+      exclude_paths:
+        - /assets/data/career.json
+"""
+        loaded = self._load(manifest)
+
+        self.assertEqual("Content-Security-Policy", loaded.edge.response_headers[0].name)
+        self.assertEqual("/assets", loaded.edge.response_headers[1].path_prefix)
+        self.assertEqual(
+            ["/assets/data/career.json"],
+            loaded.edge.response_headers[1].exclude_paths,
+        )
+        self.assertEqual(
+            "public, max-age=31536000, immutable",
+            loaded.to_lock_dict()["edge"]["response_headers"][1]["value"],
+        )
+
+        unsafe_manifests = {
+            "hop-by-hop header": manifest.replace("Content-Security-Policy", "Transfer-Encoding"),
+            "Caddy operation prefix": manifest.replace("Content-Security-Policy", "+Content-Security-Policy"),
+            "Caddy placeholder": manifest.replace("default-src 'self'", "leak {$SECRET}"),
+            "duplicate selector": manifest.replace(
+                "    - name: Cache-Control\n      value: public, max-age=31536000, immutable\n      path_prefix: /assets\n      exclude_paths:\n        - /assets/data/career.json",
+                "    - name: content-security-policy\n      value: duplicate",
+            ),
+            "ambiguous selector": manifest.replace(
+                "      path_prefix: /assets",
+                "      path: /assets/app.js\n      path_prefix: /assets",
+            ),
+            "invalid exclusions": manifest.replace(
+                "      exclude_paths:\n        - /assets/data/career.json",
+                "      exclude_paths: /assets/data/career.json",
+            ),
+        }
+        for label, unsafe in unsafe_manifests.items():
+            with self.subTest(label=label), self.assertRaises(ManifestError):
+                self._load(unsafe)
+
     def _load(self, content: str):
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest_path = Path(temp_dir) / "app.ophelia.yml"
