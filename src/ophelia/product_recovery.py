@@ -9,8 +9,10 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import threading
 import uuid
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -108,6 +110,7 @@ def product_backup_plan(
         material["data_root"],
         dataset_bindings,
         require_sources=True,
+        environment_values=environment_values,
     )
     blockers.extend(_configuration_blockers(bundle, environment_values))
     payload = _recovery_confirmation_payload(
@@ -188,7 +191,11 @@ def create_product_backup(
     material = _active_material(runtime_root, bundle, host_id)
     revision = material["revision"]
     resolved, blockers = _resolve_datasets(
-        bundle, material["data_root"], dataset_bindings, require_sources=True
+        bundle,
+        material["data_root"],
+        dataset_bindings,
+        require_sources=True,
+        environment_values=environment_values,
     )
     if blockers:
         raise ProductRecoveryError("Backup dataset bindings changed after planning.")
@@ -247,9 +254,15 @@ def create_product_backup(
             _remove_owned_temporary(temporary)
         else:
             _remove_owned_temporary(temporary)
-            stopped = backend.stop(handle, backend.shutdown_seconds())
-            if not stopped.stopped:
-                raise ProductRecoveryError("Active product process did not quiesce.")
+            requires_stop = any(
+                item["quiescence"] == "application-stop"
+                for item in bundle.recovery["datasets"]
+                if item["backup"] != "excluded"
+            )
+            if requires_stop:
+                stopped = backend.stop(handle, backend.shutdown_seconds())
+                if not stopped.stopped:
+                    raise ProductRecoveryError("Active product process did not quiesce.")
             temporary.mkdir(mode=0o700, parents=True)
             records = []
             datasets = {item["id"]: item for item in bundle.recovery["datasets"]}
@@ -258,7 +271,14 @@ def create_product_backup(
                 if item["backup"] == "excluded" or dataset_id not in resolved:
                     continue
                 target = temporary / "datasets" / _slug(dataset_id)
-                record = _backup_dataset(item, resolved[dataset_id], target)
+                if item["kind"] == "postgresql":
+                    record = _backup_postgresql(
+                        item,
+                        environment_values.get("DATABASE_URL"),
+                        target,
+                    )
+                else:
+                    record = _backup_dataset(item, resolved[dataset_id], target)
                 records.append(record)
             manifest = {
                 "schema_version": 1,
@@ -376,23 +396,30 @@ def product_restore_drill_plan(
         blockers.append({"code": "product_backup_invalid", "message": str(exc)})
     if manifest is not None:
         contracts = {item["id"]: item for item in bundle.recovery["datasets"]}
+        supported_provider_kinds = {"object-storage", "filesystem-or-object-store"}
         provider_datasets = sorted(
             str(item["id"])
             for item in manifest["datasets"]
             if contracts[str(item["id"])]["binding"] == "provider-selected"
+            and contracts[str(item["id"])]["kind"] not in supported_provider_kinds
         )
         if provider_datasets:
             blockers.append(
                 {
                     "code": "product_provider_restore_adapter_unsupported",
-                    "message": "Provider-selected datasets require a native isolated restore adapter.",
+                    "message": "Provider-selected datasets require a supported isolated restore adapter.",
                     "datasets": provider_datasets,
                 }
             )
         supported_validations = {
             "sqlite-integrity",
+            "postgres-restore",
+            "migration-version",
             "application-start",
             "health-probe",
+            "readiness-probe",
+            "provider-restore",
+            "application-validation",
         }
         unsupported_validations = sorted(
             {
@@ -410,6 +437,26 @@ def product_restore_drill_plan(
                     "validations": unsupported_validations,
                 }
             )
+        if any(
+            contracts[str(item["id"])]["kind"] == "postgresql"
+            for item in manifest["datasets"]
+        ):
+            if not _isolated_postgres_target(
+                environment_values.get("DATABASE_URL"), drill_id
+            ):
+                blockers.append(
+                    {
+                        "code": "product_postgres_restore_target_not_isolated",
+                        "message": "PostgreSQL restore drills require a DATABASE_URL whose database name ends with the drill-specific isolated suffix.",
+                    }
+                )
+            if shutil.which("pg_restore") is None or shutil.which("psql") is None:
+                blockers.append(
+                    {
+                        "code": "product_postgres_tools_missing",
+                        "message": "PostgreSQL restore drills require pg_restore and psql.",
+                    }
+                )
     resolved = {
         str(item["id"]): backup_root / str(item["relative_path"])
         for item in ([] if manifest is None else manifest["datasets"])
@@ -526,6 +573,7 @@ def apply_product_restore_drill(
         if report is None:
             temporary.mkdir(mode=0o700, parents=True)
             restored = []
+            local_provider_roots: Dict[str, Path] = {}
             records = {item["id"]: item for item in backup_manifest["datasets"]}
             contracts = {item["id"]: item for item in bundle.recovery["datasets"]}
             for dataset_id in bundle.recovery["restore_order"]:
@@ -545,9 +593,24 @@ def apply_product_restore_drill(
                     raise ProductRecoveryError("Restored dataset digest does not match backup evidence.")
                 if "sqlite-integrity" in contract["restore_validations"]:
                     _verify_sqlite(target)
+                if contract["kind"] == "postgresql":
+                    _restore_postgresql(
+                        target,
+                        environment_values.get("DATABASE_URL"),
+                        drill_id,
+                    )
+                elif contract["binding"] == "provider-selected":
+                    local_provider_roots[dataset_id] = target
                 restored.append({"id": dataset_id, "digest": digest})
             os.replace(temporary, drill_root)
             _sync_directory(drill_root.parent)
+            drill_environment = dict(environment_values)
+            private_objects = local_provider_roots.get("storage.object.private")
+            if private_objects is not None:
+                drill_environment["OBJECT_STORAGE_PROVIDER"] = "local"
+                drill_environment["OBJECT_STORAGE_LOCAL_ROOT"] = os.fspath(
+                    drill_root / private_objects.relative_to(temporary)
+                )
             drill_runtime = drill_root / "runtime"
             drill_runtime.mkdir(mode=0o700)
             drill_backend = ProductProcessBackend(
@@ -555,7 +618,7 @@ def apply_product_restore_drill(
                 artifact_path=material["artifact_path"],
                 candidate_root=material["revision_root"],
                 runtime_root=drill_runtime,
-                environment_values=environment_values,
+                environment_values=drill_environment,
                 host_id=str(material["host_id"]),
                 operation_id=operation.operation_id,
                 owner_id=fence.owner_id,
@@ -796,11 +859,13 @@ def _resolve_datasets(
     bindings: Mapping[str, Path],
     *,
     require_sources: bool,
+    environment_values: Optional[Mapping[str, str]] = None,
 ) -> Tuple[Dict[str, Path], list[Dict[str, str]]]:
     resolved: Dict[str, Path] = {}
     blockers = []
     declared = {item["id"] for item in bundle.recovery["datasets"]}
     unknown = sorted(set(bindings) - declared)
+    environment_values = dict(environment_values or {})
     if unknown:
         blockers.append(
             {
@@ -811,6 +876,24 @@ def _resolve_datasets(
     for item in bundle.recovery["datasets"]:
         dataset_id = str(item["id"])
         if item["backup"] == "excluded":
+            continue
+        if item["kind"] == "postgresql":
+            if not environment_values.get("DATABASE_URL"):
+                blockers.append(
+                    {
+                        "code": "product_postgres_configuration_missing",
+                        "message": "PostgreSQL backup requires host-owned DATABASE_URL configuration.",
+                    }
+                )
+            elif shutil.which("pg_dump") is None or shutil.which("pg_restore") is None:
+                blockers.append(
+                    {
+                        "code": "product_postgres_tools_missing",
+                        "message": "PostgreSQL backup requires pg_dump and pg_restore.",
+                    }
+                )
+            else:
+                resolved[dataset_id] = Path("__ophelia_postgresql_provider__")
             continue
         if item["binding"] == "stack-owned":
             relative = item.get("path")
@@ -885,6 +968,136 @@ def _backup_dataset(contract: Mapping[str, Any], source: Path, target: Path) -> 
         "digest": _path_digest(target),
         "validation_checks": list(contract["restore_validations"]),
     }
+
+
+def _backup_postgresql(
+    contract: Mapping[str, Any], database_url: Optional[str], target: Path
+) -> Dict[str, Any]:
+    if not database_url or "\x00" in database_url:
+        raise ProductRecoveryError("PostgreSQL backup configuration is unavailable.")
+    pg_dump = shutil.which("pg_dump")
+    pg_restore = shutil.which("pg_restore")
+    if pg_dump is None or pg_restore is None:
+        raise ProductRecoveryError("PostgreSQL backup tools are unavailable.")
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    environment = {
+        name: os.environ[name]
+        for name in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "HOME")
+        if name in os.environ
+    }
+    environment["PGDATABASE"] = database_url
+    try:
+        completed = subprocess.run(
+            [pg_dump, "--format=custom", "--no-owner", "--file", os.fspath(target)],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=1800,
+        )
+        if completed.returncode != 0:
+            raise ProductRecoveryError("PostgreSQL provider backup failed.")
+        verified = subprocess.run(
+            [pg_restore, "--list", os.fspath(target)],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProductRecoveryError("PostgreSQL provider backup failed.") from exc
+    if verified.returncode != 0 or not target.is_file() or target.stat().st_size < 1:
+        raise ProductRecoveryError("PostgreSQL backup archive failed validation.")
+    return {
+        "id": contract["id"],
+        "kind": contract["kind"],
+        "relative_path": target.relative_to(target.parents[1]).as_posix(),
+        "digest": _path_digest(target),
+        "validation_checks": list(contract["restore_validations"]),
+    }
+
+
+def _isolated_postgres_target(database_url: Optional[str], drill_id: str) -> bool:
+    if not database_url or "\x00" in database_url:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(database_url)
+    except ValueError:
+        return False
+    database = parsed.path.lstrip("/")
+    suffix = "_ophelia_drill_" + _slug(drill_id).replace("-", "_")
+    return (
+        parsed.scheme in {"postgres", "postgresql"}
+        and bool(parsed.hostname)
+        and bool(database)
+        and database.endswith(suffix)
+    )
+
+
+def _restore_postgresql(
+    archive: Path, database_url: Optional[str], drill_id: str
+) -> None:
+    if not _isolated_postgres_target(database_url, drill_id):
+        raise ProductRecoveryError("PostgreSQL restore target is not drill-isolated.")
+    pg_restore = shutil.which("pg_restore")
+    psql = shutil.which("psql")
+    if pg_restore is None or psql is None:
+        raise ProductRecoveryError("PostgreSQL restore tools are unavailable.")
+    environment = {
+        name: os.environ[name]
+        for name in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "HOME")
+        if name in os.environ
+    }
+    environment["PGDATABASE"] = str(database_url)
+    try:
+        restored = subprocess.run(
+            [
+                pg_restore,
+                "--clean",
+                "--if-exists",
+                "--no-owner",
+                "--exit-on-error",
+                os.fspath(archive),
+            ],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=1800,
+        )
+        if restored.returncode != 0:
+            raise ProductRecoveryError("PostgreSQL provider restore failed.")
+        verified = subprocess.run(
+            [
+                psql,
+                "--no-psqlrc",
+                "--tuples-only",
+                "--no-align",
+                "--command",
+                "SELECT count(*) FROM goose_db_version WHERE is_applied = true;",
+            ],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=120,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProductRecoveryError("PostgreSQL provider restore failed.") from exc
+    try:
+        migration_count = int(verified.stdout.strip())
+    except (AttributeError, ValueError):
+        migration_count = 0
+    if verified.returncode != 0 or migration_count < 1:
+        raise ProductRecoveryError(
+            "PostgreSQL restore did not retain applied migration evidence."
+        )
 
 
 def _copy_verified(source: Path, target: Path) -> None:

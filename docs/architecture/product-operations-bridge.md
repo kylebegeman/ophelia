@@ -33,6 +33,7 @@ Plan and apply a release:
 ship product release plan .product/operations \
   --artifact ./dist/product-server \
   --env-file /etc/ophelia/example.env \
+  --evidence expand-contract-compatible=/srv/evidence/schema-review.json \
   --json
 
 ship product release apply .product/operations \
@@ -81,9 +82,10 @@ ship product backup apply .product/operations \
 ```
 
 SQLite datasets use the SQLite backup API after the application process has
-quiesced. Filesystem datasets reject symlinks and special files. The process is
-restarted on the same isolated candidate port and must pass its public health
-probe before backup success is recorded.
+quiesced. Filesystem datasets reject symlinks and special files. The process set
+is restored on its retained revision and must pass its public health probe
+before backup success is recorded. Provider-snapshot datasets do not stop a
+healthy application process.
 
 Run an isolated restore drill:
 
@@ -102,26 +104,29 @@ ship product restore-drill apply .product/operations \
   --json
 ```
 
-For stack-owned datasets, the drill restores into a separate data and runtime
-root, verifies dataset digests, runs SQLite integrity checks where declared,
-boots the exact retained artifact, executes the declared health probe, stops
-the isolated process, and leaves the active runtime untouched. A drill with a
-provider-selected dataset remains blocked because copying provider bytes does
-not prove that the application was rebound to an isolated provider. That path
-requires a native provider restore adapter.
+The drill restores into separate data and runtime roots, verifies dataset
+digests, runs SQLite integrity checks where declared, boots the exact retained
+artifact, executes the declared health probe, stops the isolated process set,
+and leaves the active runtime untouched. Filesystem and local object-storage
+snapshots are rebound through an isolated local provider. PostgreSQL uses
+`pg_dump`, `pg_restore`, and `psql`; its target database name must end with
+`_ophelia_drill_<drill_id>` so the production database cannot be selected by
+mistake. Applied Goose migration state is verified before the application is
+booted against the restored database.
 
 ## Execution model
 
-The v1 process backend accepts one executable process, one replica, one HTTP
-port, and one or more HTTP health probes. Unsupported runtime shapes fail
-closed during preflight. The process argv must contain the declared port as a
-standalone token or host-and-port token so Ophelia can replace it with a unique
-loopback candidate port.
+The v1 process backend accepts one executable process declaration, one to 32
+replicas, one HTTP port, and one or more HTTP health probes. Unsupported runtime
+shapes fail closed during preflight. The process argv must contain the declared
+port as a standalone token or host-and-port token so Ophelia can replace it
+with a unique loopback candidate port for every replica.
 
 Ophelia keeps the product's declared port stable by running a small TCP switch.
-Each revision runs on an isolated loopback port. Activation atomically replaces
-an `active.json` pointer read for every new connection. This provides the full
-kernel sequence:
+Each revision runs on an isolated set of loopback ports. Activation atomically
+replaces an `active.json` upstream set read for every new connection. New
+connections are distributed across the complete healthy replica set. This
+provides the full kernel sequence:
 
 1. validate and preflight exact bundle and artifact bytes;
 2. materialize an immutable revision;
@@ -139,6 +144,14 @@ retained revision before restoring traffic. Plans require configuration for the
 target and active predecessor so that recovery cannot discover a missing secret
 after a side effect. A later rollback uses the same retained-revision path,
 verifies it, and drains the displaced revision.
+
+Forward-only-at-startup migrations are executed by the exact product artifact.
+Ophelia binds their declared identities into release evidence, starts replicas
+sequentially so the first healthy instance completes migrations before peers
+join, and still requires the release's backup precondition for upgrades.
+Initial releases do not require a backup of nonexistent state. Expand-contract
+compatibility and any custom precondition must be supplied as a bounded regular
+evidence file; its digest, never its contents or path, is bound into the plan.
 
 Release, rollback, backup, and restore operations all acquire the same durable
 host, app, and environment execution fence. Backup quiescence cannot race a
@@ -165,26 +178,26 @@ verification prose is discarded before journal persistence.
 
 ## Linklet fixture
 
-The integration test loads Forge's committed Linklet bundle directly from
-`examples/linklet/.product/operations` and verifies its current bundle digest.
-This checks the shared wire contract without importing Forge packages. The
-committed Linklet artifact is Linux amd64, so Ophelia validates its bytes on a
-Darwin arm64 development host but correctly blocks local execution. Executable
-lifecycle coverage uses a synthetic executable fixture with SQLite, HTTP
-health, upgrade, backup, isolated restore, and rollback.
+The integration test loads Forge's committed SQLite, PostgreSQL, and React
+Linklet bundles directly from their `.product/operations` directories and
+verifies their current bundle digests. This checks facets, shared-provider
+profiles, multi-replica declarations, and the shared wire contract without
+importing Forge packages. Executable lifecycle coverage uses synthetic
+artifacts for SQLite, replica balancing, startup migrations, release evidence,
+local object recovery, PostgreSQL provider commands, upgrade, isolated restore,
+and rollback.
 
 ## Current v1 boundaries
 
-- Multi-process, worker, cron, TCP-only, HTTPS-terminated, and multi-replica
-  runtime shapes remain blocked until their backend protocols land.
-- Provider-selected backup inputs must currently be exposed as local files or
-  directories. Provider-selected restore drills fail closed until native
-  snapshot restore and isolated application-binding adapters land.
-- Release preconditions outside artifact digest verification, configuration
-  validation, and health probing remain blocked because this backend cannot
-  produce truthful evidence for them.
+- Multi-process, worker, cron, TCP-only, and HTTPS-terminated runtime shapes
+  remain blocked until their backend protocols land.
+- Provider-selected backup inputs outside PostgreSQL must be exposed as local
+  files or directories. Remote object-store snapshot APIs remain provider
+  adapter work; copied snapshots can already be restored through the isolated
+  local object-storage adapter.
+- Unknown release preconditions require explicit reviewed evidence. Ophelia
+  does not infer compatibility from migration names.
 - The TCP switch is host-local. Distributed routing and multi-host placement
   remain separate control-plane work.
-- Forward-only migrations are represented in the release contract but are not
-  executed by this backend. A release containing migrations should remain
-  blocked until migration execution and restore-required rollback are added.
+- Restore-required rollback still requires an explicit coordinated restore;
+  artifact-only rollback remains the directly executable rollback profile.
