@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import signal
 import socket
 import sys
@@ -48,19 +49,19 @@ SHARED_FORGE_PROFILES = {
         "product_id": "linklet-reference",
         "stack_id": "go-hypermedia-sqlite",
         "facets": {"default"},
-        "bundle_digest": "sha256:0362623447140c055b7f69251b4d307fedd38036ae3d2f1fa8a6866826beacd8",
+        "bundle_digest": "sha256:4fb3c4ca92c3b69048bd709fdc36b32b3422a73572d3d905578d56c49394095d",
     },
     "linklet-postgres": {
         "product_id": "linklet-postgres-reference",
         "stack_id": "go-hypermedia-postgres",
         "facets": {"default"},
-        "bundle_digest": "sha256:f31c4ee0abba44fee3e6d351ec6a57f1625f98bf21d15467a604b7180bc60cb4",
+        "bundle_digest": "sha256:9e685a87773d38c5b3168a025b2e034b35eed334dd68cb51fb030e2866a5d5c4",
     },
     "linklet-react": {
         "product_id": "linklet-react-reference",
         "stack_id": "go-react-postgres",
         "facets": {"server", "web"},
-        "bundle_digest": "sha256:863e389ce3bc4575db9d65c9984343319e87d09607f837c230531bef8cbd9734",
+        "bundle_digest": "sha256:97b99ae12aee8b567f0ffa6bbfc7b21b2fcbf74257953125f06b70509369269e",
     },
 }
 
@@ -393,6 +394,95 @@ class ProductOperationsTests(unittest.TestCase):
         artifact.write_text("tampered", encoding="utf-8")
         with self.assertRaises(ProductBundleError):
             verify_product_artifact(bundle, "server", artifact)
+
+    def test_bundle_contract_and_artifact_symlinks_fail_closed(self) -> None:
+        bundle_root, artifact = _fixture(self.root, "fixture-symlink", self.port)
+        bundle = load_product_operations_bundle(bundle_root)
+
+        artifact_target = artifact.with_name("artifact-target")
+        artifact.rename(artifact_target)
+        artifact.symlink_to(artifact_target)
+        with self.assertRaisesRegex(ProductBundleError, "real regular file"):
+            verify_product_artifact(bundle, "server", artifact)
+
+        runtime_path = bundle_root / "runtime-requirements.json"
+        runtime_target = bundle_root / "runtime-target.json"
+        runtime_path.rename(runtime_target)
+        runtime_path.symlink_to(runtime_target)
+        with self.assertRaisesRegex(ProductBundleError, "symlink|real regular file"):
+            load_product_operations_bundle(bundle_root)
+
+    def test_copy_time_artifact_tampering_fails_before_execution(self) -> None:
+        bundle_root, artifact = _fixture(self.root, "fixture-copy-race", self.port)
+        plan = product_release_plan(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        copied_artifact = False
+        original_copyfile = shutil.copyfile
+
+        def tampering_copyfile(source, destination, *, follow_symlinks=True):
+            nonlocal copied_artifact
+            result = original_copyfile(
+                source, destination, follow_symlinks=follow_symlinks
+            )
+            destination_path = Path(destination)
+            if destination_path.parts[-2:] == ("bin", "server") and not copied_artifact:
+                destination_path.write_text("tampered", encoding="utf-8")
+                copied_artifact = True
+            return result
+
+        with mock.patch(
+            "ophelia.product_execution.shutil.copyfile",
+            side_effect=tampering_copyfile,
+        ):
+            with self.assertRaisesRegex(ProductExecutionError, "failed verification"):
+                apply_product_release(
+                    bundle_root,
+                    artifact,
+                    runtime_root=self.runtime,
+                    environment_values={},
+                    confirm=plan["confirmation_token"],
+                )
+        self.assertFalse(list(self.runtime.glob("apps/*/environments/*/traffic/active.json")))
+
+    def test_revision_copy_tampering_cannot_reach_the_process(self) -> None:
+        bundle_root, artifact = _fixture(self.root, "fixture-revision-race", self.port)
+        plan = product_release_plan(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        original_copyfile = shutil.copyfile
+
+        def tampering_copyfile(source, destination, *, follow_symlinks=True):
+            result = original_copyfile(
+                source, destination, follow_symlinks=follow_symlinks
+            )
+            destination_path = Path(destination)
+            if (
+                "revisions" in destination_path.parts
+                and destination_path.parts[-2:] == ("bin", "server")
+            ):
+                destination_path.write_text("tampered", encoding="utf-8")
+            return result
+
+        with mock.patch(
+            "ophelia.execution.process_backend.shutil.copyfile",
+            side_effect=tampering_copyfile,
+        ):
+            receipt = apply_product_release(
+                bundle_root,
+                artifact,
+                runtime_root=self.runtime,
+                environment_values={},
+                confirm=plan["confirmation_token"],
+            )
+        self.assertEqual("failed_compensated", receipt["status"])
+        self.assertFalse(list(self.runtime.glob("apps/*/environments/*/traffic/active.json")))
 
     def test_required_secret_is_planned_but_never_persisted(self) -> None:
         bundle_root, artifact = _fixture(

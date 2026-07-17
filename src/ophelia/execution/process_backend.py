@@ -446,10 +446,9 @@ class ProductProcessBackend:
             metadata = self._read_revision_metadata(revision.revision_id)
             if metadata.get("revision_digest") != revision.content_digest():
                 raise ProductProcessBackendError("Immutable revision id collision.")
-            verify_product_artifact(
-                self.bundle,
-                self._process()["artifact_id"],
-                target / str(self._artifact_declaration()["path"]),
+            self._verify_materialized_release(
+                target,
+                "Existing product revision failed verification.",
             )
             return target
         self.revisions_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -482,6 +481,10 @@ class ProductProcessBackend:
         artifact = temporary / artifact_relative
         artifact.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copyfile(self.artifact_path, artifact, follow_symlinks=False)
+        self._verify_materialized_release(
+            temporary,
+            "Materialized product revision failed verification.",
+        )
         artifact.chmod(0o500)
         _atomic_json(
             temporary / "ophelia-revision.json",
@@ -499,6 +502,22 @@ class ProductProcessBackend:
         _sync_directory(target.parent)
         _harden_tree(target)
         return target
+
+    def _verify_materialized_release(self, root: Path, message: str) -> None:
+        try:
+            bundle = load_product_operations_bundle(root / ".product" / "operations")
+            if bundle.bundle_digest != self.bundle.bundle_digest:
+                raise ProductBundleError(
+                    "Materialized operations bundle differs from the approved bundle."
+                )
+            declaration = bundle.artifact(self._process()["artifact_id"])
+            verify_product_artifact(
+                bundle,
+                str(declaration["id"]),
+                root / str(declaration["path"]),
+            )
+        except (OSError, ProductBundleError) as exc:
+            raise ProductProcessBackendError(message) from exc
 
     def _ensure_proxy(self) -> None:
         self._validate_managed_paths()
