@@ -35,6 +35,11 @@
       "purpose": "Maintained map of active operator, manifest, readiness, agent, and archive docs."
     },
     {
+      "label": "Platform strategy and technical architecture",
+      "path": "../product/ophelia-platform-strategy.md",
+      "purpose": "Consolidated audit, product direction, target architecture, security model, implementation details, and phased roadmap."
+    },
+    {
       "label": "Roadmap",
       "path": "../ROADMAP.md",
       "purpose": "Current 0.4.x status, next work, adoption flow, and deferred decisions."

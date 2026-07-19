@@ -20,14 +20,15 @@ provides sanitized live material for an approved migration or deployment phase.
 
 1. [Repository README](../../README.md)
 2. [Documentation Index](../README.md)
-3. [Roadmap](../ROADMAP.md)
-4. [Platform Handbook](../platform-handbook.md)
-5. [Architecture](../architecture.md)
-6. [Manifest Spec](../manifest-spec.md)
-7. [Preflight And Safety](../preflight-and-safety.md)
-8. [Fixture App Suite](../fixture-app-suite.md)
-9. [Job And Action API](../job-action-api.md)
-10. [Open Source Readiness](../open-source-readiness.md)
+3. [Platform Strategy And Technical Architecture](../product/ophelia-platform-strategy.md)
+4. [Roadmap](../ROADMAP.md)
+5. [Platform Handbook](../platform-handbook.md)
+6. [Architecture](../architecture.md)
+7. [Manifest Spec](../manifest-spec.md)
+8. [Preflight And Safety](../preflight-and-safety.md)
+9. [Fixture App Suite](../fixture-app-suite.md)
+10. [Job And Action API](../job-action-api.md)
+11. [Open Source Readiness](../open-source-readiness.md)
 
 For existing checkouts or app repositories, use the copyable
 [0.3.0 Upgrade Prompt](UPGRADE_TO_0_3_0_PROMPT.md).

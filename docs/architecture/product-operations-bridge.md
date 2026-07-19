@@ -187,7 +187,10 @@ verification prose is discarded before journal persistence.
 
 The integration test loads Forge's committed SQLite, PostgreSQL, and React
 Linklet bundles directly from their `.product/operations` directories and
-verifies their current bundle digests. This checks facets, shared-provider
+verifies them against `fixtures/compatibility/forge-products.json`, including
+the reviewed Forge commit, release identities, composition digests, and bundle
+digests. Updating that compatibility lock is an explicit interoperability
+review, not a side effect of running tests. This checks facets, shared-provider
 profiles, multi-replica declarations, and the shared wire contract without
 importing Forge packages. Executable lifecycle coverage uses WAL-mode synthetic
 SQLite artifacts for replica balancing, startup migrations, release evidence,
