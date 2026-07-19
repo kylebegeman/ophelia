@@ -17,7 +17,6 @@ SHARED_CADDY_CONTAINER_CANDIDATES = (
     "ophelia-caddy",
     "caddy",
     "edge-caddy-1",
-    "quark-reverse-proxy-caddy-1",
 )
 
 _CONTAINER_ID = re.compile(r"[0-9a-f]{64}")

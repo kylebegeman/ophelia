@@ -7,6 +7,7 @@ import platform
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -44,26 +45,10 @@ from ophelia.product_recovery import (
 
 
 SHARED_FORGE_ROOT = Path(__file__).resolve().parents[2] / "forge" / "examples"
-SHARED_FORGE_PROFILES = {
-    "linklet": {
-        "product_id": "linklet-reference",
-        "stack_id": "go-hypermedia-sqlite",
-        "facets": {"default"},
-        "bundle_digest": "sha256:4fb3c4ca92c3b69048bd709fdc36b32b3422a73572d3d905578d56c49394095d",
-    },
-    "linklet-postgres": {
-        "product_id": "linklet-postgres-reference",
-        "stack_id": "go-hypermedia-postgres",
-        "facets": {"default"},
-        "bundle_digest": "sha256:9e685a87773d38c5b3168a025b2e034b35eed334dd68cb51fb030e2866a5d5c4",
-    },
-    "linklet-react": {
-        "product_id": "linklet-react-reference",
-        "stack_id": "go-react-postgres",
-        "facets": {"server", "web"},
-        "bundle_digest": "sha256:97b99ae12aee8b567f0ffa6bbfc7b21b2fcbf74257953125f06b70509369269e",
-    },
-}
+FORGE_COMPATIBILITY_LOCK = json.loads(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "compatibility" / "forge-products.json").read_text()
+)
+SHARED_FORGE_PROFILES = FORGE_COMPATIBILITY_LOCK["profiles"]
 
 
 def _sha(value: bytes) -> str:
@@ -334,16 +319,30 @@ class ProductOperationsTests(unittest.TestCase):
         "optional sibling Forge checkout is unavailable",
     )
     def test_shared_forge_profiles_validate_without_forge_import(self) -> None:
+        forge_root = SHARED_FORGE_ROOT.parent
+        actual_commit = subprocess.check_output(
+            ["git", "-C", str(forge_root), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+        self.assertEqual(
+            FORGE_COMPATIBILITY_LOCK["producer"]["commit"],
+            actual_commit,
+            "Forge checkout must match the explicitly reviewed compatibility commit",
+        )
         for profile, expected in SHARED_FORGE_PROFILES.items():
             with self.subTest(profile=profile):
                 bundle = load_product_operations_bundle(
                     SHARED_FORGE_ROOT / profile / ".product" / "operations"
                 )
                 self.assertEqual(expected["product_id"], bundle.product_id)
+                self.assertEqual(expected["release_id"], bundle.release_id)
                 self.assertEqual(expected["stack_id"], bundle.runtime["stack"]["id"])
                 self.assertEqual(
-                    expected["facets"],
+                    set(expected["facets"]),
                     {item["id"] for item in bundle.runtime["stack"]["facets"]},
+                )
+                self.assertEqual(
+                    expected["composition_digest"], bundle.composition_digest
                 )
                 self.assertEqual(expected["bundle_digest"], bundle.bundle_digest)
 

@@ -149,7 +149,7 @@ class CaddyManagerTests(unittest.TestCase):
         self.assertNotIn("super-secret-token", serialized)
         self.assertNotIn("/srv/private-static", serialized)
 
-    def test_reload_caddy_uses_legacy_container_only_as_fallback(self) -> None:
+    def test_reload_caddy_uses_supported_container_only_as_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ophelia_root = root / "ophelia"
@@ -166,7 +166,7 @@ class CaddyManagerTests(unittest.TestCase):
                         command,
                         runtime_root,
                         ophelia_root,
-                        {"quark-reverse-proxy-caddy-1"},
+                        {"ophelia-caddy-1"},
                     )
                 if command[:2] == ["docker", "exec"]:
                     return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -176,7 +176,7 @@ class CaddyManagerTests(unittest.TestCase):
                 report = reload_caddy(runtime_root=runtime_root, ophelia_root=ophelia_root)
 
         self.assertTrue(report["ok"])
-        self.assertEqual("quark-reverse-proxy-caddy-1", report["container"])
+        self.assertEqual("ophelia-caddy-1", report["container"])
         warning_codes = {item["code"] for item in report["warnings"]}
         self.assertIn("legacy_caddy_container_name", warning_codes)
 

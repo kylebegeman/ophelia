@@ -1,22 +1,29 @@
 # Ophelia Roadmap
 
-Status: current after the 0.4.4 patch release
+Status: current for the 0.5.x line
 
 Ophelia 0.3.0 completes the fixture-first foundation: manifest contracts,
 runtime rendering, safety-gated operations, receipts, readiness, synthetic app
 fixtures, app adoption planning, live evidence scaffolds, public governance, and
 strict release hygiene.
 
-The 0.4.x line keeps that foundation stable while tightening real operator
-workflows. Current work includes first-class static-site publishing, managed
-addon networking for per-app services, image digest locking, offsite rehearsal
-evidence, clearer critical shared Postgres cutover receipts, and version
-reporting.
+The 0.5.0 line begins the accepted platform direction with strict validation,
+secure filesystem primitives, immutable operation staging, an authoritative
+SQLite journal, recoverable execution, truthful static activation and rollback,
+and executable Forge product-operation bundles. The legacy manifest path
+remains available while additional workloads migrate onto the kernel.
 
 This roadmap replaces the older long-form implementation plans now stored in
 [Archive](archive/README.md). Use the archive for historical context only.
 Current work should be tracked here, in change records, and in the relevant
 reference doc for the feature being changed.
+
+The accepted product direction, target host-agent architecture, verified
+risk register, Lumen integration boundary, and dependency-ordered P0 through P5
+implementation plan are consolidated in
+[Platform Strategy And Technical Architecture](product/ophelia-platform-strategy.md).
+Work on `next` follows that direction. This roadmap remains the active delivery
+record as the strategy is converted into reviewed releases.
 
 ## Completed In 0.3.0
 
@@ -36,17 +43,20 @@ reference doc for the feature being changed.
 
 ## Next Practical Work
 
-These are ready to start without changing the product direction:
+These are the next dependency-ordered outcomes:
 
-1. Keep the 0.4.x line stable by fixing bugs found by fixture, docs, or audit
-   gates.
-2. Add focused examples when a new app pattern becomes part of the intended
-   Ophelia contract.
-3. Improve README and docs clarity when operators or agents hit friction.
-4. Expand tests around command envelopes, docs links, redaction, and fixture
-   readiness whenever those surfaces change.
-5. Keep private deployment material outside the repo and feed only sanitized
-   evidence into fixtures.
+1. Route the remaining service and multi-service mutation paths through the
+   journaled executor and preserve the legacy adapter only as an explicit
+   compatibility boundary.
+2. Promote the executor and recovery engine into the durable single-host
+   `opheliad` service with a Unix-socket API and reboot reconciliation.
+3. Prove encrypted backup and clean-host restore for stateful workloads, then
+   attach continuous health, disk, certificate, and recovery signals.
+4. Introduce manifest v2 for web, worker, cron, task, migration, internal, and
+   static workloads without silently reinterpreting valid v1 manifests.
+5. Implement Lumen's CLI-backed DeployProvider against versioned Ophelia JSON,
+   then replace that transport with the authenticated host agent as fleet work
+   lands.
 
 ## Adoption And Live-Values Phase
 

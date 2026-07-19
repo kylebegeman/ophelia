@@ -15,6 +15,7 @@ reference docs below.
 
 | Document | Use it for |
 | --- | --- |
+| [Platform Strategy And Technical Architecture](product/ophelia-platform-strategy.md) | Consolidated audit, product direction, target architecture, security model, implementation details, and phased roadmap. |
 | [Platform Handbook](platform-handbook.md) | Public operating model, runtime boundaries, and fixture-first workflow. |
 | [Architecture](architecture.md) | Ownership boundaries, runtime shape, deployment model, and API surfaces. |
 | [Roadmap](ROADMAP.md) | Current 0.4.x status, next tasks, and deferred decisions. |
