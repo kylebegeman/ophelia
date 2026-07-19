@@ -45,6 +45,7 @@ public launch decision is made.
 | Stateful apps | Postgres, Redis, named volumes, host-path volumes, export contracts, restore rehearsals, and backup readiness. |
 | Redirects and tunnels | Caddy-rendered redirect and tunnel routes for migration or edge compatibility. |
 | Non-live apps | Explicit lifecycle fields, fresh-install planning, safe volume reset gates, and data verifier execution. |
+| Workload manifests | Strict manifest v2 support for web, worker, cron, task, migration, internal, and static lifecycles through the journaled revision engine. |
 
 ## Why Ophelia Exists
 
@@ -88,7 +89,16 @@ python3 -m venv .venv
 ./cli/ship version --json
 ./cli/ship schema manifest --json
 ./cli/ship validate examples/service-app.ophelia.yml
+./cli/ship manifest check examples/service-app.ophelia.yml --json
 ./cli/ship render examples/service-app.ophelia.yml --output-dir ./build/demo-service
+```
+
+For a manifest v2 application, calculate a read-only revision plan and apply
+the exact reviewed plan through the operation journal:
+
+```bash
+./cli/ship manifest plan .ophelia.yml --runtime-root /var/lib/ophelia --json
+./cli/ship manifest apply <plan-id> --confirm <token> --runtime-root /var/lib/ophelia --json
 ```
 
 After editable install, the console scripts are available too:

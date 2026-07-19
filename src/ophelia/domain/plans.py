@@ -53,6 +53,7 @@ class CompensationAction(str, Enum):
 
 class AuthorizationKind(str, Enum):
     LUMEN_DECISION = "lumen_decision"
+    LOCAL_OPERATOR = "local_operator"
     LOCAL_BREAK_GLASS = "local_break_glass"
     LEGACY_CONFIRMATION_ADAPTER = "legacy_confirmation_adapter"
 

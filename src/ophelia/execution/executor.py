@@ -864,17 +864,33 @@ class JournaledExecutor:
                 "The current executor only accepts deploy.apply and rollback.apply operations."
             )
         workloads = execution_input.revision.workloads
+        manifest_v2 = execution_input.revision.renderer_version == "manifest-v2"
         if (
-            len(workloads) != 1
-            or workloads[0].workload_kind not in {WorkloadKind.STATIC, WorkloadKind.WEB}
-            or workloads[0].artifact_digest != execution_input.artifact_ref.artifact_digest
-            or execution_input.revision.artifact_digests != (execution_input.artifact_ref.artifact_digest,)
+            not manifest_v2
+            and (
+                len(workloads) != 1
+                or workloads[0].workload_kind not in {WorkloadKind.STATIC, WorkloadKind.WEB}
+                or workloads[0].artifact_digest != execution_input.artifact_ref.artifact_digest
+                or execution_input.revision.artifact_digests != (execution_input.artifact_ref.artifact_digest,)
+            )
         ):
             raise BackendContractError(
                 "The current executor requires one exact static or web workload artifact."
             )
+        if manifest_v2 and (
+            not workloads
+            or execution_input.artifact_ref.artifact_digest
+            not in execution_input.revision.artifact_digests
+            or any(
+                workload.artifact_digest not in execution_input.revision.artifact_digests
+                for workload in workloads
+            )
+        ):
+            raise BackendContractError(
+                "Manifest v2 execution requires workloads bound to exact revision artifacts."
+            )
         required_steps = dict(_SUPPORTED_STEPS)
-        if workloads[0].workload_kind is WorkloadKind.WEB:
+        if manifest_v2 or workloads[0].workload_kind is WorkloadKind.WEB:
             required_steps[PlanPhase.DRAIN_PREVIOUS] = (
                 True,
                 CompensationAction.PRESERVE_PREVIOUS,
@@ -889,12 +905,24 @@ class JournaledExecutor:
             )
         revision_digest = execution_input.revision.content_digest()
         artifact_digest = execution_input.artifact_ref.artifact_digest
-        expected_effect_digests = tuple(
-            JournaledExecutor._expected_static_effect_digest(
-                step.phase, revision_digest, artifact_digest
+        if manifest_v2:
+            expected_effect_digests = tuple(
+                canonical_digest(
+                    {
+                        "phase": step.phase.value,
+                        "revision_digest": revision_digest,
+                        "workloads": [item.to_dict() for item in workloads],
+                    }
+                )
+                for step in execution_input.plan.steps
             )
-            for step in execution_input.plan.steps
-        )
+        else:
+            expected_effect_digests = tuple(
+                JournaledExecutor._expected_static_effect_digest(
+                    step.phase, revision_digest, artifact_digest
+                )
+                for step in execution_input.plan.steps
+            )
         if tuple(
             step.desired_effect_digest for step in execution_input.plan.steps
         ) != expected_effect_digests:

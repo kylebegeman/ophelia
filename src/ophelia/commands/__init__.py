@@ -21,6 +21,7 @@ from .list_apps import register as register_list
 from .live_drills import register as register_live_drills
 from .live_hydration import register as register_live_hydration
 from .live_readiness import register as register_live_readiness
+from .manifest import register as register_manifest
 from .lumen import register as register_lumen
 from .notes import register as register_notes
 from .observability import register as register_observability
@@ -52,6 +53,7 @@ from .workflows import register as register_workflows
 
 
 def register_commands(subparsers):
+    register_manifest(subparsers)
     register_bootstrap_host(subparsers)
     register_apps(subparsers)
     register_app(subparsers)

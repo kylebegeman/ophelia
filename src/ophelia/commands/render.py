@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 
 from ..manifest import ManifestError, load_manifest
+from ..manifest_v2 import ManifestV2Error, load_manifest_v2
+from ..manifest_v2_renderer import render_revision_bundle
 from ..runtime import render_bundle, write_bundle
 from ._output import print_error
 
@@ -21,13 +23,21 @@ def register(subparsers: _SubParsersAction) -> None:
 
 def run(args: Namespace) -> int:
     try:
-        manifest = load_manifest(args.manifest)
-    except ManifestError as exc:
+        import yaml
+
+        raw = yaml.safe_load(args.manifest.read_text(encoding="utf-8"))
+        is_v2 = isinstance(raw, dict) and raw.get("version") == 2
+        manifest = load_manifest_v2(args.manifest) if is_v2 else load_manifest(args.manifest)
+    except (ManifestError, ManifestV2Error, OSError, ValueError) as exc:
         print_error(f"Manifest invalid: {exc}", "manifest_invalid", json_output=args.json)
         return 1
 
     output_dir = args.output_dir or (Path.cwd() / "build" / manifest.app)
-    bundle = render_bundle(manifest)
+    if is_v2:
+        revision = manifest.to_revision(created_at="1970-01-01T00:00:00Z")
+        bundle = render_revision_bundle(manifest, revision)
+    else:
+        bundle = render_bundle(manifest)
     write_bundle(bundle, output_dir)
 
     if args.json:

@@ -2,6 +2,106 @@
 
 Each app repo should eventually include an `.ophelia.yml` file.
 
+## Version 2 Workload Manifests
+
+Manifest v2 is the strict, journaled runtime contract for new applications.
+It models independent workload lifecycles rather than treating one Compose
+project as one indivisible service. Version 1 remains available as an explicit
+compatibility contract and is never silently reinterpreted as v2.
+
+Use the versioned commands for new manifests:
+
+```bash
+ship manifest check .ophelia.yml --json
+ship manifest plan .ophelia.yml --runtime-root /var/lib/ophelia --json
+ship manifest apply <plan-id> --confirm <token> --runtime-root /var/lib/ophelia --json
+```
+
+Generate a reviewed v2 candidate from a supported v1 service or static
+manifest without changing the source file:
+
+```bash
+ship manifest migrate .ophelia.yml --to 2 --output .ophelia.v2.yml
+```
+
+Version 2 requires:
+
+- an explicit `environment`
+- named, digest-pinned production image artifacts or contained static roots
+- one or more named workloads
+- routes that target only `web` or `static` workloads
+- an explicit or safely inferred `recreate`, `blue_green`, or `static_atomic`
+  update strategy
+- opaque `secret://` references, never secret values
+- strict known fields at every level
+
+Supported workload kinds are `web`, `worker`, `cron`, `task`, `migration`,
+`internal`, and `static`. Web candidates can overlap for readiness checks.
+Workers default to a fenced, non-overlapping handoff. Cron schedules are
+fenced singletons. Tasks run only through separately accepted operations.
+Migrations run exactly once per revision and retain container and marker
+evidence for restart recovery. Blue-green migrations must be backward
+compatible. Any migration that requires a backup remains blocked until the
+plan can bind current backup evidence.
+
+The v2 renderer creates a unique Compose project for each revision, a stable
+per-app network, revision-specific edge aliases, strict resource and container
+security defaults, a secret-reference document, an exact artifact lock, and a
+revision-specific Caddy candidate. Planning writes only to operation staging
+and the append-only plan index. Apply requires the exact plan-bound local
+approval or a separately verified Lumen Decision claim, then runs through the
+authoritative operation journal and receipt pipeline.
+
+Manifest-relative env files and static artifact trees are copied into private
+operation staging during planning. Their exact paths and bytes are bound into
+the reviewed plan. Apply rejects missing, added, or changed staged input before
+journaling an operation. Published static artifacts live under a
+revision-specific runtime directory, and Caddy switches to that immutable tree.
+
+Example:
+
+```yaml
+version: 2
+app: demo-service
+environment: production
+
+artifacts:
+  app-image:
+    image: ghcr.io/example/demo-service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+workloads:
+  web:
+    kind: web
+    artifact: app-image
+    command: ["./bin/server"]
+    port: 8080
+    readiness:
+      http: {path: /ready, port: 8080}
+      timeout_seconds: 90
+    resources: {memory: 512Mi, cpu: "1.0", pids: 256}
+  jobs:
+    kind: worker
+    artifact: app-image
+    command: ["./bin/worker"]
+    update: {overlap: forbid}
+
+routes:
+  - name: public
+    domain: demo-service.example.com
+    target: {workload: web, port: 8080}
+
+update:
+  strategy: blue_green
+  auto_rollback: true
+  drain_seconds: 30
+
+secrets:
+  - name: DATABASE_URL
+    ref: secret://demo-service/production/database-url
+```
+
+The remaining sections document manifest v1 compatibility behavior.
+
 ## Top-level Fields
 
 - `version`: integer manifest version

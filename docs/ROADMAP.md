@@ -45,18 +45,22 @@ record as the strategy is converted into reviewed releases.
 
 These are the next dependency-ordered outcomes:
 
-1. Route the remaining service and multi-service mutation paths through the
-   journaled executor and preserve the legacy adapter only as an explicit
-   compatibility boundary.
-2. Promote the executor and recovery engine into the durable single-host
+1. Promote the executor and recovery engine into the durable single-host
    `opheliad` service with a Unix-socket API and reboot reconciliation.
-3. Prove encrypted backup and clean-host restore for stateful workloads, then
+2. Prove encrypted backup and clean-host restore for stateful workloads, then
    attach continuous health, disk, certificate, and recovery signals.
-4. Introduce manifest v2 for web, worker, cron, task, migration, internal, and
-   static workloads without silently reinterpreting valid v1 manifests.
-5. Implement Lumen's CLI-backed DeployProvider against versioned Ophelia JSON,
+3. Add authenticated outbound host-agent transport, replayable event cursors,
+   enrollment, maintenance, drain, and staged upgrades.
+4. Implement Lumen's DeployProvider against versioned Ophelia operations,
    then replace that transport with the authenticated host agent as fleet work
    lands.
+
+Manifest v2 and its journaled Compose revision backend are implemented on
+`next`. Valid v1 manifests remain an explicit compatibility boundary. V2 adds
+strict workload contracts, immutable revision projects, web overlap,
+non-overlapping worker and internal handoff, cron fencing metadata,
+operation-scoped migrations, transactional Caddy activation, exact local
+approval binding, and terminal kernel receipts.
 
 ## Adoption And Live-Values Phase
 

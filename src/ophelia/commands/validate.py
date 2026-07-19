@@ -3,6 +3,7 @@ from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 from ..manifest import ManifestError, load_manifest
+from ..manifest_v2 import ManifestV2Error, load_manifest_v2
 from ..operation_schema import error_envelope
 from ..verify import verification_checks
 
@@ -16,8 +17,47 @@ def register(subparsers: _SubParsersAction) -> None:
 
 def run(args: Namespace) -> int:
     try:
+        import yaml
+
+        raw = yaml.safe_load(args.manifest.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and raw.get("version") == 2:
+            manifest_v2 = load_manifest_v2(args.manifest)
+            report = {
+                "ok": True,
+                "app": manifest_v2.app,
+                "kind": "workloads",
+                "environment": manifest_v2.environment,
+                "profile": None,
+                "routes": len(manifest_v2.routes),
+                "services": [item.name for item in manifest_v2.workloads],
+                "workloads": [
+                    {"name": item.name, "kind": item.kind.value}
+                    for item in manifest_v2.workloads
+                ],
+                "migrations": [item.name for item in manifest_v2.migrations],
+                "addons": {"postgres": False, "redis": False},
+                "verification_checks": sum(
+                    1
+                    for item in manifest_v2.workloads
+                    if item.readiness is not None
+                ),
+                "explicit_verification_checks": sum(
+                    1
+                    for item in manifest_v2.workloads
+                    if item.readiness is not None
+                ),
+                "manifest_version": 2,
+                "manifest_digest": manifest_v2.canonical_digest(),
+            }
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print(f"Manifest valid: {manifest_v2.app}")
+                print("  version: 2")
+                print("  workloads: " + ", ".join(item.name for item in manifest_v2.workloads))
+            return 0
         manifest = load_manifest(args.manifest)
-    except ManifestError as exc:
+    except (ManifestError, ManifestV2Error, OSError, ValueError) as exc:
         if getattr(args, "json", False):
             print(
                 json.dumps(
