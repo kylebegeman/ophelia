@@ -47,15 +47,22 @@ These are the next dependency-ordered outcomes:
 
 1. Prove encrypted backup and clean-host restore for stateful workloads, then
    attach continuous health, disk, certificate, and recovery signals.
-2. Add authenticated outbound host-agent transport, replayable event cursors,
-   enrollment, maintenance, drain, and staged upgrades.
-3. Implement Lumen's DeployProvider against versioned Ophelia operations,
-   then replace that transport with the authenticated host agent as fleet work
-   lands.
+2. Implement Lumen's certificate authority, host exchange, signed command
+   queue, acknowledgement projection, and DeployProvider against the completed
+   Ophelia host-agent protocol.
+3. Prove enrollment, revocation, disconnect replay, certificate rotation, and
+   rollback-protected upgrades on disposable Linux hosts before production
+   enrollment.
 
 The durable `opheliad` single-host authority, Unix-socket API, reboot recovery,
 cron and task runner, global host event cursor, systemd service, and installer
 are implemented on `next` for the next pre-release line.
+
+The outbound host-agent client is also implemented on `next`: confirmation-bound
+enrollment, mutual TLS, signed and scoped command envelopes, strict sequence
+replay, independent event and result acknowledgement, Decision-bound deploys,
+certificate rotation, revocation posture, and staged self-upgrade with startup
+rollback. The matching Lumen server authority is the next integration boundary.
 
 Manifest v2 and its journaled Compose revision backend are implemented on
 `next`. Valid v1 manifests remain an explicit compatibility boundary. V2 adds

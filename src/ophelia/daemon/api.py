@@ -9,6 +9,7 @@ import socket
 import socketserver
 import stat
 import struct
+import threading
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -19,6 +20,7 @@ from ..execution import IdempotencyConflict, OperationConflict
 from .config import PROTOCOL_VERSION
 from .service import OpheliaDaemon
 from .systemd import notify_systemd
+from .upgrades import confirm_running_upgrade
 
 
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
@@ -31,12 +33,25 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer)
     request_queue_size = 64
 
 
-def serve_unix(daemon: OpheliaDaemon) -> None:
+def serve_unix(daemon: OpheliaDaemon) -> bool:
     server = create_unix_server(daemon)
     path = daemon.config.socket_path
     daemon.start()
+    restart_watcher = threading.Thread(
+        target=_shutdown_for_restart,
+        args=(daemon, server),
+        name="restart-watcher",
+        daemon=True,
+    )
+    restart_watcher.start()
     try:
         notify_systemd("READY=1\nSTATUS=Ophelia host authority is ready")
+        threading.Thread(
+            target=_confirm_upgrade_after_grace,
+            args=(daemon,),
+            name="upgrade-confirmation",
+            daemon=True,
+        ).start()
         server.serve_forever(poll_interval=0.25)
     finally:
         try:
@@ -46,6 +61,25 @@ def serve_unix(daemon: OpheliaDaemon) -> None:
             daemon.stop()
             if path.exists() and stat.S_ISSOCK(path.lstat().st_mode):
                 path.unlink()
+    return daemon.restart_requested.is_set()
+
+
+def _shutdown_for_restart(daemon: OpheliaDaemon, server: UnixHTTPServer) -> None:
+    daemon.restart_requested.wait()
+    if daemon.restart_requested.is_set():
+        server.shutdown()
+
+
+def _confirm_upgrade_after_grace(daemon: OpheliaDaemon) -> None:
+    marker = daemon.config.install_root / "upgrade-pending.json"
+    if marker.is_symlink() or not marker.is_file():
+        return
+    if daemon._stop.wait(10.0):
+        return
+    try:
+        confirm_running_upgrade(daemon.config)
+    except Exception as exc:
+        daemon._record_error("upgrade", exc)
 
 
 def create_unix_server(daemon: OpheliaDaemon) -> UnixHTTPServer:

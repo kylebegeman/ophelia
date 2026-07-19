@@ -26,6 +26,7 @@ def daemon_install_plan(
     install_root: Path = Path("/opt/ophelia"),
     config_path: Path = Path("/etc/ophelia/agent.toml"),
     unit_path: Path = Path("/etc/systemd/system/opheliad.service"),
+    launcher_path: Path = Path("/usr/local/libexec/opheliad-launcher"),
 ) -> Dict[str, Any]:
     source_root = Path(source_root).expanduser().resolve(strict=True)
     if not (source_root / "pyproject.toml").is_file():
@@ -37,16 +38,18 @@ def daemon_install_plan(
         "source_digest": source_digest,
         "unit_digest": _file_digest(unit_path),
         "config_digest": _file_digest(config_path),
+        "launcher_digest": _file_digest(launcher_path),
         "release_present": release_present,
         "release_valid": release_present
         and _release_valid(release_root, source_digest=source_digest),
         "python3": shutil.which("python3"),
         "systemctl": shutil.which("systemctl"),
         "docker": shutil.which("docker"),
+        "openssl": shutil.which("openssl"),
     }
     blockers = [
         name + "_missing"
-        for name in ("python3", "systemctl", "docker")
+        for name in ("python3", "systemctl", "docker", "openssl")
         if observations[name] is None
     ]
     exact = {
@@ -58,12 +61,14 @@ def daemon_install_plan(
         "release_root": str(release_root),
         "config_path": str(Path(config_path)),
         "unit_path": str(Path(unit_path)),
+        "launcher_path": str(Path(launcher_path)),
         "observations": observations,
         "steps": [
             "create-system-identity",
             "install-versioned-venv",
             "write-strict-config",
             "write-hardened-systemd-unit",
+            "write-stable-upgrade-launcher",
             "promote-current-release",
             "enable-and-health-check-service",
         ],
@@ -96,6 +101,7 @@ def apply_daemon_install(
         install_root=Path(plan["install_root"]),
         config_path=Path(plan["config_path"]),
         unit_path=Path(plan["unit_path"]),
+        launcher_path=Path(plan["launcher_path"]),
     )
     if refreshed["confirmation_token"] != confirmation:
         raise DaemonInstallError("Host state changed after the daemon install plan.")
@@ -122,8 +128,21 @@ def apply_daemon_install(
     unit_text = resources.files("ophelia.resources").joinpath(
         "systemd/opheliad.service"
     ).read_text(encoding="utf-8")
+    unit_text = unit_text.replace("/opt/ophelia", plan["install_root"]).replace(
+        "/etc/ophelia/agent.toml", plan["config_path"]
+    ).replace("/usr/local/libexec/opheliad-launcher", plan["launcher_path"])
     _secure_write(unit_path, unit_text.encode("utf-8"), mode=0o644)
+    launcher_text = resources.files("ophelia.resources").joinpath(
+        "systemd/opheliad-launcher.py"
+    ).read_text(encoding="utf-8")
+    _secure_write(
+        Path(plan["launcher_path"]), launcher_text.encode("utf-8"), mode=0o755
+    )
     _promote_release(Path(plan["install_root"]), release_root)
+    command.run(
+        ["chown", "-R", "ophelia:ophelia", plan["install_root"]],
+        timeout_seconds=120,
+    )
     command.run(["systemctl", "daemon-reload"], timeout_seconds=60)
     command.run(["systemctl", "enable", "--now", "opheliad.service"], timeout_seconds=120)
     command.run(["systemctl", "is-active", "--quiet", "opheliad.service"], timeout_seconds=60)
@@ -134,6 +153,7 @@ def apply_daemon_install(
         "version": plan["version"],
         "release_root": plan["release_root"],
         "unit_digest": _file_digest(unit_path),
+        "launcher_digest": _file_digest(Path(plan["launcher_path"])),
         "config_digest": _file_digest(config_path),
     }
 
@@ -245,6 +265,7 @@ def _ensure_identity(runner: SubprocessRunner) -> None:
 def _default_config() -> str:
     return """runtime_root = "/var/lib/ophelia"
 socket_path = "/run/ophelia/opheliad.sock"
+install_root = "/opt/ophelia"
 allowed_uids = [0]
 allowed_manifest_roots = ["/srv"]
 max_request_bytes = 1048576
@@ -256,6 +277,11 @@ scheduler_seconds = 15
 require_edge_runtime = true
 local_planning_enabled = true
 local_apply_enabled = true
+agent_enabled = false
+agent_poll_seconds = 5
+agent_exchange_bytes = 8388608
+agent_event_batch = 250
+agent_command_batch = 100
 """
 
 

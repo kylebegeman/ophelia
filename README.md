@@ -103,8 +103,11 @@ sudo ship manifest apply <plan-id> --confirm <token> --json
 
 The daemon journals acceptance before returning, executes asynchronously,
 recovers after restart, runs active-revision cron and task workloads, and
-exposes replayable host events. See the [Ophelia Host Daemon](docs/daemon.md)
-for installation, configuration, API, and direct recovery procedures.
+exposes replayable host events. Its optional outbound agent adds mutual-TLS
+enrollment, signed scoped Lumen commands, disconnected event and result replay,
+certificate rotation, and rollback-protected staged upgrades without opening a
+public host port. See the [Ophelia Host Daemon](docs/daemon.md) for installation,
+configuration, enrollment, API, and direct recovery procedures.
 
 After editable install, the console scripts are available too:
 

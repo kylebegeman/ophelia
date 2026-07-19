@@ -9,6 +9,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
+from urllib.parse import urlparse
 
 from ..execution.legacy_adapter import local_host_id
 
@@ -17,6 +18,7 @@ PROTOCOL_VERSION = 1
 DEFAULT_CONFIG_PATH = Path("/etc/ophelia/agent.toml")
 DEFAULT_RUNTIME_ROOT = Path("/var/lib/ophelia")
 DEFAULT_SOCKET_PATH = Path("/run/ophelia/opheliad.sock")
+DEFAULT_INSTALL_ROOT = Path("/opt/ophelia")
 
 
 class DaemonConfigError(ValueError):
@@ -30,6 +32,7 @@ class DaemonConfig:
     socket_path: Path
     allowed_uids: Tuple[int, ...]
     allowed_manifest_roots: Tuple[Path, ...]
+    install_root: Path = DEFAULT_INSTALL_ROOT
     max_request_bytes: int = 1024 * 1024
     max_workers: int = 4
     operation_poll_seconds: float = 0.5
@@ -39,12 +42,23 @@ class DaemonConfig:
     require_edge_runtime: bool = True
     local_planning_enabled: bool = True
     local_apply_enabled: bool = True
+    agent_enabled: bool = False
+    control_plane_url: Optional[str] = None
+    control_plane_ca_path: Optional[Path] = None
+    host_certificate_path: Optional[Path] = None
+    host_private_key_path: Optional[Path] = None
+    decision_public_key_path: Optional[Path] = None
+    agent_poll_seconds: float = 5.0
+    agent_exchange_bytes: int = 8 * 1024 * 1024
+    agent_event_batch: int = 250
+    agent_command_batch: int = 100
 
     def redacted_dict(self) -> dict[str, Any]:
         return {
             "host_id": self.host_id,
             "runtime_root": str(self.runtime_root),
             "socket_path": str(self.socket_path),
+            "install_root": str(self.install_root),
             "allowed_uids": list(self.allowed_uids),
             "allowed_manifest_roots": [str(path) for path in self.allowed_manifest_roots],
             "max_request_bytes": self.max_request_bytes,
@@ -56,6 +70,16 @@ class DaemonConfig:
             "require_edge_runtime": self.require_edge_runtime,
             "local_planning_enabled": self.local_planning_enabled,
             "local_apply_enabled": self.local_apply_enabled,
+            "agent_enabled": self.agent_enabled,
+            "control_plane_url": self.control_plane_url,
+            "control_plane_ca_path": _path_or_none(self.control_plane_ca_path),
+            "host_certificate_path": _path_or_none(self.host_certificate_path),
+            "host_private_key_path": _path_or_none(self.host_private_key_path),
+            "decision_public_key_path": _path_or_none(self.decision_public_key_path),
+            "agent_poll_seconds": self.agent_poll_seconds,
+            "agent_exchange_bytes": self.agent_exchange_bytes,
+            "agent_event_batch": self.agent_event_batch,
+            "agent_command_batch": self.agent_command_batch,
         }
 
 
@@ -63,6 +87,7 @@ _KEYS = {
     "host_id",
     "runtime_root",
     "socket_path",
+    "install_root",
     "allowed_uids",
     "allowed_manifest_roots",
     "max_request_bytes",
@@ -74,6 +99,16 @@ _KEYS = {
     "require_edge_runtime",
     "local_planning_enabled",
     "local_apply_enabled",
+    "agent_enabled",
+    "control_plane_url",
+    "control_plane_ca_path",
+    "host_certificate_path",
+    "host_private_key_path",
+    "decision_public_key_path",
+    "agent_poll_seconds",
+    "agent_exchange_bytes",
+    "agent_event_batch",
+    "agent_command_batch",
 }
 
 
@@ -131,12 +166,65 @@ def load_daemon_config(
     host_id = raw.get("host_id", local_host_id())
     if not isinstance(host_id, str) or not host_id.startswith("host_") or len(host_id) > 255:
         raise DaemonConfigError("host_id must be a bounded Ophelia host identifier.")
+    agent_enabled = _boolean(raw.get("agent_enabled", False), "agent_enabled")
+    control_plane_url = _optional_https_url(raw.get("control_plane_url"))
+    ca_path = _optional_credential_path(raw.get("control_plane_ca_path"), "control_plane_ca_path")
+    certificate_path = _optional_credential_path(
+        raw.get("host_certificate_path"), "host_certificate_path"
+    )
+    private_key_path = _optional_credential_path(
+        raw.get("host_private_key_path"),
+        "host_private_key_path",
+        private=True,
+    )
+    decision_key_path = _optional_credential_path(
+        raw.get("decision_public_key_path"), "decision_public_key_path"
+    )
+    if agent_enabled and any(
+        value is None
+        for value in (
+            control_plane_url,
+            ca_path,
+            certificate_path,
+            private_key_path,
+            decision_key_path,
+        )
+    ):
+        raise DaemonConfigError(
+            "Enabled outbound agent requires its URL, CA, host certificate, private key, and decision key."
+        )
+    if agent_enabled:
+        assert ca_path is not None
+        assert certificate_path is not None
+        assert private_key_path is not None
+        assert decision_key_path is not None
+        identity_root = certificate_path.parent
+        if private_key_path.parent != identity_root:
+            raise DaemonConfigError(
+                "Host certificate and private key must share one identity directory."
+            )
+        trust_roots = (ca_path.parent, decision_key_path.parent)
+        if any(
+            trust_root == identity_root
+            or trust_root in identity_root.parents
+            or identity_root in trust_root.parents
+            for trust_root in trust_roots
+        ):
+            raise DaemonConfigError(
+                "Control-plane trust keys must be separate from writable host identity."
+            )
+        _validate_credential_directory(identity_root, "host identity")
+        _validate_credential_directory(ca_path.parent, "control-plane trust")
+        _validate_credential_directory(decision_key_path.parent, "decision trust")
     return DaemonConfig(
         host_id=host_id,
         runtime_root=effective_runtime,
         socket_path=effective_socket,
         allowed_uids=allowed_uids,
         allowed_manifest_roots=manifest_roots,
+        install_root=_directory_path(
+            raw.get("install_root", DEFAULT_INSTALL_ROOT), "install_root"
+        ),
         max_request_bytes=_bounded_int(
             raw.get("max_request_bytes", 1024 * 1024),
             "max_request_bytes",
@@ -170,7 +258,80 @@ def load_daemon_config(
         local_apply_enabled=_boolean(
             raw.get("local_apply_enabled", True), "local_apply_enabled"
         ),
+        agent_enabled=agent_enabled,
+        control_plane_url=control_plane_url,
+        control_plane_ca_path=ca_path,
+        host_certificate_path=certificate_path,
+        host_private_key_path=private_key_path,
+        decision_public_key_path=decision_key_path,
+        agent_poll_seconds=_bounded_number(
+            raw.get("agent_poll_seconds", 5), "agent_poll_seconds", 0.25, 300
+        ),
+        agent_exchange_bytes=_bounded_int(
+            raw.get("agent_exchange_bytes", 8 * 1024 * 1024),
+            "agent_exchange_bytes",
+            minimum=64 * 1024,
+            maximum=64 * 1024 * 1024,
+        ),
+        agent_event_batch=_bounded_int(
+            raw.get("agent_event_batch", 250),
+            "agent_event_batch",
+            minimum=1,
+            maximum=1000,
+        ),
+        agent_command_batch=_bounded_int(
+            raw.get("agent_command_batch", 100),
+            "agent_command_batch",
+            minimum=1,
+            maximum=1000,
+        ),
     )
+
+
+def _path_or_none(value: Optional[Path]) -> Optional[str]:
+    return None if value is None else str(value)
+
+
+def _optional_https_url(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 2048:
+        raise DaemonConfigError("control_plane_url must be a bounded HTTPS URL.")
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise DaemonConfigError(
+            "control_plane_url must be HTTPS without credentials, query, or fragment."
+        )
+    return value.rstrip("/")
+
+
+def _optional_credential_path(
+    value: object,
+    field: str,
+    *,
+    private: bool = False,
+) -> Optional[Path]:
+    if value is None:
+        return None
+    requested = _absolute_path(value, field)
+    if requested.is_symlink() or not requested.is_file():
+        raise DaemonConfigError("%s must be a trusted regular file." % field)
+    path = requested.resolve(strict=True)
+    metadata = path.stat()
+    if metadata.st_uid not in {0, os.geteuid()}:
+        raise DaemonConfigError("%s has an untrusted owner." % field)
+    if private and stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise DaemonConfigError("%s must use mode 0600 or stricter." % field)
+    if not private and stat.S_IMODE(metadata.st_mode) & 0o022:
+        raise DaemonConfigError("%s may not be group- or world-writable." % field)
+    return path
 
 
 def _validate_config_file(path: Path) -> None:
@@ -181,6 +342,13 @@ def _validate_config_file(path: Path) -> None:
         raise DaemonConfigError("Daemon configuration must be owned by root or the Ophelia UID.")
     if stat.S_IMODE(metadata.st_mode) & 0o022:
         raise DaemonConfigError("Daemon configuration may not be group- or world-writable.")
+
+
+def _validate_credential_directory(path: Path, label: str) -> None:
+    if path.is_symlink() or not path.is_dir():
+        raise DaemonConfigError("%s directory is unavailable or unsafe." % label)
+    if stat.S_IMODE(path.stat().st_mode) & 0o022:
+        raise DaemonConfigError("%s directory may not be group- or world-writable." % label)
 
 
 def _absolute_path(value: object, field: str) -> Path:

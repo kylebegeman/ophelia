@@ -37,8 +37,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
-    serve_unix(OpheliaDaemon(config))
-    return 0
+    restart_requested = serve_unix(OpheliaDaemon(config))
+    return 75 if restart_requested else 0
 
 
 if __name__ == "__main__":

@@ -16,20 +16,25 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..cron import cron_matches
-from ..domain import Actor
+from ..domain import Actor, ApprovedPlanRef
 from ..execution import OperationConflict, SQLiteOperationJournal
 from ..manifest_v2_execution import (
     apply_manifest_v2_plan,
     describe_manifest_v2_plan,
+    load_manifest_v2_plan,
     local_approval_key,
     manifest_v2_executor,
     plan_manifest_v2,
+    submit_manifest_v2_plan,
 )
 from ..manifest_v2 import load_manifest_v2
 from ..manifest_v2_sources import manifest_v2_request_digest
 from ..version import package_version
 from ..validation import CanonicalValidationError, parse_environment, parse_identifier
 from .config import DaemonConfig, PROTOCOL_VERSION
+from .agent import OutboundHostAgent
+from .agent_transport import HTTPSAgentTransport
+from .identity import identity_status
 from .store import DaemonStore
 from .systemd import notify_systemd
 from .workloads import WorkloadExecutionError, WorkloadRunManager
@@ -56,11 +61,15 @@ class OpheliaDaemon:
         )
         self.owner_id = "opheliad-%d-%s" % (os.getpid(), uuid.uuid4().hex[:12])
         self._stop = threading.Event()
+        self.restart_requested = threading.Event()
         self._threads: list[threading.Thread] = []
         self._last_scheduled_minute: Optional[str] = None
         self._last_integrity_check = 0.0
         self._health_lock = threading.Lock()
         self._loop_errors: Dict[str, Dict[str, str]] = {}
+        self.agent: Optional[OutboundHostAgent] = None
+        if config.agent_enabled:
+            self.agent = OutboundHostAgent(self, HTTPSAgentTransport(config))
 
     def capabilities(self) -> Dict[str, Any]:
         return {
@@ -85,6 +94,8 @@ class OpheliaDaemon:
                 "workload.cancel",
                 "host.drain",
                 "host.maintenance",
+                "host.certificate.rotate",
+                "host.upgrade",
                 "events.read",
                 "events.acknowledge",
             ],
@@ -93,8 +104,8 @@ class OpheliaDaemon:
                 "revision_isolation": True,
                 "cron_scheduler": True,
                 "task_execution": True,
-                "outbound_agent": False,
-                "self_upgrade": False,
+                "outbound_agent": self.config.agent_enabled,
+                "self_upgrade": True,
             },
             "runtime": {
                 "os": platform.system().lower(),
@@ -104,16 +115,18 @@ class OpheliaDaemon:
             },
             "limits": {
                 "max_request_bytes": self.config.max_request_bytes,
+                "agent_exchange_bytes": self.config.agent_exchange_bytes,
                 "max_workers": self.config.max_workers,
                 "event_batch": 1000,
             },
             "agent_version": package_version(),
+            "identity": identity_status(self.config),
         }
 
     def health(self) -> Dict[str, Any]:
         with self._health_lock:
             errors = dict(self._loop_errors)
-        return {
+        result = {
             "status": "degraded" if errors else "ready",
             "host_id": self.config.host_id,
             "owner_id": self.owner_id,
@@ -122,6 +135,15 @@ class OpheliaDaemon:
             },
             "loop_errors": errors,
         }
+        if self.agent is not None:
+            result["agent"] = self.agent.store.state(self.config.host_id)
+        result["restart_requested"] = self.restart_requested.is_set()
+        return result
+
+    def request_restart(self) -> None:
+        """Request a clean process exit so systemd can reload staged identity or code."""
+
+        self.restart_requested.set()
 
     def start(self) -> None:
         self.store.register_host(
@@ -140,6 +162,8 @@ class OpheliaDaemon:
             self._spawn("workload-%d" % index, self._workload_loop)
         self._spawn("scheduler", self._scheduler_loop)
         self._spawn("reconciler", self._reconciliation_loop)
+        if self.agent is not None:
+            self._spawn("agent", self._agent_loop)
 
     def stop(self, *, timeout_seconds: float = 10.0) -> None:
         self._stop.set()
@@ -158,6 +182,32 @@ class OpheliaDaemon:
         if not self.config.local_planning_enabled:
             raise PermissionError("Local manifest planning is disabled by host policy.")
         exact = self._allowed_manifest_path(manifest_path)
+        return self._plan_exact(exact, actor=actor, idempotency_key=idempotency_key)
+
+    def plan_agent_manifest(
+        self,
+        manifest_path: Path,
+        *,
+        actor: Actor,
+        idempotency_key: str,
+    ) -> Dict[str, Any]:
+        exact = Path(manifest_path).resolve(strict=True)
+        inbox = (self.config.runtime_root / "inbox").resolve(strict=True)
+        try:
+            exact.relative_to(inbox)
+        except ValueError as exc:
+            raise PermissionError("Agent manifest is outside the trusted inbox.") from exc
+        if exact.is_symlink() or not exact.is_file():
+            raise PermissionError("Agent manifest must be a trusted regular file.")
+        return self._plan_exact(exact, actor=actor, idempotency_key=idempotency_key)
+
+    def _plan_exact(
+        self,
+        exact: Path,
+        *,
+        actor: Actor,
+        idempotency_key: str,
+    ) -> Dict[str, Any]:
         manifest = load_manifest_v2(exact)
         request_digest = manifest_v2_request_digest(manifest, exact)
         key = local_approval_key(self.config.runtime_root, create=True)
@@ -189,6 +239,27 @@ class OpheliaDaemon:
                 self.config.runtime_root, selected, approval_key=key
             )
         return report
+
+    def submit_approved_operation(
+        self,
+        plan_id: str,
+        *,
+        actor: Actor,
+        approval: ApprovedPlanRef,
+    ) -> Dict[str, Any]:
+        host = self.store.host(self.config.host_id)
+        if host["maintenance_mode"] or host["drained"]:
+            raise OperationConflict("Host policy is not accepting new operations.")
+        loaded = load_manifest_v2_plan(self.config.runtime_root, plan_id)
+        return submit_manifest_v2_plan(
+            loaded,
+            actor=actor,
+            approval=approval,
+            runtime_root=self.config.runtime_root,
+            require_edge_runtime=self.config.require_edge_runtime,
+            owner_id=self.owner_id,
+            execute=False,
+        )
 
     def submit_operation(
         self,
@@ -389,6 +460,19 @@ class OpheliaDaemon:
             except Exception as exc:
                 self._record_error("reconciler", exc)
             self._stop.wait(self.config.reconciliation_seconds)
+
+    def _agent_loop(self) -> None:
+        if self.agent is None:
+            return
+        delay = self.config.agent_poll_seconds
+        while not self._stop.is_set():
+            try:
+                delay = self.agent.run_once()
+                self._clear_error("agent")
+            except Exception as exc:
+                self._record_error("agent", exc)
+                delay = min(300.0, max(self.config.agent_poll_seconds, delay * 2))
+            self._stop.wait(delay)
 
     def _allowed_manifest_path(self, value: Path) -> Path:
         requested = Path(value).expanduser().absolute()

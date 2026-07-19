@@ -9,6 +9,8 @@ from ..config import REPO_ROOT
 from ..daemon.client import DaemonClient, DaemonClientError
 from ..daemon.config import DEFAULT_SOCKET_PATH
 from ..daemon.install import apply_daemon_install, daemon_install_plan
+from ..daemon.enrollment import apply_enrollment, enrollment_plan
+from ..execution.legacy_adapter import local_host_id
 from ._output import print_error, print_json
 
 
@@ -55,10 +57,37 @@ def register(subparsers: _SubParsersAction) -> None:
     install.add_argument(
         "--unit-path", type=Path, default=Path("/etc/systemd/system/opheliad.service")
     )
+    install.add_argument(
+        "--launcher-path",
+        type=Path,
+        default=Path("/usr/local/libexec/opheliad-launcher"),
+    )
     install.add_argument("--apply", action="store_true")
     install.add_argument("--confirm")
     install.add_argument("--json", action="store_true")
     install.set_defaults(handler=run_install)
+
+    enroll = commands.add_parser("enroll")
+    enroll_commands = enroll.add_subparsers(dest="enroll_command", required=True)
+    for name in ("plan", "apply"):
+        command = enroll_commands.add_parser(name)
+        command.add_argument("--host-id", default=local_host_id())
+        command.add_argument("--control-plane", required=True)
+        command.add_argument("--token-file", type=Path, required=True)
+        command.add_argument(
+            "--trust-root", type=Path, default=Path("/etc/ophelia/trust")
+        )
+        command.add_argument(
+            "--identity-root", type=Path, default=Path("/var/lib/ophelia/identity")
+        )
+        command.add_argument(
+            "--config-path", type=Path, default=Path("/etc/ophelia/agent.toml")
+        )
+        command.add_argument("--bootstrap-ca", type=Path)
+        command.add_argument("--json", action="store_true")
+        if name == "apply":
+            command.add_argument("--confirm", required=True)
+        command.set_defaults(handler=run_enroll)
 
 
 def run_read(args: Namespace) -> int:
@@ -114,6 +143,7 @@ def run_install(args: Namespace) -> int:
             install_root=args.install_root,
             config_path=args.config_path,
             unit_path=args.unit_path,
+            launcher_path=args.launcher_path,
         )
         if args.apply:
             if not args.confirm:
@@ -123,6 +153,29 @@ def run_install(args: Namespace) -> int:
             report = plan
     except (OSError, RuntimeError, ValueError) as exc:
         print_error(str(exc), "daemon_install_failed", json_output=args.json)
+        return 1
+    _print(report, args.json)
+    return 0 if report.get("can_apply", True) else 2
+
+
+def run_enroll(args: Namespace) -> int:
+    try:
+        plan = enrollment_plan(
+            host_id=args.host_id,
+            control_plane_url=args.control_plane,
+            token_file=args.token_file,
+            trust_root=args.trust_root,
+            identity_root=args.identity_root,
+            config_path=args.config_path,
+            bootstrap_ca_path=args.bootstrap_ca,
+        )
+        report = (
+            apply_enrollment(plan, args.confirm)
+            if args.enroll_command == "apply"
+            else plan
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print_error(str(exc), "daemon_enrollment_failed", json_output=args.json)
         return 1
     _print(report, args.json)
     return 0 if report.get("can_apply", True) else 2

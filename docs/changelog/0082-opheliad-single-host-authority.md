@@ -63,7 +63,8 @@ incomplete release before atomic replacement.
 
 ## Follow-Ups
 
-- Add the outbound mutually authenticated host-agent protocol, enrollment,
-  rotation, revocation, event replay, and staged upgrade manager.
+- The outbound mutually authenticated host-agent protocol, enrollment,
+  rotation, revocation posture, event replay, and staged upgrade manager landed
+  in [change 0083](0083-authenticated-host-agent.md).
 - Complete the encrypted off-site backup and clean-host restore path before the
   first production stateful adoption.

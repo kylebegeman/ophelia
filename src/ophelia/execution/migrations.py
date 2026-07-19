@@ -6,7 +6,7 @@ import sqlite3
 from typing import Sequence, Tuple
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
     (
@@ -300,6 +300,47 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
             """,
             """
             CREATE INDEX workload_runs_state ON workload_runs(state, accepted_at)
+            """,
+        ),
+    ),
+    (
+        5,
+        (
+            """
+            CREATE TABLE agent_state (
+                host_id TEXT PRIMARY KEY,
+                acknowledged_command_sequence INTEGER NOT NULL DEFAULT 0
+                    CHECK (acknowledged_command_sequence >= 0),
+                connection_state TEXT NOT NULL DEFAULT 'disconnected',
+                connected_at TEXT,
+                last_exchange_at TEXT,
+                last_error_type TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE agent_commands (
+                command_id TEXT PRIMARY KEY,
+                sequence INTEGER NOT NULL UNIQUE CHECK (sequence > 0),
+                operation TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                idempotency_key_digest TEXT NOT NULL,
+                envelope_digest TEXT NOT NULL,
+                request_digest TEXT NOT NULL,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+                state TEXT NOT NULL,
+                accepted_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                result_digest TEXT,
+                result_json TEXT CHECK (
+                    result_json IS NULL OR length(result_json) <= 65536
+                )
+            )
+            """,
+            """
+            CREATE INDEX agent_commands_delivery
+            ON agent_commands(state, sequence)
             """,
         ),
     ),

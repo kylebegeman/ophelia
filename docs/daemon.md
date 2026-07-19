@@ -50,6 +50,7 @@ The default file is `/etc/ophelia/agent.toml`:
 ```toml
 runtime_root = "/var/lib/ophelia"
 socket_path = "/run/ophelia/opheliad.sock"
+install_root = "/opt/ophelia"
 allowed_uids = [0]
 allowed_manifest_roots = ["/srv"]
 max_request_bytes = 1048576
@@ -61,6 +62,11 @@ scheduler_seconds = 15
 require_edge_runtime = true
 local_planning_enabled = true
 local_apply_enabled = true
+agent_enabled = false
+agent_poll_seconds = 5
+agent_exchange_bytes = 8388608
+agent_event_batch = 250
+agent_command_batch = 100
 ```
 
 Unknown fields, unsafe ownership, group or world writable configuration,
@@ -70,6 +76,73 @@ effective redacted configuration without starting the service:
 ```bash
 opheliad --config /etc/ophelia/agent.toml --check-config
 ```
+
+## Enroll With Lumen
+
+Enrollment is a confirmation-bound root operation. Place a short-lived,
+one-time Lumen enrollment token in a root-owned mode `0600` file, inspect the
+exact plan, then apply the same plan:
+
+```bash
+sudo ship daemon enroll plan \
+  --control-plane https://control.example.com \
+  --token-file /root/ophelia-enrollment.token \
+  --json
+
+sudo ship daemon enroll apply \
+  --control-plane https://control.example.com \
+  --token-file /root/ophelia-enrollment.token \
+  --confirm <confirmation-token> \
+  --json
+```
+
+The exchange generates the host key locally, sends only a CSR, verifies the
+returned host certificate, CA, and Lumen signing key, and enables the outbound
+agent. Host key and certificate material live under
+`/var/lib/ophelia/identity`; root-managed CA and decision keys live under
+`/etc/ophelia/trust`. The token is deleted only after the restarted daemon
+passes its systemd health check. A failed health check restores the previous
+configuration and removes the newly published identity.
+
+Normal fleet traffic is outbound HTTPS on port 443 with mutual TLS. No public
+Ophelia listener is required. Lumen derives host identity from the client
+certificate and must reject expired or revoked identities.
+
+## Remote Command And Replay Contract
+
+Each exchange binds a unique exchange ID and reports host capabilities,
+identity posture, health, ordered events, and unacknowledged terminal command
+results. Lumen returns the same exchange ID, monotonic acknowledgements, and a
+strictly ordered command batch.
+
+Remote commands are canonical signed envelopes with a host audience,
+short-lived timestamps, explicit scopes, an idempotency key, and one global
+per-host sequence. The daemon verifies the Lumen signing key before accepting
+the command, stores only a signed-envelope digest and operation-specific
+sanitized payload, and journals acceptance before execution. Raw approval
+nonces, signatures, manifest contents, source archives, and caller
+idempotency keys do not enter the operation database.
+
+Delivery is at least once. Results and host events remain replayable until
+Lumen advances their respective cursors. A malformed authorized payload is
+recorded as a terminal rejected result so one bad command cannot wedge the
+sequence. A missing scope, wrong audience, invalid signature, expired command,
+or noncontiguous sequence fails closed.
+
+Supported remote operations are:
+
+- manifest v2 plan and Decision-bound deploy apply
+- operation cancellation and one-shot workload runs
+- host drain and maintenance controls
+- host certificate rotation over the authenticated connection
+- staged agent upgrade with a verified source digest, restart confirmation,
+  and launcher rollback when the new daemon cannot start
+
+Certificate rotation reuses the existing protected host key, atomically
+publishes a CA-verified replacement certificate, and reloads it through a
+clean systemd restart. HTTP 401 or 403 changes local identity posture to
+`revoked`; the agent keeps accepted work running locally while refusing to
+invent connectivity.
 
 ## Normal Operator Flow
 
@@ -181,8 +254,8 @@ output and exception text are not persisted in host health.
 
 ## Current Boundary
 
-The Unix API is the completed single-host transport. Outbound enrollment,
-mutual TLS, certificate rotation and revocation, disconnected command replay,
-and staged self-upgrade are the next fleet milestone. Until that lands, Lumen
-can use the local or bootstrap transport without changing the operation,
-event, or receipt contracts.
+The host side of the authenticated fleet transport is implemented on `next`.
+Lumen still needs to provide the matching enrollment, certificate authority,
+exchange, signing, acknowledgement, command queue, and DeployProvider surfaces.
+Encrypted off-site backups, clean-host restore, richer runtime observations,
+placement, and fleet rollout orchestration remain separate milestones.

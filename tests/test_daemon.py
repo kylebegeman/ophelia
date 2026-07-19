@@ -1,27 +1,45 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 import http.client
+import io
 import json
 import socket
+import subprocess
 import tempfile
+import tarfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set
 from unittest import mock
 
 from ophelia.cron import CronExpressionError, cron_matches, validate_cron_expression
 from ophelia.daemon.config import DaemonConfig, DaemonConfigError, load_daemon_config
 from ophelia.daemon.api import create_unix_server
+from ophelia.daemon.agent import OutboundHostAgent
+from ophelia.daemon.agent_store import AgentStore
 from ophelia.daemon.service import OpheliaDaemon
 from ophelia.daemon.store import DaemonStore
 from ophelia.daemon.install import daemon_install_plan
+from ophelia.daemon.enrollment import enrollment_plan
 from ophelia.daemon.systemd import notify_systemd
+from ophelia.daemon.decisions import verify_lumen_decision
+from ophelia.daemon.upgrades import (
+    AgentUpgradeError,
+    _extract_source_archive,
+    confirm_running_upgrade,
+    stage_agent_upgrade,
+)
 from ophelia.domain import Actor
+from ophelia.domain._contracts import canonical_json
 from ophelia.execution import IdempotencyConflict, SQLiteOperationJournal
 from ophelia.execution.subprocesses import ProcessResult
+from ophelia.manifest_v2_execution import load_manifest_v2_plan
+from ophelia.version import package_version
 
 
 PINNED_IMAGE = "ghcr.io/example/daemon@sha256:" + "d" * 64
@@ -57,6 +75,30 @@ class FakeRunner:
         return ProcessResult(tuple(command), exit_code, reason, stdout, "", False, False, 1)
 
 
+class FakeAgentTransport:
+    def __init__(self, responses: List[dict]) -> None:
+        self.responses = responses
+        self.requests: List[dict] = []
+
+    def exchange(self, payload: dict) -> dict:
+        self.requests.append(payload)
+        response = dict(self.responses.pop(0))
+        response.setdefault("exchange_id", payload["exchange_id"])
+        return response
+
+
+class FakeUpgradeRunner:
+    def run(self, argv: Sequence[str], **_: object) -> ProcessResult:
+        command = list(argv)
+        if command[:3] == ["python3", "-m", "venv"]:
+            release = Path(command[3])
+            executable = release / "bin" / "opheliad"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\nexit 0\n")
+            executable.chmod(0o700)
+        return ProcessResult(tuple(command), 0, "success", "", "", False, False, 1)
+
+
 class CronTests(unittest.TestCase):
     def test_validates_ranges_steps_and_utc_matching(self) -> None:
         value = datetime(2026, 7, 19, 3, 17, tzinfo=timezone.utc)
@@ -85,9 +127,55 @@ class DaemonConfigTests(unittest.TestCase):
             path.write_text("mystery = true\n")
             with self.assertRaisesRegex(DaemonConfigError, "Unknown"):
                 load_daemon_config(path)
+            path.write_text("agent_enabled = false\n")
             path.chmod(0o666)
             with self.assertRaisesRegex(DaemonConfigError, "writable"):
                 load_daemon_config(path)
+
+    def test_enabled_agent_requires_trusted_complete_tls_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trust = root / "trust"
+            identity = root / "identity"
+            trust.mkdir(mode=0o700)
+            identity.mkdir(mode=0o700)
+            credentials = {}
+            for name in ("ca.pem", "host.crt", "host.key", "decision.pem"):
+                path = (
+                    identity / name
+                    if name in {"host.crt", "host.key"}
+                    else trust / name
+                )
+                path.write_text("fixture")
+                path.chmod(0o600 if name == "host.key" else 0o644)
+                credentials[name] = path
+            config_path = root / "agent.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "agent_enabled = true",
+                        'control_plane_url = "https://control.example.com"',
+                        'control_plane_ca_path = "%s"' % credentials["ca.pem"],
+                        'host_certificate_path = "%s"' % credentials["host.crt"],
+                        'host_private_key_path = "%s"' % credentials["host.key"],
+                        'decision_public_key_path = "%s"' % credentials["decision.pem"],
+                    ]
+                )
+                + "\n"
+            )
+            config = load_daemon_config(
+                config_path,
+                runtime_root=root / "runtime",
+                socket_path=root / "daemon.sock",
+            )
+            self.assertTrue(config.agent_enabled)
+            credentials["host.key"].chmod(0o644)
+            with self.assertRaisesRegex(DaemonConfigError, "0600"):
+                load_daemon_config(
+                    config_path,
+                    runtime_root=root / "runtime",
+                    socket_path=root / "daemon.sock",
+                )
 
 
 class DaemonInstallTests(unittest.TestCase):
@@ -135,6 +223,90 @@ class DaemonInstallTests(unittest.TestCase):
         self.assertTrue(incomplete["observations"]["release_present"])
         self.assertFalse(incomplete["observations"]["release_valid"])
         self.assertTrue(complete["observations"]["release_valid"])
+
+    def test_enrollment_plan_binds_token_digest_without_exposing_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            token = root / "enrollment.token"
+            token.write_text("secret-one-time-token")
+            token.chmod(0o600)
+            config = root / "agent.toml"
+            config.write_text("agent_enabled = false\n")
+            with mock.patch(
+                "ophelia.daemon.enrollment.shutil.which", return_value="/usr/bin/tool"
+            ):
+                plan = enrollment_plan(
+                    host_id="host_fixture-1",
+                    control_plane_url="https://control.example.com",
+                    token_file=token,
+                    trust_root=root / "trust",
+                    identity_root=root / "identity",
+                    config_path=config,
+                )
+
+        self.assertTrue(plan["can_apply"])
+        self.assertNotIn("secret-one-time-token", json.dumps(plan))
+        self.assertTrue(plan["observations"]["token_digest"].startswith("sha256:"))
+
+
+class AgentUpgradeTests(unittest.TestCase):
+    def test_staged_upgrade_promotes_and_confirms_exact_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            install = root / "install"
+            previous = install / "releases" / "previous"
+            previous.mkdir(parents=True)
+            (install / "current").symlink_to(previous)
+            inbox = runtime / "inbox" / "command_upgrade-1"
+            inbox.mkdir(parents=True)
+            archive = inbox / "ophelia-source.tar.gz"
+            _source_archive(archive, version=package_version())
+            digest = "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=runtime,
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(root,),
+                install_root=install,
+                require_edge_runtime=False,
+            )
+
+            staged = stage_agent_upgrade(
+                config,
+                command_id="command_upgrade-1",
+                envelope_digest="sha256:" + "a" * 64,
+                payload={
+                    "version": package_version(),
+                    "archive_path": str(archive),
+                    "source_digest": digest,
+                },
+                runner=FakeUpgradeRunner(),
+            )
+            receipt = confirm_running_upgrade(config)
+
+            self.assertEqual(
+                Path(staged["target_release"]).resolve(),
+                (install / "current").resolve(),
+            )
+            self.assertEqual("succeeded", receipt["status"])
+            self.assertFalse((install / "upgrade-pending.json").exists())
+
+    def test_source_archive_rejects_traversal_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "bad.tar.gz"
+            with tarfile.open(archive, "w:gz") as bundle:
+                member = tarfile.TarInfo("../escape")
+                member.size = 4
+                bundle.addfile(member, io.BytesIO(b"nope"))
+            target = root / "target"
+            target.mkdir()
+
+            with self.assertRaisesRegex(AgentUpgradeError, "unsafe"):
+                _extract_source_archive(archive, target, maximum_bytes=1024)
+            self.assertFalse((root / "escape").exists())
 
 
 class SystemdNotificationTests(unittest.TestCase):
@@ -219,6 +391,425 @@ class DaemonStoreTests(unittest.TestCase):
             self.assertEqual(4, len(events))
             self.assertEqual(events[-1]["cursor"], acknowledged)
             journal.integrity_check()
+
+    def test_agent_commands_are_strictly_ordered_replayable_and_acknowledged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            journal = SQLiteOperationJournal.beneath_runtime_root(Path(directory))
+            store = AgentStore(journal, clock=lambda: 1_774_111_200.0)
+            store.register("host_fixture-1")
+            command = store.accept(
+                command_id="command_fixture-1",
+                sequence=1,
+                operation="host.drain",
+                actor_id="actor_fixture-1",
+                idempotency_key="command-1",
+                envelope_digest="sha256:" + "a" * 64,
+                payload={"enabled": True},
+            )
+            retry = store.accept(
+                command_id="command_fixture-1",
+                sequence=1,
+                operation="host.drain",
+                actor_id="actor_fixture-1",
+                idempotency_key="command-1",
+                envelope_digest="sha256:" + "a" * 64,
+                payload={"enabled": True},
+            )
+            self.assertEqual(command, retry)
+            with self.assertRaises(IdempotencyConflict):
+                store.accept(
+                    command_id="command_fixture-1",
+                    sequence=1,
+                    operation="host.drain",
+                    actor_id="actor_fixture-1",
+                    idempotency_key="command-1",
+                    envelope_digest="sha256:" + "a" * 64,
+                    payload={"enabled": False},
+                )
+            store.mark_running(command.command_id)
+            terminal = store.complete(
+                command.command_id,
+                succeeded=True,
+                result={"status": "succeeded"},
+            )
+            self.assertEqual("succeeded", terminal.state)
+            self.assertEqual(1, len(store.pending_results("host_fixture-1")))
+            self.assertEqual(1, store.acknowledge_results("host_fixture-1", 1))
+            self.assertEqual((), store.pending_results("host_fixture-1"))
+            journal.integrity_check()
+
+    def test_agent_result_delivery_stops_at_first_nonterminal_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            journal = SQLiteOperationJournal.beneath_runtime_root(Path(directory))
+            store = AgentStore(journal, clock=lambda: 1_774_111_200.0)
+            store.register("host_fixture-1")
+            first = store.accept(
+                command_id="command_fixture-1",
+                sequence=1,
+                operation="host.drain",
+                actor_id="actor_fixture-1",
+                idempotency_key="command-1",
+                envelope_digest="sha256:" + "a" * 64,
+                payload={"enabled": True},
+            )
+            second = store.accept(
+                command_id="command_fixture-2",
+                sequence=2,
+                operation="host.maintenance",
+                actor_id="actor_fixture-1",
+                idempotency_key="command-2",
+                envelope_digest="sha256:" + "b" * 64,
+                payload={"enabled": True},
+            )
+            store.complete(
+                second.command_id,
+                succeeded=True,
+                result={"status": "succeeded"},
+            )
+            self.assertEqual((), store.pending_results("host_fixture-1"))
+            store.complete(
+                first.command_id,
+                succeeded=True,
+                result={"status": "succeeded"},
+            )
+            self.assertEqual(
+                [1, 2],
+                [item["sequence"] for item in store.pending_results("host_fixture-1")],
+            )
+
+    def test_agent_connection_preserves_last_successful_exchange(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            now = [1_774_111_200.0]
+            store = AgentStore(
+                SQLiteOperationJournal.beneath_runtime_root(Path(directory)),
+                clock=lambda: now[0],
+            )
+            store.register("host_fixture-1")
+            connected = store.record_connection("host_fixture-1", connected=True)
+            now[0] += 30
+            disconnected = store.record_connection(
+                "host_fixture-1", connected=False, error_type="TimeoutError"
+            )
+            self.assertEqual(connected["last_exchange_at"], disconnected["last_exchange_at"])
+            now[0] += 30
+            reconnected = store.record_connection("host_fixture-1", connected=True)
+            self.assertNotEqual(connected["connected_at"], reconnected["connected_at"])
+
+
+class OutboundAgentTests(unittest.TestCase):
+    def test_signed_command_is_verified_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            private_key = root / "decision-private.pem"
+            public_key = root / "decision-public.pem"
+            subprocess.run(
+                [
+                    "openssl",
+                    "genpkey",
+                    "-algorithm",
+                    "RSA",
+                    "-pkeyopt",
+                    "rsa_keygen_bits:2048",
+                    "-out",
+                    str(private_key),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "openssl",
+                    "pkey",
+                    "-in",
+                    str(private_key),
+                    "-pubout",
+                    "-out",
+                    str(public_key),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=root / "runtime",
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(root,),
+                decision_public_key_path=public_key,
+                require_edge_runtime=False,
+            )
+            service = OpheliaDaemon(config, runner=FakeRunner())
+            service.store.register_host(
+                host_id=config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            command = _agent_command(
+                sequence=1,
+                operation="host.drain",
+                payload={"enabled": True},
+            )
+            command["signature"] = _sign_document(command, private_key, root)
+            agent = OutboundHostAgent(
+                service,
+                FakeAgentTransport([_agent_response(commands=[command])]),
+            )
+
+            agent.run_once()
+
+            self.assertTrue(service.store.host(config.host_id)["drained"])
+
+    def test_exchange_executes_control_command_and_replays_result_until_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=root / "runtime",
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(root,),
+                require_edge_runtime=False,
+            )
+            service = OpheliaDaemon(config, runner=FakeRunner())
+            service.store.register_host(
+                host_id=config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            command = _agent_command(
+                sequence=1,
+                operation="host.drain",
+                payload={"enabled": True},
+            )
+            transport = FakeAgentTransport(
+                [
+                    _agent_response(commands=[command]),
+                    _agent_response(acknowledged_command_sequence=1),
+                ]
+            )
+            agent = OutboundHostAgent(
+                service,
+                transport,
+                command_verifier=lambda _: "sha256:" + "a" * 64,
+            )
+
+            agent.run_once()
+            self.assertTrue(service.store.host(config.host_id)["drained"])
+            self.assertEqual(1, len(agent.store.pending_results(config.host_id)))
+            agent.run_once()
+
+            self.assertEqual(1, len(transport.requests[1]["command_results"]))
+            self.assertEqual(1, agent.store.state(config.host_id)["acknowledged_command_sequence"])
+
+    def test_invalid_command_payload_is_durably_rejected_without_storing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=root / "runtime",
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(root,),
+                require_edge_runtime=False,
+            )
+            service = OpheliaDaemon(config, runner=FakeRunner())
+            service.store.register_host(
+                host_id=config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            secret_like_value = "must-not-enter-the-journal"
+            transport = FakeAgentTransport(
+                [
+                    _agent_response(
+                        commands=[
+                            _agent_command(
+                                sequence=1,
+                                operation="unsupported.operation",
+                                payload={"credential": secret_like_value},
+                            )
+                        ]
+                    )
+                ]
+            )
+            agent = OutboundHostAgent(
+                service,
+                transport,
+                command_verifier=lambda _: "sha256:" + "a" * 64,
+            )
+
+            agent.run_once()
+
+            result = agent.store.pending_results(config.host_id)[0]
+            self.assertEqual("failed", result["state"])
+            connection = service.journal._connect()
+            try:
+                stored = connection.execute(
+                    "SELECT payload_json FROM agent_commands WHERE sequence = 1"
+                ).fetchone()[0]
+            finally:
+                connection.close()
+            self.assertNotIn(secret_like_value, stored)
+            self.assertIn("payload_digest", stored)
+
+    def test_manifest_bundle_is_materialized_and_never_persisted_in_command_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=root / "runtime",
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(root,),
+                require_edge_runtime=False,
+            )
+            service = OpheliaDaemon(config, runner=FakeRunner())
+            service.store.register_host(
+                host_id=config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            manifest = f"""
+version: 2
+app: agent-demo
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  worker: {{kind: worker, artifact: app}}
+routes: []
+update: {{strategy: recreate}}
+"""
+            transport = FakeAgentTransport(
+                [
+                    _agent_response(
+                        commands=[
+                            _agent_command(
+                                sequence=1,
+                                operation="manifest.plan",
+                                payload={"manifest": manifest, "files": []},
+                            )
+                        ]
+                    )
+                ]
+            )
+            agent = OutboundHostAgent(
+                service,
+                transport,
+                command_verifier=lambda _: "sha256:" + "a" * 64,
+            )
+            agent.run_once()
+
+            result = agent.store.pending_results(config.host_id)[0]["result"]["result"]
+            self.assertNotIn("confirmation_token", result)
+            connection = service.journal._connect()
+            try:
+                payload_json = connection.execute(
+                    "SELECT payload_json FROM agent_commands WHERE sequence = 1"
+                ).fetchone()[0]
+            finally:
+                connection.close()
+            self.assertNotIn(manifest.strip(), payload_json)
+            self.assertIn("bundle_digest", payload_json)
+
+    def test_signed_lumen_decision_binds_plan_without_persisting_nonce(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            manifest = root / "app.ophelia.yml"
+            manifest.write_text(
+                f"""
+version: 2
+app: decision-demo
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  worker: {{kind: worker, artifact: app}}
+routes: []
+update: {{strategy: recreate}}
+"""
+            )
+            service = OpheliaDaemon(
+                DaemonConfig(
+                    host_id="host_fixture-1",
+                    runtime_root=runtime,
+                    socket_path=root / "opheliad.sock",
+                    allowed_uids=(os.geteuid(),),
+                    allowed_manifest_roots=(root,),
+                    require_edge_runtime=False,
+                ),
+                runner=FakeRunner(),
+            )
+            service.store.register_host(
+                host_id=service.config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            actor = Actor("actor_lumen-1", "test", "mutual-tls-host-agent")
+            report = service.plan(manifest, actor=actor, idempotency_key="decision-plan")
+            loaded = load_manifest_v2_plan(runtime, report["plan_id"])
+            private_key = root / "decision-private.pem"
+            public_key = root / "decision-public.pem"
+            subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private_key)],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["openssl", "pkey", "-in", str(private_key), "-pubout", "-out", str(public_key)],
+                check=True,
+                capture_output=True,
+            )
+            plan = loaded["plan"]
+            now = datetime.now(timezone.utc)
+            signed = {
+                "schema_version": 1,
+                "kind": "lumen.ophelia-decision",
+                "plan_id": plan.plan_id,
+                "plan_digest": plan.plan_digest(),
+                "request_digest": plan.request_digest,
+                "manifest_digest": plan.manifest_digest,
+                "artifact_digests": list(plan.artifact_digests),
+                "observed_state_digest": plan.observed_state_digest,
+                "policy_digest": plan.policy_digest,
+                "host_id": plan.host_id,
+                "app": plan.app,
+                "environment": plan.environment,
+                "revision_id": plan.revision_id,
+                "revision_digest": plan.revision_digest,
+                "actor_id": actor.actor_id,
+                "decision_id": "decision_lumen-1",
+                "issuer": "lumen-control-plane",
+                "audience": plan.host_id,
+                "approved_at": now.isoformat().replace("+00:00", "Z"),
+                "expires_at": (now + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+                "nonce": "one-time-nonce",
+            }
+            claim_path = root / "claim.json"
+            signature_path = root / "claim.sig"
+            claim_path.write_text(canonical_json(signed))
+            subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", str(private_key), "-out", str(signature_path), str(claim_path)],
+                check=True,
+                capture_output=True,
+            )
+            signed["signature"] = base64.b64encode(signature_path.read_bytes()).decode()
+
+            approval = verify_lumen_decision(
+                signed,
+                plan=plan,
+                actor=actor,
+                public_key_path=public_key,
+                runtime_root=runtime,
+                now=now,
+            )
+
+            self.assertEqual("lumen_decision", approval.authorization_kind.value)
+            self.assertNotIn("one-time-nonce", json.dumps(approval.to_dict()))
 
 
 class DaemonServiceTests(unittest.TestCase):
@@ -413,6 +1004,89 @@ def _option(command: Sequence[str], name: str) -> str:
         return command[command.index(name) + 1]
     except (ValueError, IndexError):
         return ""
+
+
+def _agent_command(*, sequence: int, operation: str, payload: dict) -> dict:
+    now = datetime.now(timezone.utc)
+    scope = {
+        "host.drain": "ophelia:host:drain",
+        "host.maintenance": "ophelia:host:maintenance",
+        "workload.run": "ophelia:workload:run",
+        "operation.cancel": "ophelia:operation:cancel",
+        "manifest.plan": "ophelia:plan:create",
+        "deploy.apply": "ophelia:deploy:apply",
+        "host.certificate.rotate": "ophelia:host:identity:rotate",
+        "host.upgrade": "ophelia:host:upgrade",
+    }.get(operation, "ophelia:" + operation)
+    return {
+        "schema_version": 1,
+        "kind": "lumen.ophelia-command",
+        "command_id": "command_fixture-%d" % sequence,
+        "sequence": sequence,
+        "operation": operation,
+        "actor_id": "actor_lumen-1",
+        "audience": "host_fixture-1",
+        "scopes": [scope],
+        "idempotency_key": "agent-command-%d" % sequence,
+        "issued_at": now.isoformat().replace("+00:00", "Z"),
+        "expires_at": (now + timedelta(minutes=10)).isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "payload": payload,
+        "signature": "fixture-signature",
+    }
+
+
+def _agent_response(
+    *,
+    commands: Optional[List[dict]] = None,
+    acknowledged_event_cursor: int = 0,
+    acknowledged_command_sequence: int = 0,
+) -> dict:
+    return {
+        "schema_version": 1,
+        "kind": "ophelia.agent-exchange-response",
+        "protocol_version": 1,
+        "host_id": "host_fixture-1",
+        "acknowledged_event_cursor": acknowledged_event_cursor,
+        "acknowledged_command_sequence": acknowledged_command_sequence,
+        "commands": commands or [],
+        "poll_after_seconds": 1,
+    }
+
+
+def _sign_document(document: dict, private_key: Path, root: Path) -> str:
+    signed = dict(document)
+    signed.pop("signature", None)
+    claim = root / ("signed-" + os.urandom(4).hex() + ".json")
+    signature = claim.with_suffix(".sig")
+    claim.write_text(canonical_json(signed))
+    subprocess.run(
+        [
+            "openssl",
+            "dgst",
+            "-sha256",
+            "-sign",
+            str(private_key),
+            "-out",
+            str(signature),
+            str(claim),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return base64.b64encode(signature.read_bytes()).decode("ascii")
+
+
+def _source_archive(path: Path, *, version: str) -> None:
+    pyproject = (
+        "[build-system]\nrequires = ['setuptools']\n"
+        "[project]\nname = 'ophelia'\nversion = %s\n" % json.dumps(version)
+    ).encode("utf-8")
+    with tarfile.open(path, "w:gz") as bundle:
+        member = tarfile.TarInfo("ophelia/pyproject.toml")
+        member.size = len(pyproject)
+        bundle.addfile(member, io.BytesIO(pyproject))
 
 
 if __name__ == "__main__":

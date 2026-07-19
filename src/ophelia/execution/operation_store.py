@@ -352,6 +352,65 @@ class SQLiteOperationJournal:
                 parse_utc(row["started_at"])
                 parse_utc(row["heartbeat_at"])
                 parse_utc(row["updated_at"])
+            agent_commands = connection.execute(
+                "SELECT * FROM agent_commands ORDER BY sequence"
+            ).fetchall()
+            for expected_sequence, row in enumerate(agent_commands, start=1):
+                payload = json.loads(row["payload_json"])
+                request = {
+                    "schema_version": 1,
+                    "kind": "ophelia.agent-command",
+                    "command_id": row["command_id"],
+                    "sequence": int(row["sequence"]),
+                    "operation": row["operation"],
+                    "actor_id": row["actor_id"],
+                    "envelope_digest": row["envelope_digest"],
+                    "payload": payload,
+                }
+                terminal = row["state"] in {"succeeded", "failed"}
+                if (
+                    int(row["sequence"]) != expected_sequence
+                    or canonical_json(payload) != row["payload_json"]
+                    or canonical_digest(request) != row["request_digest"]
+                    or row["state"] not in {"accepted", "running", "succeeded", "failed"}
+                ):
+                    raise IntegrityError("Agent command history is not canonical.")
+                require_digest(row["idempotency_key_digest"], "idempotency_key_digest")
+                require_digest(row["envelope_digest"], "envelope_digest")
+                parse_utc(row["accepted_at"])
+                if row["started_at"] is not None:
+                    parse_utc(row["started_at"])
+                if terminal:
+                    parse_utc(row["completed_at"])
+                    result = json.loads(row["result_json"])
+                    if (
+                        canonical_json(result) != row["result_json"]
+                        or canonical_digest(result) != row["result_digest"]
+                    ):
+                        raise IntegrityError("Agent command result failed digest validation.")
+                elif any(
+                    row[field] is not None
+                    for field in ("completed_at", "result_digest", "result_json")
+                ):
+                    raise IntegrityError("Nonterminal agent command contains terminal evidence.")
+            maximum_command = len(agent_commands)
+            for row in connection.execute(
+                "SELECT * FROM agent_state ORDER BY host_id"
+            ).fetchall():
+                acknowledged = int(row["acknowledged_command_sequence"])
+                if (
+                    row["connection_state"] not in {"connected", "disconnected", "revoked"}
+                    or not 0 <= acknowledged <= maximum_command
+                    or any(
+                        agent_commands[index]["state"] not in {"succeeded", "failed"}
+                        for index in range(acknowledged)
+                    )
+                ):
+                    raise IntegrityError("Outbound agent state is internally inconsistent.")
+                parse_utc(row["updated_at"])
+                for field in ("connected_at", "last_exchange_at"):
+                    if row[field] is not None:
+                        parse_utc(row[field])
             workload_run_ids = connection.execute(
                 "SELECT * FROM workload_runs ORDER BY run_id"
             ).fetchall()
@@ -1473,6 +1532,19 @@ class SQLiteOperationJournal:
                 (consumer_id, acknowledged, now),
             )
             return acknowledged
+
+    def host_event_acknowledgement(self, consumer_id: str) -> int:
+        require_text(consumer_id, "consumer_id")
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT acknowledged_cursor FROM event_delivery WHERE consumer_id = ?",
+                (consumer_id,),
+            ).fetchone()
+            return 0 if row is None else int(row[0])
+        finally:
+            connection.close()
+            self._repair_permissions()
 
     @classmethod
     def _verified_events(
