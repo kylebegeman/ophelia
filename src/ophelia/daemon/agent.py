@@ -167,12 +167,6 @@ class OutboundHostAgent:
             response.get("acknowledged_command_sequence"),
             "acknowledged_command_sequence",
         )
-        state = self.store.state(self.service.config.host_id)
-        highest_result = state["acknowledged_command_sequence"]
-        if command_results:
-            highest_result = command_results[-1]["sequence"]
-        if acknowledged_command > highest_result:
-            raise ValueError("Control plane acknowledged a result that was not delivered.")
         self.service.journal.acknowledge_host_events(
             "control-plane", acknowledged_event
         )

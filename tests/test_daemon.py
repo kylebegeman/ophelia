@@ -549,6 +549,34 @@ class DaemonStoreTests(unittest.TestCase):
                 [item["sequence"] for item in store.pending_results("host_fixture-1")],
             )
 
+    def test_agent_accepts_the_next_sequence_after_an_authoritative_core_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            journal = SQLiteOperationJournal.beneath_runtime_root(Path(directory))
+            store = AgentStore(journal, clock=lambda: 1_774_111_200.0)
+            store.register("host_fixture-1")
+            self.assertEqual(2, store.acknowledge_results("host_fixture-1", 2))
+            command = store.accept(
+                command_id="command_fixture-3",
+                sequence=3,
+                operation="host.drain",
+                actor_id="actor_fixture-1",
+                idempotency_key="command-3",
+                envelope_digest="sha256:" + "c" * 64,
+                payload={"enabled": True},
+            )
+            self.assertEqual(3, command.sequence)
+            with self.assertRaises(OperationConflict):
+                store.accept(
+                    command_id="command_fixture-5",
+                    sequence=5,
+                    operation="host.maintenance",
+                    actor_id="actor_fixture-1",
+                    idempotency_key="command-5",
+                    envelope_digest="sha256:" + "e" * 64,
+                    payload={"enabled": True},
+                )
+            journal.integrity_check()
+
     def test_agent_connection_preserves_last_successful_exchange(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             now = [1_774_111_200.0]

@@ -122,6 +122,14 @@ Normal fleet traffic is outbound HTTPS on port 443 with mutual TLS. No public
 Ophelia listener is required. Lumen derives host identity from the client
 certificate and must reject expired or revoked identities.
 
+Command sequence acknowledgement is also the authenticated gap-closing
+mechanism. Lumen may advance the acknowledged sequence across commands it
+withdrew or allowed to expire, but never across a command already accepted and
+still running on the host. The host then accepts only the immediate sequence
+after the greater of its durable command history and Lumen acknowledgement.
+This keeps later fleet work usable after an offline host misses a short-lived
+command without weakening signed-command ordering.
+
 ## Remote Command And Replay Contract
 
 Each exchange binds a unique exchange ID and reports host capabilities,

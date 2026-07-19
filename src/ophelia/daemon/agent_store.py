@@ -186,11 +186,17 @@ class AgentStore:
                         "Agent command identity was replayed with different content."
                     )
                 return self._from_row(existing)
-            expected = int(
+            maximum = int(
                 connection.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_commands"
+                    "SELECT COALESCE(MAX(sequence), 0) FROM agent_commands"
                 ).fetchone()[0]
             )
+            acknowledged = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(acknowledged_command_sequence), 0) FROM agent_state"
+                ).fetchone()[0]
+            )
+            expected = max(maximum, acknowledged) + 1
             if sequence != expected:
                 raise OperationConflict(
                     "Agent command sequence is not the next durable sequence."
@@ -347,14 +353,9 @@ class AgentStore:
                     (sequence,),
                 ).fetchone()[0]
             )
-            maximum = int(
-                connection.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) FROM agent_commands"
-                ).fetchone()[0]
-            )
-            if sequence > maximum or incomplete:
+            if incomplete:
                 raise OperationConflict(
-                    "Command acknowledgement exceeds contiguous terminal results."
+                    "Command acknowledgement crosses a nonterminal durable command."
                 )
             connection.execute(
                 """

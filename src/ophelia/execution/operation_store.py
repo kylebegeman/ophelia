@@ -376,7 +376,14 @@ class SQLiteOperationJournal:
             agent_commands = connection.execute(
                 "SELECT * FROM agent_commands ORDER BY sequence"
             ).fetchall()
-            for expected_sequence, row in enumerate(agent_commands, start=1):
+            maximum_acknowledged = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(acknowledged_command_sequence), 0) FROM agent_state"
+                ).fetchone()[0]
+            )
+            previous_sequence = 0
+            for row in agent_commands:
+                sequence = int(row["sequence"])
                 payload = json.loads(row["payload_json"])
                 request = {
                     "schema_version": 1,
@@ -390,7 +397,8 @@ class SQLiteOperationJournal:
                 }
                 terminal = row["state"] in {"succeeded", "failed"}
                 if (
-                    int(row["sequence"]) != expected_sequence
+                    sequence <= previous_sequence
+                    or (sequence != previous_sequence + 1 and sequence - 1 > maximum_acknowledged)
                     or canonical_json(payload) != row["payload_json"]
                     or canonical_digest(request) != row["request_digest"]
                     or row["state"] not in {"accepted", "running", "succeeded", "failed"}
@@ -414,7 +422,8 @@ class SQLiteOperationJournal:
                     for field in ("completed_at", "result_digest", "result_json")
                 ):
                     raise IntegrityError("Nonterminal agent command contains terminal evidence.")
-            maximum_command = len(agent_commands)
+                previous_sequence = sequence
+            maximum_command = max(previous_sequence, maximum_acknowledged)
             for row in connection.execute(
                 "SELECT * FROM agent_state ORDER BY host_id"
             ).fetchall():
@@ -423,8 +432,9 @@ class SQLiteOperationJournal:
                     row["connection_state"] not in {"connected", "disconnected", "revoked"}
                     or not 0 <= acknowledged <= maximum_command
                     or any(
-                        agent_commands[index]["state"] not in {"succeeded", "failed"}
-                        for index in range(acknowledged)
+                        int(command["sequence"]) <= acknowledged
+                        and command["state"] not in {"succeeded", "failed"}
+                        for command in agent_commands
                     )
                 ):
                     raise IntegrityError("Outbound agent state is internally inconsistent.")
