@@ -20,7 +20,7 @@ TimeoutStartSec=120s
 TimeoutStopSec=45s
 RuntimeDirectory=ophelia
 RuntimeDirectoryMode=0700
-StateDirectory=ophelia
+StateDirectory=ophelia ophelia-identity
 StateDirectoryMode=0700
 ConfigurationDirectory=ophelia
 ConfigurationDirectoryMode=0750
@@ -40,7 +40,7 @@ RestrictRealtime=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
-ReadWritePaths=/var/lib/ophelia /run/ophelia /opt/ophelia
+ReadWritePaths=/var/lib/ophelia /var/lib/ophelia-identity /run/ophelia /opt/ophelia
 
 [Install]
 WantedBy=multi-user.target

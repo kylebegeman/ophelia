@@ -7,9 +7,22 @@ from pathlib import Path
 
 from ..config import REPO_ROOT
 from ..daemon.client import DaemonClient, DaemonClientError
-from ..daemon.config import DEFAULT_SOCKET_PATH
+from ..daemon.config import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_IDENTITY_ROOT,
+    DEFAULT_RUNTIME_ROOT,
+    DEFAULT_SOCKET_PATH,
+    load_daemon_config,
+)
 from ..daemon.install import apply_daemon_install, daemon_install_plan
 from ..daemon.enrollment import apply_enrollment, enrollment_plan
+from ..daemon.recovery import (
+    apply_clean_host_restore,
+    clean_host_restore_plan,
+    create_host_backup,
+    host_backup_plan,
+)
+from ..execution import SQLiteOperationJournal
 from ..execution.legacy_adapter import local_host_id
 from ._output import print_error, print_json
 
@@ -63,6 +76,11 @@ def register(subparsers: _SubParsersAction) -> None:
         default=Path("/usr/local/libexec/opheliad-launcher"),
     )
     install.add_argument("--apply", action="store_true")
+    install.add_argument(
+        "--defer-start",
+        action="store_true",
+        help="Install and enable the unit without starting it, for clean-host recovery",
+    )
     install.add_argument("--confirm")
     install.add_argument("--json", action="store_true")
     install.set_defaults(handler=run_install)
@@ -78,7 +96,7 @@ def register(subparsers: _SubParsersAction) -> None:
             "--trust-root", type=Path, default=Path("/etc/ophelia/trust")
         )
         command.add_argument(
-            "--identity-root", type=Path, default=Path("/var/lib/ophelia/identity")
+            "--identity-root", type=Path, default=DEFAULT_IDENTITY_ROOT
         )
         command.add_argument(
             "--config-path", type=Path, default=Path("/etc/ophelia/agent.toml")
@@ -88,6 +106,35 @@ def register(subparsers: _SubParsersAction) -> None:
         if name == "apply":
             command.add_argument("--confirm", required=True)
         command.set_defaults(handler=run_enroll)
+
+    backup = commands.add_parser("backup")
+    backup_commands = backup.add_subparsers(dest="backup_command", required=True)
+    for name in ("plan", "apply"):
+        command = backup_commands.add_parser(name)
+        command.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+        command.add_argument("--backup-id", required=True)
+        command.add_argument("--destination", type=Path, required=True)
+        command.add_argument("--json", action="store_true")
+        if name == "apply":
+            command.add_argument("--confirm", required=True)
+        command.set_defaults(handler=run_backup)
+
+    recover = commands.add_parser("recover")
+    recover_commands = recover.add_subparsers(dest="recover_command", required=True)
+    for name in ("plan", "apply"):
+        command = recover_commands.add_parser(name)
+        command.add_argument("--backup-root", type=Path, required=True)
+        command.add_argument("--identity-file", type=Path, required=True)
+        command.add_argument(
+            "--target-runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT
+        )
+        command.add_argument(
+            "--maximum-bytes", type=int, default=64 * 1024 * 1024 * 1024
+        )
+        command.add_argument("--json", action="store_true")
+        if name == "apply":
+            command.add_argument("--confirm", required=True)
+        command.set_defaults(handler=run_recover)
 
 
 def run_read(args: Namespace) -> int:
@@ -144,6 +191,7 @@ def run_install(args: Namespace) -> int:
             config_path=args.config_path,
             unit_path=args.unit_path,
             launcher_path=args.launcher_path,
+            activate=not args.defer_start,
         )
         if args.apply:
             if not args.confirm:
@@ -176,6 +224,54 @@ def run_enroll(args: Namespace) -> int:
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print_error(str(exc), "daemon_enrollment_failed", json_output=args.json)
+        return 1
+    _print(report, args.json)
+    return 0 if report.get("can_apply", True) else 2
+
+
+def run_backup(args: Namespace) -> int:
+    try:
+        config = load_daemon_config(args.config)
+        journal = SQLiteOperationJournal.beneath_runtime_root(config.runtime_root)
+        plan = host_backup_plan(
+            config,
+            journal,
+            backup_id=args.backup_id,
+            destination_root=args.destination,
+        )
+        report = (
+            create_host_backup(
+                config,
+                journal,
+                backup_id=args.backup_id,
+                destination_root=args.destination,
+                confirmation=args.confirm,
+            )
+            if args.backup_command == "apply"
+            else plan
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print_error(str(exc), "daemon_backup_failed", json_output=args.json)
+        return 1
+    _print(report, args.json)
+    return 0 if report.get("can_apply", True) else 2
+
+
+def run_recover(args: Namespace) -> int:
+    try:
+        plan = clean_host_restore_plan(
+            backup_root=args.backup_root,
+            identity_file=args.identity_file,
+            target_runtime_root=args.target_runtime_root,
+            maximum_bytes=args.maximum_bytes,
+        )
+        report = (
+            apply_clean_host_restore(plan, args.confirm)
+            if args.recover_command == "apply"
+            else plan
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print_error(str(exc), "daemon_recovery_failed", json_output=args.json)
         return 1
     _print(report, args.json)
     return 0 if report.get("can_apply", True) else 2

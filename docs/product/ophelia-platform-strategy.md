@@ -637,9 +637,13 @@ an explicit development root:
 /etc/ophelia/
   agent.toml
   trust/
-    host.crt
-    host.key
     control-plane-ca.pem
+    decision-public.pem
+
+/var/lib/ophelia-identity/
+  host.crt
+  host.key
+  enrollment.json
 
 /var/lib/ophelia/
   operations.db

@@ -20,12 +20,15 @@ from ..domain import canonical_digest
 from ..domain._contracts import parse_utc
 from ..execution.subprocesses import SubprocessRunner
 from ..version import package_version
-from .config import PROTOCOL_VERSION
+from .config import DEFAULT_IDENTITY_ROOT, PROTOCOL_VERSION
 from .install import _secure_write
 
 
 class EnrollmentError(RuntimeError):
     pass
+
+
+_HOST_ID = re.compile(r"^host_[A-Za-z0-9][A-Za-z0-9._-]{0,126}$")
 
 
 EnrollmentExchange = Callable[[str, str, str, str, Optional[Path]], Dict[str, Any]]
@@ -37,11 +40,11 @@ def enrollment_plan(
     control_plane_url: str,
     token_file: Path,
     trust_root: Path = Path("/etc/ophelia/trust"),
-    identity_root: Path = Path("/var/lib/ophelia/identity"),
+    identity_root: Path = DEFAULT_IDENTITY_ROOT,
     config_path: Path = Path("/etc/ophelia/agent.toml"),
     bootstrap_ca_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    if not isinstance(host_id, str) or not host_id.startswith("host_") or len(host_id) > 255:
+    if not isinstance(host_id, str) or _HOST_ID.fullmatch(host_id) is None:
         raise EnrollmentError("Enrollment host id is invalid.")
     endpoint = _https_url(control_plane_url)
     token = _private_token_file(token_file)
@@ -394,6 +397,7 @@ def _enable_agent_config(path: Path, plan: Dict[str, Any]) -> None:
         raise EnrollmentError("Daemon configuration is unavailable or unsafe.")
     text = path.read_text(encoding="utf-8")
     replacements = {
+        "host_id": json.dumps(plan["host_id"]),
         "agent_enabled": "true",
         "control_plane_url": json.dumps(plan["control_plane_url"]),
         "control_plane_ca_path": json.dumps(plan["targets"]["control_plane_ca"]),

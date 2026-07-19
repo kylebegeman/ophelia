@@ -1,6 +1,6 @@
 # Ophelia Host Daemon
 
-Status: landed on `next`, pre-release
+Status: landed on `next`, 0.6.0 release candidate
 
 `opheliad` is Ophelia's durable single-host authority. It owns the operation
 journal, runtime reconciliation, manifest v2 execution, scheduled workloads,
@@ -67,7 +67,21 @@ agent_poll_seconds = 5
 agent_exchange_bytes = 8388608
 agent_event_batch = 250
 agent_command_batch = 100
+recovery_backup_roots = []
+# recovery_age_recipient = "age1..."
+recovery_max_bytes = 68719476736
+recovery_freshness_seconds = 86400
+observation_seconds = 15
+observation_retention = 1000
+disk_warning_percent = 85
+disk_critical_percent = 95
 ```
+
+Encrypted host recovery is disabled until `recovery_backup_roots` contains one
+or more existing trusted directories and `recovery_age_recipient` is set to a
+public age, age-plugin, or SSH recipient. The recipient is public configuration;
+the matching private identity must remain off-host or in a separately protected
+recovery store.
 
 Unknown fields, unsafe ownership, group or world writable configuration,
 invalid paths, invalid types, and out-of-range limits fail closed. Inspect the
@@ -98,8 +112,8 @@ sudo ship daemon enroll apply \
 
 The exchange generates the host key locally, sends only a CSR, verifies the
 returned host certificate, CA, and Lumen signing key, and enables the outbound
-agent. Host key and certificate material live under
-`/var/lib/ophelia/identity`; root-managed CA and decision keys live under
+agent. Host key and certificate material live under the independent
+`/var/lib/ophelia-identity` state directory; root-managed CA and decision keys live under
 `/etc/ophelia/trust`. The token is deleted only after the restarted daemon
 passes its systemd health check. A failed health check restores the previous
 configuration and removes the newly published identity.
@@ -137,6 +151,8 @@ Supported remote operations are:
 - host certificate rotation over the authenticated connection
 - staged agent upgrade with a verified source digest, restart confirmation,
   and launcher rollback when the new daemon cannot start
+- encrypted host-control backup into a configured destination while the host
+  is drained and in maintenance
 
 Certificate rotation reuses the existing protected host key, atomically
 publishes a CA-verified replacement certificate, and reloads it through a
@@ -183,6 +199,101 @@ sudo ship daemon maintenance --enable --json
 Drain and maintenance refuse new deployments and task runs. Existing accepted
 work remains durable and recoverable.
 
+## Encrypted Host Backup
+
+A host backup captures the authoritative operation database and managed
+runtime tree, excluding volatile run/inbox state and host identity. Symlinks are
+recorded as bounded manifest evidence and reconstructed only when their target
+is also present. The payload is archived, encrypted to the configured age
+recipient, and published atomically with a cleartext non-secret object manifest
+and digests.
+
+First drain the host and enter maintenance. Then review and apply the exact
+backup plan:
+
+```bash
+sudo ship daemon drain --enable --json
+sudo ship daemon maintenance --enable --json
+
+sudo ship daemon backup plan \
+  --backup-id backup_2026-07-19T2200Z \
+  --destination /mnt/ophelia-offsite \
+  --json
+
+sudo ship daemon backup apply \
+  --backup-id backup_2026-07-19T2200Z \
+  --destination /mnt/ophelia-offsite \
+  --confirm <confirmation-token> \
+  --json
+```
+
+Lumen can request the same operation with the signed
+`ophelia:backup:create` scope. The command is idempotent and returns the same
+verified object receipt on replay.
+
+This is a host-control backup. Application databases and external volumes must
+first produce their declared product backup/export artifacts; Ophelia then
+preserves that recovery evidence with the runtime. The host certificate,
+private key, Lumen trust keys, and age private identity are intentionally not
+inside the backup.
+
+## Clean-Host Recovery
+
+On the replacement Linux host, install Ophelia without starting the daemon so
+the runtime root remains empty:
+
+```bash
+sudo ship daemon install \
+  --source-root /srv/ophelia \
+  --defer-start \
+  --apply \
+  --confirm <install-confirmation-token> \
+  --json
+```
+
+Review and apply recovery using the protected age identity. The target runtime
+must be absent or truly empty; recovery never overwrites a populated host.
+
+```bash
+sudo ship daemon recover plan \
+  --backup-root /mnt/ophelia-offsite/host_example-1/backup_2026-07-19T2200Z \
+  --identity-file /root/ophelia-recovery.agekey \
+  --target-runtime-root /var/lib/ophelia \
+  --json
+
+sudo ship daemon recover apply \
+  --backup-root /mnt/ophelia-offsite/host_example-1/backup_2026-07-19T2200Z \
+  --identity-file /root/ophelia-recovery.agekey \
+  --target-runtime-root /var/lib/ophelia \
+  --confirm <recovery-confirmation-token> \
+  --json
+```
+
+Recovery validates the outer object digest, archive safety and quotas, every
+inner file digest, symlink containment, and SQLite integrity before one atomic
+runtime promotion. It writes a restore receipt before promotion and does not
+restore host identity. Enroll the replacement host with Lumen, then start or
+restart `opheliad`; running host-agent commands and accepted operations remain
+replayable from the restored journal.
+
+For recovery of the same logical host, pass the `host_id` from the backup
+manifest explicitly to `ship daemon enroll`; do not accept the replacement
+machine's newly derived default ID. Lumen should revoke the lost certificate
+and issue a fresh certificate for that recovered logical host before normal
+exchange resumes.
+
+## Continuous Observations
+
+`opheliad` records a bounded durable observation at startup and on the
+configured interval. Each sample includes disk pressure, CPU/load and memory
+availability, operation/workload counts, active app count, certificate posture,
+backup freshness, and control-plane connection state. Samples are canonical,
+digest-verified, retention-limited, exposed at
+`GET /v1/observations/latest`, and attached to every outbound Lumen exchange.
+Critical disk, expired identity, or revoked control-plane identity degrades
+daemon health. Stale backups, expiring certificates, and ordinary disconnects
+remain explicit warning posture without stopping accepted local work.
+
 ## Local Recovery
 
 When the daemon is unavailable, an operator may use the same kernel directly:
@@ -220,6 +331,7 @@ Primary resources are:
 | `GET` | `/v1/health` | Loop health and daemon identity |
 | `GET` | `/v1/capabilities` | Protocol, workload, runtime, and limit negotiation |
 | `GET` | `/v1/hosts/self` | Durable host state and controls |
+| `GET` | `/v1/observations/latest` | Latest digest-verified host observation |
 | `GET` | `/v1/apps` | Active application revisions |
 | `GET` | `/v1/apps/{app}/{environment}` | Active revision and recent task runs |
 | `POST` | `/v1/plans` | Create an idempotent manifest v2 plan |

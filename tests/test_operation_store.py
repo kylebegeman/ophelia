@@ -329,6 +329,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
                 "workload_run_events",
                 "agent_state",
                 "agent_commands",
+                "host_observations",
             }.issubset(tables)
         )
         self.store.integrity_check()
@@ -1620,6 +1621,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             connection.execute("DROP INDEX revision_lifecycle_latest")
             connection.execute("DROP INDEX execution_scope_lease_operation")
             for table in (
+                "host_observations",
                 "agent_commands",
                 "agent_state",
                 "workload_run_events",
@@ -1681,6 +1683,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             connection.execute("DROP INDEX host_events_delivery")
             connection.execute("DROP INDEX workload_runs_state")
             for table in (
+                "host_observations",
                 "agent_commands",
                 "agent_state",
                 "workload_run_events",

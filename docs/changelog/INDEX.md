@@ -85,3 +85,5 @@
 | [0081](0081-manifest-v2-compose-kernel.md) | 2026-07-19 | landed | Manifest v2 and journaled Compose kernel | manifest-v2, workloads, compose, caddy, journal, cli, security, docs, tests |
 | [0082](0082-opheliad-single-host-authority.md) | 2026-07-19 | landed | Durable opheliad single-host authority | daemon, unix-api, recovery, workloads, cron, journal, installer, systemd, cli, security, docs, tests |
 | [0083](0083-authenticated-host-agent.md) | 2026-07-19 | landed | Authenticated outbound host agent and lifecycle | agent, enrollment, mtls, decisions, replay, certificates, upgrades, daemon, journal, systemd, cli, security, docs, tests |
+| [0084](0084-encrypted-host-recovery-observations.md) | 2026-07-19 | landed | Encrypted host recovery and continuous observations | backup, restore, recovery, age, observations, daemon, agent, journal, identity, systemd, cli, security, docs, tests |
+| [0085](0085-release-060.md) | 2026-07-19 | landed | Release 0.6.0 | release, manifest-v2, daemon, agent, recovery, observations, security, docs, tests |

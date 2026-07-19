@@ -1,17 +1,22 @@
 # Ophelia Roadmap
 
-Status: current for the 0.5.x line
+Status: current for the 0.6.x line
 
 Ophelia 0.3.0 completes the fixture-first foundation: manifest contracts,
 runtime rendering, safety-gated operations, receipts, readiness, synthetic app
 fixtures, app adoption planning, live evidence scaffolds, public governance, and
 strict release hygiene.
 
-The 0.5.0 line begins the accepted platform direction with strict validation,
+The 0.5.0 line began the accepted platform direction with strict validation,
 secure filesystem primitives, immutable operation staging, an authoritative
 SQLite journal, recoverable execution, truthful static activation and rollback,
 and executable Forge product-operation bundles. The legacy manifest path
 remains available while additional workloads migrate onto the kernel.
+
+The 0.6.0 line adds manifest v2 execution, the independent `opheliad` host
+authority, authenticated outbound fleet protocol, lifecycle-safe upgrades,
+encrypted host-control backup, clean-host recovery, and continuous durable
+observations. Lumen's matching server authority is the active integration edge.
 
 This roadmap replaces the older long-form implementation plans now stored in
 [Archive](archive/README.md). Use the archive for historical context only.
@@ -45,12 +50,11 @@ record as the strategy is converted into reviewed releases.
 
 These are the next dependency-ordered outcomes:
 
-1. Prove encrypted backup and clean-host restore for stateful workloads, then
-   attach continuous health, disk, certificate, and recovery signals.
-2. Implement Lumen's certificate authority, host exchange, signed command
+1. Implement Lumen's certificate authority, host exchange, signed command
    queue, acknowledgement projection, and DeployProvider against the completed
    Ophelia host-agent protocol.
-3. Prove enrollment, revocation, disconnect replay, certificate rotation, and
+2. Prove enrollment, encrypted recovery, revocation, disconnect replay,
+   certificate rotation, and
    rollback-protected upgrades on disposable Linux hosts before production
    enrollment.
 
@@ -63,6 +67,11 @@ enrollment, mutual TLS, signed and scoped command envelopes, strict sequence
 replay, independent event and result acknowledgement, Decision-bound deploys,
 certificate rotation, revocation posture, and staged self-upgrade with startup
 rollback. The matching Lumen server authority is the next integration boundary.
+
+Encrypted host-control backup, clean-host restore, independently stored host
+identity, bounded continuous observations, backup freshness, and observation
+delivery are implemented on `next`. Real stateful application restore remains
+subject to each product's declared backup and verification contract.
 
 Manifest v2 and its journaled Compose revision backend are implemented on
 `next`. Valid v1 manifests remain an explicit compatibility boundary. V2 adds

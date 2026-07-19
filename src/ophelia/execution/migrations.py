@@ -6,7 +6,7 @@ import sqlite3
 from typing import Sequence, Tuple
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
     (
@@ -341,6 +341,25 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
             """
             CREATE INDEX agent_commands_delivery
             ON agent_commands(state, sequence)
+            """,
+        ),
+    ),
+    (
+        6,
+        (
+            """
+            CREATE TABLE host_observations (
+                observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                host_id TEXT NOT NULL REFERENCES host_state(host_id) ON DELETE CASCADE,
+                observed_at TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('ready', 'warning', 'critical')),
+                observation_digest TEXT NOT NULL,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536)
+            )
+            """,
+            """
+            CREATE INDEX host_observations_latest
+            ON host_observations(host_id, observation_id DESC)
             """,
         ),
     ),

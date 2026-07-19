@@ -15,8 +15,10 @@ from ..execution.legacy_adapter import local_host_id
 
 
 PROTOCOL_VERSION = 1
+_HOST_ID = re.compile(r"^host_[A-Za-z0-9][A-Za-z0-9._-]{0,126}$")
 DEFAULT_CONFIG_PATH = Path("/etc/ophelia/agent.toml")
 DEFAULT_RUNTIME_ROOT = Path("/var/lib/ophelia")
+DEFAULT_IDENTITY_ROOT = Path("/var/lib/ophelia-identity")
 DEFAULT_SOCKET_PATH = Path("/run/ophelia/opheliad.sock")
 DEFAULT_INSTALL_ROOT = Path("/opt/ophelia")
 
@@ -52,6 +54,14 @@ class DaemonConfig:
     agent_exchange_bytes: int = 8 * 1024 * 1024
     agent_event_batch: int = 250
     agent_command_batch: int = 100
+    recovery_backup_roots: Tuple[Path, ...] = ()
+    recovery_age_recipient: Optional[str] = None
+    recovery_max_bytes: int = 64 * 1024 * 1024 * 1024
+    recovery_freshness_seconds: int = 24 * 60 * 60
+    observation_seconds: float = 15.0
+    observation_retention: int = 1000
+    disk_warning_percent: float = 85.0
+    disk_critical_percent: float = 95.0
 
     def redacted_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +90,14 @@ class DaemonConfig:
             "agent_exchange_bytes": self.agent_exchange_bytes,
             "agent_event_batch": self.agent_event_batch,
             "agent_command_batch": self.agent_command_batch,
+            "recovery_backup_roots": [str(path) for path in self.recovery_backup_roots],
+            "recovery_age_recipient": self.recovery_age_recipient,
+            "recovery_max_bytes": self.recovery_max_bytes,
+            "recovery_freshness_seconds": self.recovery_freshness_seconds,
+            "observation_seconds": self.observation_seconds,
+            "observation_retention": self.observation_retention,
+            "disk_warning_percent": self.disk_warning_percent,
+            "disk_critical_percent": self.disk_critical_percent,
         }
 
 
@@ -109,6 +127,14 @@ _KEYS = {
     "agent_exchange_bytes",
     "agent_event_batch",
     "agent_command_batch",
+    "recovery_backup_roots",
+    "recovery_age_recipient",
+    "recovery_max_bytes",
+    "recovery_freshness_seconds",
+    "observation_seconds",
+    "observation_retention",
+    "disk_warning_percent",
+    "disk_critical_percent",
 }
 
 
@@ -153,6 +179,10 @@ def load_daemon_config(
         _directory_path(value, "allowed_manifest_roots")
         for value in _list(raw.get("allowed_manifest_roots", []), "allowed_manifest_roots")
     )
+    recovery_roots = tuple(
+        _directory_path(value, "recovery_backup_roots")
+        for value in _list(raw.get("recovery_backup_roots", []), "recovery_backup_roots")
+    )
     allowed_uids = tuple(
         sorted(
             set(
@@ -164,7 +194,7 @@ def load_daemon_config(
     if not allowed_uids:
         raise DaemonConfigError("allowed_uids must contain at least one UID.")
     host_id = raw.get("host_id", local_host_id())
-    if not isinstance(host_id, str) or not host_id.startswith("host_") or len(host_id) > 255:
+    if not isinstance(host_id, str) or _HOST_ID.fullmatch(host_id) is None:
         raise DaemonConfigError("host_id must be a bounded Ophelia host identifier.")
     agent_enabled = _boolean(raw.get("agent_enabled", False), "agent_enabled")
     control_plane_url = _optional_https_url(raw.get("control_plane_url"))
@@ -216,7 +246,7 @@ def load_daemon_config(
         _validate_credential_directory(identity_root, "host identity")
         _validate_credential_directory(ca_path.parent, "control-plane trust")
         _validate_credential_directory(decision_key_path.parent, "decision trust")
-    return DaemonConfig(
+    config = DaemonConfig(
         host_id=host_id,
         runtime_root=effective_runtime,
         socket_path=effective_socket,
@@ -285,7 +315,43 @@ def load_daemon_config(
             minimum=1,
             maximum=1000,
         ),
+        recovery_backup_roots=recovery_roots,
+        recovery_age_recipient=_optional_age_recipient(
+            raw.get("recovery_age_recipient")
+        ),
+        recovery_max_bytes=_bounded_int(
+            raw.get("recovery_max_bytes", 64 * 1024 * 1024 * 1024),
+            "recovery_max_bytes",
+            minimum=1024 * 1024,
+            maximum=1024 * 1024 * 1024 * 1024,
+        ),
+        recovery_freshness_seconds=_bounded_int(
+            raw.get("recovery_freshness_seconds", 24 * 60 * 60),
+            "recovery_freshness_seconds",
+            minimum=60,
+            maximum=365 * 24 * 60 * 60,
+        ),
+        observation_seconds=_bounded_number(
+            raw.get("observation_seconds", 15), "observation_seconds", 1, 3600
+        ),
+        observation_retention=_bounded_int(
+            raw.get("observation_retention", 1000),
+            "observation_retention",
+            minimum=1,
+            maximum=100000,
+        ),
+        disk_warning_percent=_bounded_number(
+            raw.get("disk_warning_percent", 85), "disk_warning_percent", 1, 99
+        ),
+        disk_critical_percent=_bounded_number(
+            raw.get("disk_critical_percent", 95), "disk_critical_percent", 2, 100
+        ),
     )
+    if config.disk_warning_percent >= config.disk_critical_percent:
+        raise DaemonConfigError(
+            "disk_warning_percent must be lower than disk_critical_percent."
+        )
+    return config
 
 
 def _path_or_none(value: Optional[Path]) -> Optional[str]:
@@ -310,6 +376,26 @@ def _optional_https_url(value: object) -> Optional[str]:
             "control_plane_url must be HTTPS without credentials, query, or fragment."
         )
     return value.rstrip("/")
+
+
+def _optional_age_recipient(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or len(value) > 4096 or "\x00" in value:
+        raise DaemonConfigError(
+            "recovery_age_recipient must be a bounded public age or SSH recipient."
+        )
+    native = value.startswith(("age1", "age-plugin-")) and not any(
+        character.isspace() for character in value
+    )
+    ssh = re.fullmatch(
+        r"ssh-(?:ed25519|rsa) [A-Za-z0-9+/]+={0,3}", value
+    ) is not None
+    if not native and not ssh:
+        raise DaemonConfigError(
+            "recovery_age_recipient must be a bounded public age or SSH recipient."
+        )
+    return value
 
 
 def _optional_credential_path(

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from ..domain import Actor, canonical_digest
-from ..domain._contracts import canonical_json, digest_text
+from ..domain._contracts import canonical_json, digest_text, parse_utc
 from ..execution import IdempotencyConflict, OperationConflict, SQLiteOperationJournal
 
 
@@ -76,6 +76,14 @@ class DaemonStore:
         now = self._now()
         capabilities_json = self.journal._bounded_json(capabilities)
         with self.journal._transaction() as connection:
+            different_host = connection.execute(
+                "SELECT host_id FROM host_state WHERE host_id != ? LIMIT 1",
+                (host_id,),
+            ).fetchone()
+            if different_host is not None:
+                raise OperationConflict(
+                    "This operation journal is already bound to a different host identity."
+                )
             connection.execute(
                 """
                 INSERT INTO host_state(
@@ -172,6 +180,86 @@ class DaemonStore:
             ).rowcount
             if updated != 1:
                 raise KeyError(host_id)
+
+    def record_observation(
+        self,
+        host_id: str,
+        observation: Dict[str, Any],
+        *,
+        retention: int,
+    ) -> Dict[str, Any]:
+        if (
+            isinstance(retention, bool)
+            or not isinstance(retention, int)
+            or not 1 <= retention <= 100000
+            or observation.get("host_id") != host_id
+            or observation.get("status") not in {"ready", "warning", "critical"}
+        ):
+            raise ValueError("Host observation identity or retention is invalid.")
+        observed_at = observation.get("observed_at")
+        if not isinstance(observed_at, str):
+            raise ValueError("Host observation timestamp is invalid.")
+        parse_utc(observed_at)
+        payload_json = self.journal._bounded_json(observation)
+        digest = canonical_digest(observation)
+        with self.journal._transaction() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO host_observations(
+                    host_id, observed_at, status, observation_digest, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (host_id, observed_at, observation["status"], digest, payload_json),
+            )
+            observation_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                DELETE FROM host_observations
+                WHERE host_id = ? AND observation_id NOT IN (
+                    SELECT observation_id FROM host_observations
+                    WHERE host_id = ? ORDER BY observation_id DESC LIMIT ?
+                )
+                """,
+                (host_id, host_id, retention),
+            )
+        return {
+            "observation_id": observation_id,
+            "observation_digest": digest,
+            "observation": observation,
+        }
+
+    def latest_observation(self, host_id: str) -> Optional[Dict[str, Any]]:
+        connection = self.journal._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT * FROM host_observations
+                WHERE host_id = ? ORDER BY observation_id DESC LIMIT 1
+                """,
+                (host_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+            self.journal._repair_permissions()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Host observation payload is malformed.") from exc
+        if (
+            canonical_json(payload) != row["payload_json"]
+            or canonical_digest(payload) != row["observation_digest"]
+            or payload.get("host_id") != row["host_id"]
+            or payload.get("observed_at") != row["observed_at"]
+            or payload.get("status") != row["status"]
+        ):
+            raise ValueError("Host observation evidence failed validation.")
+        return {
+            "observation_id": int(row["observation_id"]),
+            "observation_digest": row["observation_digest"],
+            "observation": payload,
+        }
 
     def host(self, host_id: str) -> Dict[str, Any]:
         connection = self.journal._connect()

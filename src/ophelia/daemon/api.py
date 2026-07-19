@@ -152,6 +152,11 @@ class DaemonAPIHandler(BaseHTTPRequestHandler):
             return 200, service.capabilities()
         if path == "/v1/hosts/self":
             return 200, service.store.host(service.config.host_id)
+        if path == "/v1/observations/latest":
+            observation = service.latest_observation()
+            if observation is None:
+                raise KeyError(path)
+            return 200, observation
         if path == "/v1/apps":
             return 200, service.apps()
         if path.startswith("/v1/apps/"):

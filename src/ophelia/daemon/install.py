@@ -27,7 +27,10 @@ def daemon_install_plan(
     config_path: Path = Path("/etc/ophelia/agent.toml"),
     unit_path: Path = Path("/etc/systemd/system/opheliad.service"),
     launcher_path: Path = Path("/usr/local/libexec/opheliad-launcher"),
+    activate: bool = True,
 ) -> Dict[str, Any]:
+    if not isinstance(activate, bool):
+        raise DaemonInstallError("Daemon activation choice must be boolean.")
     source_root = Path(source_root).expanduser().resolve(strict=True)
     if not (source_root / "pyproject.toml").is_file():
         raise DaemonInstallError("Ophelia source root does not contain pyproject.toml.")
@@ -62,6 +65,7 @@ def daemon_install_plan(
         "config_path": str(Path(config_path)),
         "unit_path": str(Path(unit_path)),
         "launcher_path": str(Path(launcher_path)),
+        "activate": activate,
         "observations": observations,
         "steps": [
             "create-system-identity",
@@ -70,7 +74,11 @@ def daemon_install_plan(
             "write-hardened-systemd-unit",
             "write-stable-upgrade-launcher",
             "promote-current-release",
-            "enable-and-health-check-service",
+            (
+                "enable-and-health-check-service"
+                if activate
+                else "enable-service-with-start-deferred-for-recovery"
+            ),
         ],
         "blockers": blockers,
     }
@@ -102,6 +110,7 @@ def apply_daemon_install(
         config_path=Path(plan["config_path"]),
         unit_path=Path(plan["unit_path"]),
         launcher_path=Path(plan["launcher_path"]),
+        activate=plan["activate"],
     )
     if refreshed["confirmation_token"] != confirmation:
         raise DaemonInstallError("Host state changed after the daemon install plan.")
@@ -144,8 +153,17 @@ def apply_daemon_install(
         timeout_seconds=120,
     )
     command.run(["systemctl", "daemon-reload"], timeout_seconds=60)
-    command.run(["systemctl", "enable", "--now", "opheliad.service"], timeout_seconds=120)
-    command.run(["systemctl", "is-active", "--quiet", "opheliad.service"], timeout_seconds=60)
+    if plan["activate"]:
+        command.run(
+            ["systemctl", "enable", "--now", "opheliad.service"],
+            timeout_seconds=120,
+        )
+        command.run(
+            ["systemctl", "is-active", "--quiet", "opheliad.service"],
+            timeout_seconds=60,
+        )
+    else:
+        command.run(["systemctl", "enable", "opheliad.service"], timeout_seconds=60)
     return {
         "schema_version": 1,
         "kind": "ophelia.daemon-install-receipt",
@@ -155,6 +173,7 @@ def apply_daemon_install(
         "unit_digest": _file_digest(unit_path),
         "launcher_digest": _file_digest(Path(plan["launcher_path"])),
         "config_digest": _file_digest(config_path),
+        "service_state": "active" if plan["activate"] else "start_deferred",
     }
 
 
@@ -254,11 +273,16 @@ def _ensure_identity(runner: SubprocessRunner) -> None:
     runner.run(["usermod", "-aG", "docker", "ophelia"], timeout_seconds=30)
     for path, mode in (
         (Path("/var/lib/ophelia"), 0o700),
+        (Path("/var/lib/ophelia-identity"), 0o700),
         (Path("/etc/ophelia"), 0o750),
     ):
         path.mkdir(mode=mode, parents=True, exist_ok=True)
         os.chmod(path, mode)
     runner.run(["chown", "-R", "ophelia:ophelia", "/var/lib/ophelia"], timeout_seconds=60)
+    runner.run(
+        ["chown", "-R", "ophelia:ophelia", "/var/lib/ophelia-identity"],
+        timeout_seconds=60,
+    )
     runner.run(["chown", "root:ophelia", "/etc/ophelia"], timeout_seconds=30)
 
 
@@ -282,6 +306,13 @@ agent_poll_seconds = 5
 agent_exchange_bytes = 8388608
 agent_event_batch = 250
 agent_command_batch = 100
+recovery_backup_roots = []
+recovery_max_bytes = 68719476736
+recovery_freshness_seconds = 86400
+observation_seconds = 15
+observation_retention = 1000
+disk_warning_percent = 85
+disk_critical_percent = 95
 """
 
 

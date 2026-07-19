@@ -67,6 +67,7 @@ _OPERATION_SCOPES = {
     "deploy.apply": "ophelia:deploy:apply",
     "host.certificate.rotate": "ophelia:host:identity:rotate",
     "host.upgrade": "ophelia:host:upgrade",
+    "host.backup.create": "ophelia:backup:create",
 }
 
 
@@ -77,12 +78,14 @@ class OutboundHostAgent:
         transport: AgentTransport,
         *,
         command_verifier: Optional[Callable[[Dict[str, Any]], str]] = None,
+        register: bool = True,
     ) -> None:
         self.service = service
         self.transport = transport
         self._command_verifier = command_verifier or self._verify_command_signature
         self.store = AgentStore(service.journal)
-        self.store.register(service.config.host_id)
+        if register:
+            self.store.register(service.config.host_id)
 
     def run_once(self) -> float:
         self._execute_pending()
@@ -106,6 +109,7 @@ class OutboundHostAgent:
             "capabilities": self.service.capabilities(),
             "host": self.service.store.host(host_id),
             "health": self.service.health(),
+            "observation": self.service.latest_observation(),
             "event_cursor": event_cursor,
             "events": list(events),
             "command_results": list(command_results),
@@ -311,6 +315,15 @@ class OutboundHostAgent:
             if payload:
                 raise ValueError("Certificate-rotation command payload must be empty.")
             return {}
+        if operation == "host.backup.create":
+            if set(payload) != {"backup_id", "destination_root"}:
+                raise ValueError("Host-backup command payload fields are invalid.")
+            return {
+                "backup_id": _text(payload.get("backup_id"), "backup_id"),
+                "destination_root": _text(
+                    payload.get("destination_root"), "destination_root"
+                ),
+            }
         raise ValueError("Agent command operation is not supported by this host.")
 
     def _materialize_upgrade_bundle(
@@ -491,6 +504,13 @@ class OutboundHostAgent:
                 command_id=command.command_id,
                 envelope_digest=command.envelope_digest,
                 payload=payload,
+            )
+        elif command.operation == "host.backup.create":
+            if set(payload) != {"backup_id", "destination_root"}:
+                raise ValueError("Prepared host-backup command fields are invalid.")
+            result = self.service.create_host_backup(
+                backup_id=payload["backup_id"],
+                destination_root=Path(payload["destination_root"]),
             )
         else:
             raise ValueError("Agent command operation is not supported by this host.")

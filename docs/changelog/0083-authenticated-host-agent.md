@@ -83,5 +83,5 @@ violations before installation.
   exchange authority, command queue, Decision signer, and DeployProvider.
 - Exercise revocation, rotation, failed startup rollback, and disconnect replay
   on disposable Linux hosts.
-- Complete encrypted backup, clean-host restore, and continuous host/runtime
-  observations.
+- Encrypted backup, clean-host restore, and continuous observations were
+  completed in [0084](0084-encrypted-host-recovery-observations.md).

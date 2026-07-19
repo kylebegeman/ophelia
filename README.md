@@ -7,7 +7,7 @@
 **A fixture-first deployment control plane for VPS apps, static sites, safe operations, and agent-readable workflows.**
 
 [![CI](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/mrbagels/ophelia/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.5.0-2563EB)
+![Version](https://img.shields.io/badge/version-0.6.0-2563EB)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
@@ -46,6 +46,7 @@ public launch decision is made.
 | Redirects and tunnels | Caddy-rendered redirect and tunnel routes for migration or edge compatibility. |
 | Non-live apps | Explicit lifecycle fields, fresh-install planning, safe volume reset gates, and data verifier execution. |
 | Workload manifests | Strict manifest v2 support for web, worker, cron, task, migration, internal, and static lifecycles through the journaled revision engine. |
+| Independent hosts | Durable `opheliad` authority with outbound mutual-TLS Lumen control, encrypted host recovery, and continuous observations. |
 
 ## Why Ophelia Exists
 
@@ -63,7 +64,7 @@ public launch decision is made.
 
 | Item | Status |
 | --- | --- |
-| Current version | `0.5.0` |
+| Current version | `0.6.0` |
 | Stability | Pre-1.0. Core contracts are active, but JSON and CLI surfaces may still evolve deliberately. |
 | Distribution | GitHub only. No PyPI release path is configured. |
 | Runtime state | Kept outside the source checkout, usually under `~/ophelia-runtime` or a configured runtime root. |
@@ -105,9 +106,10 @@ The daemon journals acceptance before returning, executes asynchronously,
 recovers after restart, runs active-revision cron and task workloads, and
 exposes replayable host events. Its optional outbound agent adds mutual-TLS
 enrollment, signed scoped Lumen commands, disconnected event and result replay,
-certificate rotation, and rollback-protected staged upgrades without opening a
-public host port. See the [Ophelia Host Daemon](docs/daemon.md) for installation,
-configuration, enrollment, API, and direct recovery procedures.
+certificate rotation, encrypted host-control backups, clean-host recovery,
+continuous health observations, and rollback-protected staged upgrades without
+opening a public host port. See the [Ophelia Host Daemon](docs/daemon.md) for
+installation, configuration, enrollment, API, and recovery procedures.
 
 After editable install, the console scripts are available too:
 
@@ -132,7 +134,7 @@ Expected output excerpt:
   "name": "ophelia",
   "schema_version": 1,
   "source": "pyproject",
-  "version": "0.5.0"
+  "version": "0.6.0"
 }
 ```
 

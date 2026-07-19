@@ -35,6 +35,8 @@ from .config import DaemonConfig, PROTOCOL_VERSION
 from .agent import OutboundHostAgent
 from .agent_transport import HTTPSAgentTransport
 from .identity import identity_status
+from .observations import collect_host_observation
+from .recovery import create_host_backup as create_encrypted_host_backup
 from .store import DaemonStore
 from .systemd import notify_systemd
 from .workloads import WorkloadExecutionError, WorkloadRunManager
@@ -69,7 +71,9 @@ class OpheliaDaemon:
         self._loop_errors: Dict[str, Dict[str, str]] = {}
         self.agent: Optional[OutboundHostAgent] = None
         if config.agent_enabled:
-            self.agent = OutboundHostAgent(self, HTTPSAgentTransport(config))
+            self.agent = OutboundHostAgent(
+                self, HTTPSAgentTransport(config), register=False
+            )
 
     def capabilities(self) -> Dict[str, Any]:
         return {
@@ -87,15 +91,16 @@ class OpheliaDaemon:
                 "static",
             ],
             "operations": [
-                "plan.create",
+                "manifest.plan",
                 "deploy.apply",
-                "deploy.cancel",
+                "operation.cancel",
                 "workload.run",
                 "workload.cancel",
                 "host.drain",
                 "host.maintenance",
                 "host.certificate.rotate",
                 "host.upgrade",
+                "host.backup.create",
                 "events.read",
                 "events.acknowledge",
             ],
@@ -106,6 +111,12 @@ class OpheliaDaemon:
                 "task_execution": True,
                 "outbound_agent": self.config.agent_enabled,
                 "self_upgrade": True,
+                "encrypted_host_backup": bool(
+                    self.config.recovery_backup_roots
+                    and self.config.recovery_age_recipient
+                    and shutil.which("age") is not None
+                ),
+                "continuous_host_observations": True,
             },
             "runtime": {
                 "os": platform.system().lower(),
@@ -124,19 +135,28 @@ class OpheliaDaemon:
         }
 
     def health(self) -> Dict[str, Any]:
+        observation = self.latest_observation()
         with self._health_lock:
             errors = dict(self._loop_errors)
+        critical = (
+            observation is not None
+            and observation["observation"].get("status") == "critical"
+        )
         result = {
-            "status": "degraded" if errors else "ready",
+            "status": "degraded" if errors or critical else "ready",
             "host_id": self.config.host_id,
             "owner_id": self.owner_id,
             "threads": {
                 thread.name: thread.is_alive() for thread in self._threads
             },
             "loop_errors": errors,
+            "observation": observation,
         }
         if self.agent is not None:
-            result["agent"] = self.agent.store.state(self.config.host_id)
+            try:
+                result["agent"] = self.agent.store.state(self.config.host_id)
+            except KeyError:
+                result["agent"] = None
         result["restart_requested"] = self.restart_requested.is_set()
         return result
 
@@ -152,6 +172,13 @@ class OpheliaDaemon:
             agent_version=package_version(),
             protocol_version=PROTOCOL_VERSION,
         )
+        if self.agent is not None:
+            self.agent.store.register(self.config.host_id)
+        try:
+            self._record_observation()
+            self._clear_error("observations")
+        except Exception as exc:
+            self._record_error("observations", exc)
         if self._threads:
             return
         workload_workers = max(1, self.config.max_workers // 2)
@@ -162,6 +189,7 @@ class OpheliaDaemon:
             self._spawn("workload-%d" % index, self._workload_loop)
         self._spawn("scheduler", self._scheduler_loop)
         self._spawn("reconciler", self._reconciliation_loop)
+        self._spawn("observations", self._observation_loop)
         if self.agent is not None:
             self._spawn("agent", self._agent_loop)
 
@@ -332,6 +360,24 @@ class OpheliaDaemon:
                     continue
         return {"apps": items}
 
+    def create_host_backup(
+        self, *, backup_id: str, destination_root: Path
+    ) -> Dict[str, Any]:
+        return create_encrypted_host_backup(
+            self.config,
+            self.journal,
+            backup_id=backup_id,
+            destination_root=destination_root,
+            trusted_remote=True,
+        )
+
+    def latest_observation(self) -> Optional[Dict[str, Any]]:
+        try:
+            return self.store.latest_observation(self.config.host_id)
+        except Exception as exc:
+            self._record_error("observations", exc)
+            return None
+
     def app(self, app: str, environment: str) -> Dict[str, Any]:
         try:
             parsed_app = str(parse_identifier(app, field="app"))
@@ -473,6 +519,26 @@ class OpheliaDaemon:
                 self._record_error("agent", exc)
                 delay = min(300.0, max(self.config.agent_poll_seconds, delay * 2))
             self._stop.wait(delay)
+
+    def _observation_loop(self) -> None:
+        while not self._stop.wait(self.config.observation_seconds):
+            try:
+                self._record_observation()
+                self._clear_error("observations")
+            except Exception as exc:
+                self._record_error("observations", exc)
+
+    def _record_observation(self) -> Dict[str, Any]:
+        observation = collect_host_observation(
+            self.config,
+            self.journal,
+            active_apps=len(self.apps()["apps"]),
+        )
+        return self.store.record_observation(
+            self.config.host_id,
+            observation,
+            retention=self.config.observation_retention,
+        )
 
     def _allowed_manifest_path(self, value: Path) -> Path:
         requested = Path(value).expanduser().absolute()

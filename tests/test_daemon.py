@@ -25,7 +25,7 @@ from ophelia.daemon.agent_store import AgentStore
 from ophelia.daemon.service import OpheliaDaemon
 from ophelia.daemon.store import DaemonStore
 from ophelia.daemon.install import daemon_install_plan
-from ophelia.daemon.enrollment import enrollment_plan
+from ophelia.daemon.enrollment import _enable_agent_config, enrollment_plan
 from ophelia.daemon.systemd import notify_systemd
 from ophelia.daemon.decisions import verify_lumen_decision
 from ophelia.daemon.upgrades import (
@@ -36,7 +36,11 @@ from ophelia.daemon.upgrades import (
 )
 from ophelia.domain import Actor
 from ophelia.domain._contracts import canonical_json
-from ophelia.execution import IdempotencyConflict, SQLiteOperationJournal
+from ophelia.execution import (
+    IdempotencyConflict,
+    OperationConflict,
+    SQLiteOperationJournal,
+)
 from ophelia.execution.subprocesses import ProcessResult
 from ophelia.manifest_v2_execution import load_manifest_v2_plan
 from ophelia.version import package_version
@@ -132,6 +136,37 @@ class DaemonConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(DaemonConfigError, "writable"):
                 load_daemon_config(path)
 
+    def test_recovery_and_observation_boundaries_are_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "agent.toml"
+            path.write_text(
+                '\n'.join(
+                    [
+                        'host_id = "host_observer-1"',
+                        'recovery_backup_roots = ["%s"]' % root,
+                        'recovery_age_recipient = "age1publicfixture"',
+                        'disk_warning_percent = 80',
+                        'disk_critical_percent = 90',
+                    ]
+                )
+                + '\n'
+            )
+            config = load_daemon_config(
+                path,
+                runtime_root=root / "runtime",
+                socket_path=root / "daemon.sock",
+            )
+            self.assertEqual((root.resolve(),), config.recovery_backup_roots)
+            path.write_text('host_id = "host_../escape"\n')
+            with self.assertRaisesRegex(DaemonConfigError, "host_id"):
+                load_daemon_config(path)
+            path.write_text(
+                "disk_warning_percent = 95\ndisk_critical_percent = 90\n"
+            )
+            with self.assertRaisesRegex(DaemonConfigError, "lower"):
+                load_daemon_config(path)
+
     def test_enabled_agent_requires_trusted_complete_tls_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -179,6 +214,25 @@ class DaemonConfigTests(unittest.TestCase):
 
 
 class DaemonInstallTests(unittest.TestCase):
+    def test_enrollment_config_pins_the_planned_logical_host_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "agent.toml"
+            config.write_text("agent_enabled = false\n")
+            _enable_agent_config(
+                config,
+                {
+                    "host_id": "host_recovered-1",
+                    "control_plane_url": "https://control.example.com",
+                    "targets": {
+                        "control_plane_ca": "/etc/ophelia/trust/ca.pem",
+                        "host_certificate": "/var/lib/ophelia-identity/host.crt",
+                        "host_key": "/var/lib/ophelia-identity/host.key",
+                        "decision_public_key": "/etc/ophelia/trust/decision.pem",
+                    },
+                },
+            )
+            self.assertIn('host_id = "host_recovered-1"', config.read_text())
+
     def test_plan_distinguishes_complete_and_incomplete_versioned_releases(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -186,7 +240,7 @@ class DaemonInstallTests(unittest.TestCase):
             source.mkdir()
             (source / "pyproject.toml").write_text("[project]\nname='fixture'\n")
             install_root = root / "install"
-            release = install_root / "releases" / "0.5.0"
+            release = install_root / "releases" / "0.6.0"
             release.mkdir(parents=True)
             config = root / "agent.toml"
             unit = root / "opheliad.service"
@@ -208,7 +262,7 @@ class DaemonInstallTests(unittest.TestCase):
                         {
                             "schema_version": 1,
                             "kind": "ophelia.daemon-install",
-                            "version": "0.5.0",
+                            "version": "0.6.0",
                             "source_digest": incomplete["observations"]["source_digest"],
                         }
                     )
@@ -219,10 +273,21 @@ class DaemonInstallTests(unittest.TestCase):
                     config_path=config,
                     unit_path=unit,
                 )
+                deferred = daemon_install_plan(
+                    source_root=source,
+                    install_root=install_root,
+                    config_path=config,
+                    unit_path=unit,
+                    activate=False,
+                )
 
         self.assertTrue(incomplete["observations"]["release_present"])
         self.assertFalse(incomplete["observations"]["release_valid"])
         self.assertTrue(complete["observations"]["release_valid"])
+        self.assertFalse(deferred["activate"])
+        self.assertIn(
+            "enable-service-with-start-deferred-for-recovery", deferred["steps"]
+        )
 
     def test_enrollment_plan_binds_token_digest_without_exposing_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -336,6 +401,13 @@ class DaemonStoreTests(unittest.TestCase):
                 agent_version="0.6.0",
                 protocol_version=1,
             )
+            with self.assertRaisesRegex(OperationConflict, "different host"):
+                store.register_host(
+                    host_id="host_rebound-1",
+                    capabilities={},
+                    agent_version="0.6.0",
+                    protocol_version=1,
+                )
             actor = Actor("actor_fixture-1", "test", "test")
             arguments = dict(
                 actor=actor,
@@ -497,6 +569,53 @@ class DaemonStoreTests(unittest.TestCase):
 
 
 class OutboundAgentTests(unittest.TestCase):
+    def test_host_backup_command_uses_the_configured_control_plane_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=root / "runtime",
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(),
+                require_edge_runtime=False,
+            )
+            service = OpheliaDaemon(config, runner=FakeRunner())
+            service.store.register_host(
+                host_id=config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            command = _agent_command(
+                sequence=1,
+                operation="host.backup.create",
+                payload={
+                    "backup_id": "backup_control-plane",
+                    "destination_root": "/srv/backups",
+                },
+            )
+            agent = OutboundHostAgent(
+                service,
+                FakeAgentTransport([_agent_response(commands=[command])]),
+                command_verifier=lambda _: "sha256:" + "a" * 64,
+            )
+            with mock.patch.object(
+                service,
+                "create_host_backup",
+                return_value={"status": "succeeded"},
+            ) as create:
+                agent.run_once()
+
+            create.assert_called_once_with(
+                backup_id="backup_control-plane",
+                destination_root=Path("/srv/backups"),
+            )
+            self.assertEqual(
+                "succeeded",
+                agent.store.pending_results(config.host_id)[0]["result"]["status"],
+            )
+
     def test_signed_command_is_verified_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -898,6 +1017,7 @@ update: {{strategy: recreate}}
                 agent_version="0.6.0",
                 protocol_version=1,
             )
+            daemon._record_observation()
             server = create_unix_server(daemon)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -918,6 +1038,24 @@ update: {{strategy: recreate}}
                 self.assertEqual(200, response.status)
                 self.assertTrue(payload["ok"])
                 self.assertEqual(1, payload["protocol_version"])
+
+                connection = UnixHTTPConnection(config.socket_path)
+                connection.request(
+                    "GET",
+                    "/v1/observations/latest",
+                    headers={
+                        "X-Request-ID": "request-observation-1",
+                        "X-Ophelia-Protocol-Version": "1",
+                    },
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read())
+                connection.close()
+                self.assertEqual(200, response.status)
+                self.assertEqual(
+                    config.host_id,
+                    payload["data"]["observation"]["host_id"],
+                )
 
                 connection = UnixHTTPConnection(config.socket_path)
                 connection.request(
@@ -1017,6 +1155,7 @@ def _agent_command(*, sequence: int, operation: str, payload: dict) -> dict:
         "deploy.apply": "ophelia:deploy:apply",
         "host.certificate.rotate": "ophelia:host:identity:rotate",
         "host.upgrade": "ophelia:host:upgrade",
+        "host.backup.create": "ophelia:backup:create",
     }.get(operation, "ophelia:" + operation)
     return {
         "schema_version": 1,

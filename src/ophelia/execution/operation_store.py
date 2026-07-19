@@ -333,9 +333,12 @@ class SQLiteOperationJournal:
                 require_digest(row["request_digest"], "request_digest")
                 require_text(row["plan_id"], "plan_id", 255)
                 parse_utc(row["created_at"])
-            for row in connection.execute(
+            host_rows = connection.execute(
                 "SELECT * FROM host_state ORDER BY host_id"
-            ).fetchall():
+            ).fetchall()
+            if len(host_rows) > 1:
+                raise IntegrityError("Single-host authority contains multiple host identities.")
+            for row in host_rows:
                 capabilities = json.loads(row["capabilities_json"])
                 expected_lifecycle = (
                     "maintenance"
@@ -352,6 +355,24 @@ class SQLiteOperationJournal:
                 parse_utc(row["started_at"])
                 parse_utc(row["heartbeat_at"])
                 parse_utc(row["updated_at"])
+            for row in connection.execute(
+                "SELECT * FROM host_observations ORDER BY observation_id"
+            ).fetchall():
+                try:
+                    observation = json.loads(row["payload_json"])
+                except (TypeError, ValueError) as exc:
+                    raise IntegrityError("Host observation payload is malformed.") from exc
+                if (
+                    not isinstance(observation, dict)
+                    or canonical_json(observation) != row["payload_json"]
+                    or canonical_digest(observation) != row["observation_digest"]
+                    or observation.get("host_id") != row["host_id"]
+                    or observation.get("observed_at") != row["observed_at"]
+                    or observation.get("status") != row["status"]
+                    or row["status"] not in {"ready", "warning", "critical"}
+                ):
+                    raise IntegrityError("Host observation is not canonical.")
+                parse_utc(row["observed_at"])
             agent_commands = connection.execute(
                 "SELECT * FROM agent_commands ORDER BY sequence"
             ).fetchall()
