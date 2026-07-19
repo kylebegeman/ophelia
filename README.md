@@ -94,12 +94,17 @@ python3 -m venv .venv
 ```
 
 For a manifest v2 application, calculate a read-only revision plan and apply
-the exact reviewed plan through the operation journal:
+the exact reviewed plan through `opheliad`:
 
 ```bash
-./cli/ship manifest plan .ophelia.yml --runtime-root /var/lib/ophelia --json
-./cli/ship manifest apply <plan-id> --confirm <token> --runtime-root /var/lib/ophelia --json
+sudo ship manifest plan /srv/example/.ophelia.yml --json
+sudo ship manifest apply <plan-id> --confirm <token> --json
 ```
+
+The daemon journals acceptance before returning, executes asynchronously,
+recovers after restart, runs active-revision cron and task workloads, and
+exposes replayable host events. See the [Ophelia Host Daemon](docs/daemon.md)
+for installation, configuration, API, and direct recovery procedures.
 
 After editable install, the console scripts are available too:
 

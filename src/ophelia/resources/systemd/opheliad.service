@@ -1,0 +1,46 @@
+[Unit]
+Description=Ophelia host authority
+Documentation=https://github.com/mrbagels/ophelia
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=60s
+User=ophelia
+Group=ophelia
+SupplementaryGroups=docker
+UMask=0077
+ExecStart=/opt/ophelia/current/bin/opheliad --config /etc/ophelia/agent.toml
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=120s
+TimeoutStopSec=45s
+RuntimeDirectory=ophelia
+RuntimeDirectoryMode=0700
+StateDirectory=ophelia
+StateDirectoryMode=0700
+ConfigurationDirectory=ophelia
+ConfigurationDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/ophelia /run/ophelia
+
+[Install]
+WantedBy=multi-user.target

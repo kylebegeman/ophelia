@@ -30,6 +30,7 @@ reference docs below.
 | [Preflight And Safety](preflight-and-safety.md) | Dry-run, confirmation-token, policy, and receipt discipline. |
 | [Releases And Rollback](releases-and-rollback.md) | Release metadata, rollback behavior, and recovery flow. |
 | [Production Hardening](production-hardening.md) | Read-only production hardening report and go/no-go checks. |
+| [Ophelia Host Daemon](daemon.md) | Install, configure, operate, recover, and integrate the durable single-host authority. |
 | [Open Source Readiness](open-source-readiness.md) | Release audit, public-surface rules, license, and governance posture. |
 
 ## Manifest And App Contracts
@@ -58,6 +59,7 @@ reference docs below.
 | Document | Use it for |
 | --- | --- |
 | [Job And Action API](job-action-api.md) | Command catalog, operation envelopes, local API, and JSON contracts. |
+| [Ophelia Host Daemon](daemon.md) | Versioned Unix API, peer authentication, host event cursors, workload runs, and systemd lifecycle. |
 | [Plugin Contracts](plugin-contracts.md) | Fixture plugin manifests, validation, and metadata surfaces. |
 | [Operator Console Adapter](operator-console-adapter.md) | Read-only console payloads for private or internal operator UIs. |
 | [Source Of Truth](ophelia-source-of-truth.md) | Source-of-truth position for future apps and legacy inventory boundaries. |

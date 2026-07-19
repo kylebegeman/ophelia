@@ -7,6 +7,7 @@ from .bootstrap_host import register as register_bootstrap_host
 from .caddy import register as register_caddy
 from .catalog import register as register_catalog
 from .deploy import register as register_deploy
+from .daemon import register as register_daemon
 from .diff import register as register_diff
 from .doctor import register as register_doctor
 from .drift import register as register_drift
@@ -54,6 +55,7 @@ from .workflows import register as register_workflows
 
 def register_commands(subparsers):
     register_manifest(subparsers)
+    register_daemon(subparsers)
     register_bootstrap_host(subparsers)
     register_apps(subparsers)
     register_app(subparsers)

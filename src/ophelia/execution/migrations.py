@@ -6,7 +6,7 @@ import sqlite3
 from typing import Sequence, Tuple
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
     (
@@ -192,6 +192,114 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
                          l2.operation_id DESC
                 LIMIT 1
             )
+            """,
+        ),
+    ),
+    (
+        4,
+        (
+            """
+            CREATE TABLE host_events (
+                cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL UNIQUE,
+                event_type TEXT NOT NULL,
+                operation_id TEXT REFERENCES operations(operation_id) ON DELETE CASCADE,
+                workload_run_id TEXT,
+                event_digest TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+                CHECK (operation_id IS NOT NULL OR workload_run_id IS NOT NULL)
+            )
+            """,
+            """
+            INSERT INTO host_events(
+                event_id, event_type, operation_id, workload_run_id,
+                event_digest, occurred_at, payload_json
+            )
+            SELECT e.event_id, 'operation', e.operation_id, NULL,
+                   e.event_digest, o.accepted_at, e.payload_json
+            FROM operation_events AS e
+            JOIN operations AS o ON o.operation_id = e.operation_id
+            ORDER BY o.accepted_at, e.operation_id, e.sequence
+            """,
+            """
+            CREATE TABLE event_delivery (
+                consumer_id TEXT PRIMARY KEY,
+                acknowledged_cursor INTEGER NOT NULL DEFAULT 0
+                    CHECK (acknowledged_cursor >= 0),
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE daemon_plan_requests (
+                actor_id TEXT NOT NULL,
+                idempotency_key_digest TEXT NOT NULL,
+                request_digest TEXT NOT NULL,
+                plan_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (actor_id, idempotency_key_digest)
+            )
+            """,
+            """
+            CREATE TABLE host_state (
+                host_id TEXT PRIMARY KEY,
+                lifecycle_state TEXT NOT NULL,
+                maintenance_mode INTEGER NOT NULL DEFAULT 0
+                    CHECK (maintenance_mode IN (0, 1)),
+                drained INTEGER NOT NULL DEFAULT 0 CHECK (drained IN (0, 1)),
+                capabilities_json TEXT NOT NULL CHECK (length(capabilities_json) <= 65536),
+                agent_version TEXT NOT NULL,
+                protocol_version INTEGER NOT NULL CHECK (protocol_version > 0),
+                started_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE workload_runs (
+                run_id TEXT PRIMARY KEY,
+                actor_id TEXT NOT NULL,
+                idempotency_key_digest TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                app TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                revision_id TEXT NOT NULL,
+                revision_digest TEXT NOT NULL,
+                workload_name TEXT NOT NULL,
+                workload_kind TEXT NOT NULL,
+                trigger_kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                request_digest TEXT NOT NULL,
+                request_json TEXT NOT NULL CHECK (length(request_json) <= 65536),
+                accepted_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                cancellation_requested_at TEXT,
+                lease_owner TEXT,
+                lease_expires REAL,
+                fencing_token INTEGER NOT NULL DEFAULT 0
+                    CHECK (fencing_token >= 0),
+                result_digest TEXT,
+                exit_code INTEGER,
+                exit_reason TEXT,
+                UNIQUE (actor_id, idempotency_key_digest)
+            )
+            """,
+            """
+            CREATE TABLE workload_run_events (
+                run_id TEXT NOT NULL REFERENCES workload_runs(run_id) ON DELETE CASCADE,
+                sequence INTEGER NOT NULL CHECK (sequence > 0),
+                event_id TEXT NOT NULL UNIQUE,
+                event_digest TEXT NOT NULL,
+                payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+                PRIMARY KEY (run_id, sequence)
+            )
+            """,
+            """
+            CREATE INDEX host_events_delivery ON host_events(cursor)
+            """,
+            """
+            CREATE INDEX workload_runs_state ON workload_runs(state, accepted_at)
             """,
         ),
     ),

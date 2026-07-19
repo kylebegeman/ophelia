@@ -45,15 +45,17 @@ record as the strategy is converted into reviewed releases.
 
 These are the next dependency-ordered outcomes:
 
-1. Promote the executor and recovery engine into the durable single-host
-   `opheliad` service with a Unix-socket API and reboot reconciliation.
-2. Prove encrypted backup and clean-host restore for stateful workloads, then
+1. Prove encrypted backup and clean-host restore for stateful workloads, then
    attach continuous health, disk, certificate, and recovery signals.
-3. Add authenticated outbound host-agent transport, replayable event cursors,
+2. Add authenticated outbound host-agent transport, replayable event cursors,
    enrollment, maintenance, drain, and staged upgrades.
-4. Implement Lumen's DeployProvider against versioned Ophelia operations,
+3. Implement Lumen's DeployProvider against versioned Ophelia operations,
    then replace that transport with the authenticated host agent as fleet work
    lands.
+
+The durable `opheliad` single-host authority, Unix-socket API, reboot recovery,
+cron and task runner, global host event cursor, systemd service, and installer
+are implemented on `next` for the next pre-release line.
 
 Manifest v2 and its journaled Compose revision backend are implemented on
 `next`. Valid v1 manifests remain an explicit compatibility boundary. V2 adds

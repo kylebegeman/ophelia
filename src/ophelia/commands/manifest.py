@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import uuid
 from argparse import Namespace, _SubParsersAction
 from pathlib import Path
 
 import yaml
 
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..daemon.client import DaemonClient, DaemonClientError
+from ..daemon.config import DEFAULT_SOCKET_PATH
 from ..manifest import ManifestError, load_manifest
 from ..manifest_v2 import ManifestV2Error, load_manifest_v2, migrate_v1_document
 from ..manifest_v2_execution import (
@@ -37,8 +40,11 @@ def register(subparsers: _SubParsersAction) -> None:
 
     plan = commands.add_parser("plan", help="Calculate a read-only manifest v2 activation plan")
     plan.add_argument("manifest", type=Path)
-    plan.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    plan.add_argument("--runtime-root", type=Path)
     plan.add_argument("--host-id")
+    plan.add_argument("--socket", type=Path, default=DEFAULT_SOCKET_PATH)
+    plan.add_argument("--direct", action="store_true")
+    plan.add_argument("--idempotency-key")
     plan.add_argument("--allow-missing-edge", action="store_true")
     plan.add_argument("--json", action="store_true")
     plan.set_defaults(handler=run_plan)
@@ -46,7 +52,10 @@ def register(subparsers: _SubParsersAction) -> None:
     apply = commands.add_parser("apply", help="Submit an exact reviewed manifest v2 plan")
     apply.add_argument("plan_id")
     apply.add_argument("--confirm", required=True)
-    apply.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
+    apply.add_argument("--runtime-root", type=Path)
+    apply.add_argument("--socket", type=Path, default=DEFAULT_SOCKET_PATH)
+    apply.add_argument("--direct", action="store_true")
+    apply.add_argument("--idempotency-key")
     apply.add_argument("--allow-missing-edge", action="store_true")
     apply.add_argument("--json", action="store_true")
     apply.set_defaults(handler=run_apply)
@@ -137,15 +146,28 @@ def run_migrate(args: Namespace) -> int:
 
 def run_plan(args: Namespace) -> int:
     try:
-        key = local_approval_key(args.runtime_root, create=True)
-        report = plan_manifest_v2(
-            args.manifest,
-            runtime_root=args.runtime_root,
-            approval_key=key,
-            host_id=args.host_id,
-            require_edge_runtime=not args.allow_missing_edge,
-        )
-    except (ManifestV2Error, OSError, ValueError) as exc:
+        if args.direct:
+            runtime_root = args.runtime_root or DEFAULT_RUNTIME_ROOT
+            key = local_approval_key(runtime_root, create=True)
+            report = plan_manifest_v2(
+                args.manifest,
+                runtime_root=runtime_root,
+                approval_key=key,
+                host_id=args.host_id,
+                idempotency_key=args.idempotency_key,
+                require_edge_runtime=not args.allow_missing_edge,
+            )
+        else:
+            if args.runtime_root or args.host_id or args.allow_missing_edge:
+                raise ValueError(
+                    "Runtime root, host identity, and edge policy are daemon-owned; use --direct only for local recovery."
+                )
+            report = DaemonClient(args.socket).post(
+                "/v1/plans",
+                {"manifest_path": str(args.manifest.expanduser().resolve(strict=True))},
+                idempotency_key=args.idempotency_key or "plan:" + uuid.uuid4().hex,
+            )
+    except (DaemonClientError, ManifestV2Error, OSError, ValueError) as exc:
         print_error(str(exc), "manifest_plan_failed", json_output=args.json)
         return 1
     if args.json:
@@ -160,15 +182,27 @@ def run_plan(args: Namespace) -> int:
 
 def run_apply(args: Namespace) -> int:
     try:
-        key = local_approval_key(args.runtime_root, create=False)
-        report = apply_manifest_v2_plan(
-            args.plan_id,
-            runtime_root=args.runtime_root,
-            approval_key=key,
-            confirmation=args.confirm,
-            require_edge_runtime=not args.allow_missing_edge,
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
+        if args.direct:
+            runtime_root = args.runtime_root or DEFAULT_RUNTIME_ROOT
+            key = local_approval_key(runtime_root, create=False)
+            report = apply_manifest_v2_plan(
+                args.plan_id,
+                runtime_root=runtime_root,
+                approval_key=key,
+                confirmation=args.confirm,
+                require_edge_runtime=not args.allow_missing_edge,
+            )
+        else:
+            if args.runtime_root or args.allow_missing_edge:
+                raise ValueError(
+                    "Runtime root and edge policy are daemon-owned; use --direct only for local recovery."
+                )
+            report = DaemonClient(args.socket).post(
+                "/v1/operations",
+                {"plan_id": args.plan_id, "confirmation": args.confirm},
+                idempotency_key=args.idempotency_key or "apply:" + args.plan_id,
+            )
+    except (DaemonClientError, OSError, RuntimeError, ValueError) as exc:
         print_error(str(exc), "manifest_apply_failed", json_output=args.json)
         return 1
     receipt = report.get("receipt") or {}
@@ -179,7 +213,15 @@ def run_apply(args: Namespace) -> int:
             "Operation %s finished: %s"
             % (report["operation"]["operation_id"], receipt.get("outcome", "accepted"))
         )
-    return 0 if receipt.get("outcome") == "succeeded" else 1
+    if args.direct:
+        return 0 if receipt.get("outcome") == "succeeded" else 1
+    return (
+        0
+        if receipt.get("outcome") == "succeeded"
+        or report.get("operation", {}).get("state")
+        in {"accepted", "planning", "awaiting_approval", "queued", "executing", "succeeded"}
+        else 1
+    )
 
 
 def _document(path: Path) -> dict:

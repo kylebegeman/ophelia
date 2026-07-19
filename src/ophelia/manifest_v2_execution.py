@@ -162,12 +162,64 @@ def plan_manifest_v2(
         "expires_at": expires_at,
         "require_edge_runtime": require_edge_runtime,
         "secret_refs_available": secret_refs_available,
+        "previous_revision_id": None if journal_active is None else journal_active.revision_id,
+        "previous_revision_digest": None
+        if journal_active is None
+        else journal_active.revision_digest,
     }
     staging.write_evidence(
         "manifest-v2-plan.json", json.dumps(evidence, indent=2, sort_keys=True) + "\n"
     )
     _write_plan_index(runtime_root, plan.plan_id, staging.operation_id)
     token = _confirmation_token(approval_key, plan)
+    return _manifest_v2_plan_report(
+        plan,
+        request,
+        revision,
+        manifest,
+        confirmation_token=token,
+        expires_at=expires_at,
+        previous_revision_id=None if journal_active is None else journal_active.revision_id,
+        previous_revision_digest=None
+        if journal_active is None
+        else journal_active.revision_digest,
+    )
+
+
+def describe_manifest_v2_plan(
+    runtime_root: Path,
+    plan_id: str,
+    *,
+    approval_key: bytes,
+) -> Dict[str, Any]:
+    """Recreate the exact local plan response for an idempotent transport retry."""
+
+    _validate_approval_key(approval_key)
+    loaded = _load_plan(runtime_root, plan_id)
+    return _manifest_v2_plan_report(
+        loaded["plan"],
+        loaded["request"],
+        loaded["revision"],
+        loaded["manifest"],
+        confirmation_token=_confirmation_token(approval_key, loaded["plan"]),
+        expires_at=loaded["expires_at"],
+        previous_revision_id=loaded["previous_revision_id"],
+        previous_revision_digest=loaded["previous_revision_digest"],
+    )
+
+
+def _manifest_v2_plan_report(
+    plan: OperationPlan,
+    request: OperationRequest,
+    revision: Revision,
+    manifest: ManifestV2,
+    *,
+    confirmation_token: str,
+    expires_at: str,
+    previous_revision_id: Optional[str],
+    previous_revision_digest: Optional[str],
+) -> Dict[str, Any]:
+    blockers = list(plan.blocker_codes)
     return {
         "schema_version": 1,
         "kind": "ophelia.manifest-v2-plan",
@@ -176,18 +228,18 @@ def plan_manifest_v2(
         "plan_id": plan.plan_id,
         "plan_digest": plan.plan_digest(),
         "request_id": request.request_id,
-        "host_id": effective_host,
+        "host_id": plan.host_id,
         "app": manifest.app,
         "environment": manifest.environment,
         "revision_id": revision.revision_id,
         "revision_digest": revision.content_digest(),
         "manifest_digest": revision.manifest_digest,
         "artifact_digests": list(revision.artifact_digests),
-        "previous_revision_id": None if journal_active is None else journal_active.revision_id,
-        "previous_revision_digest": None if journal_active is None else journal_active.revision_digest,
+        "previous_revision_id": previous_revision_id,
+        "previous_revision_digest": previous_revision_digest,
         "steps": [item.to_dict() for item in plan.steps],
         "blockers": sorted(set(blockers)),
-        "confirmation_token": None if blockers else token,
+        "confirmation_token": None if blockers else confirmation_token,
         "expires_at": expires_at,
         "summary": (
             "Manifest v2 plan is blocked: %s." % ", ".join(sorted(set(blockers)))
@@ -209,6 +261,7 @@ def apply_manifest_v2_plan(
     require_edge_runtime: Optional[bool] = None,
     owner_id: str = "manifest-v2-cli-worker",
     execute: bool = True,
+    actor: Optional[Actor] = None,
 ) -> Dict[str, Any]:
     """Accept a locally approved plan and optionally execute it immediately."""
 
@@ -222,7 +275,7 @@ def apply_manifest_v2_plan(
         raise ValueError("Manifest v2 confirmation did not match the exact plan.")
     if datetime.now(timezone.utc) >= datetime.fromisoformat(loaded["expires_at"].replace("Z", "+00:00")):
         raise ValueError("Manifest v2 plan has expired; calculate a fresh plan.")
-    actor = Actor(
+    actor = actor or Actor(
         actor_id="actor_local-%d" % os.geteuid(),
         source="manifest-v2-cli",
         authenticated_by="unix-peer-credentials",
@@ -274,7 +327,6 @@ def submit_manifest_v2_plan(
     plan = loaded_plan["plan"]
     request = loaded_plan["request"]
     revision = loaded_plan["revision"]
-    manifest = loaded_plan["manifest"]
     if not approval.matches(plan) or approval.actor_id != actor.actor_id:
         raise ValueError("Approval does not bind the exact manifest v2 plan and actor.")
     first_artifact = revision.artifact_digests[0]
@@ -300,23 +352,14 @@ def submit_manifest_v2_plan(
         else require_edge_runtime
     )
 
-    def backend_factory(exact_input, operation_ref, fence):
-        return ComposeRevisionBackend(
-            manifest=manifest,
-            revision=exact_input.revision,
-            candidate_root=runtime_root / exact_input.artifact_ref.relative_root,
-            runtime_root=runtime_root,
-            host_id=exact_input.plan.host_id,
-            operation_id=operation_ref.operation_id,
-            owner_id=fence.owner_id,
-            fencing_token=fence.fencing_token,
-            runner=runner,
-            secret_resolver=secret_resolver,
-            external_verifier=external_verifier,
-            require_edge_runtime=required_edge,
-        )
-
-    executor = JournaledExecutor(journal=journal, backend_factory=backend_factory)
+    executor = manifest_v2_executor(
+        runtime_root=runtime_root,
+        journal=journal,
+        runner=runner,
+        secret_resolver=secret_resolver,
+        external_verifier=external_verifier,
+        require_edge_runtime=required_edge,
+    )
     operation = executor.submit(actor, request, approval, execution_input=execution_input)
     receipt = executor.run(operation.operation_id, owner_id=owner_id) if execute else journal.receipt(operation.operation_id)
     return {
@@ -325,6 +368,54 @@ def submit_manifest_v2_plan(
         "operation": operation.to_dict(),
         "receipt": None if receipt is None else receipt.to_dict(),
     }
+
+
+def manifest_v2_executor(
+    *,
+    runtime_root: Path,
+    journal: Optional[SQLiteOperationJournal] = None,
+    runner: Optional[CommandRunner] = None,
+    secret_resolver: Optional[Callable[[str], str]] = None,
+    external_verifier: Optional[Callable[[RouteV2], bool]] = None,
+    require_edge_runtime: bool = True,
+) -> JournaledExecutor:
+    """Build the restart-safe executor used by the CLI and ``opheliad``."""
+
+    runtime_root = _runtime_root(runtime_root)
+    exact_journal = journal or SQLiteOperationJournal.beneath_runtime_root(runtime_root)
+
+    def backend_factory(exact_input, operation_ref, fence):
+        candidate_root = (runtime_root / exact_input.artifact_ref.relative_root).resolve(
+            strict=False
+        )
+        try:
+            candidate_root.relative_to(runtime_root / "staging")
+        except ValueError as exc:
+            raise ValueError("Manifest v2 candidate is outside operation staging.") from exc
+        manifest = load_manifest_v2(candidate_root / "manifest.lock.json")
+        if (
+            manifest.app != exact_input.plan.app
+            or manifest.environment != exact_input.plan.environment
+            or manifest.canonical_digest() != exact_input.plan.manifest_digest
+            or exact_input.revision.content_digest() != exact_input.plan.revision_digest
+        ):
+            raise ValueError("Recovered manifest v2 candidate does not match its journal input.")
+        return ComposeRevisionBackend(
+            manifest=manifest,
+            revision=exact_input.revision,
+            candidate_root=candidate_root,
+            runtime_root=runtime_root,
+            host_id=exact_input.plan.host_id,
+            operation_id=operation_ref.operation_id,
+            owner_id=fence.owner_id,
+            fencing_token=fence.fencing_token,
+            runner=runner,
+            secret_resolver=secret_resolver,
+            external_verifier=external_verifier,
+            require_edge_runtime=require_edge_runtime,
+        )
+
+    return JournaledExecutor(journal=exact_journal, backend_factory=backend_factory)
 
 
 def load_manifest_v2_plan(runtime_root: Path, plan_id: str) -> Dict[str, Any]:
@@ -387,6 +478,8 @@ def _load_plan(runtime_root: Path, plan_id: str) -> Dict[str, Any]:
         "staging": staging,
         "expires_at": evidence["expires_at"],
         "require_edge_runtime": bool(evidence.get("require_edge_runtime", True)),
+        "previous_revision_id": evidence.get("previous_revision_id"),
+        "previous_revision_digest": evidence.get("previous_revision_digest"),
     }
 
 

@@ -55,6 +55,7 @@ from ophelia.execution import (
     RevisionArtifactRef,
     SQLiteOperationJournal,
 )
+from ophelia.execution.migrations import SCHEMA_VERSION
 
 
 D1 = "sha256:" + ("1" * 64)
@@ -296,7 +297,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         try:
             self.assertEqual("wal", connection.execute("PRAGMA journal_mode").fetchone()[0])
             self.assertEqual(2, connection.execute("PRAGMA synchronous").fetchone()[0])
-            self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(SCHEMA_VERSION, connection.execute("PRAGMA user_version").fetchone()[0])
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -320,6 +321,12 @@ class SQLiteOperationJournalTests(unittest.TestCase):
                 "active_revisions",
                 "atomic_success_commits",
                 "execution_scope_leases",
+                "host_events",
+                "event_delivery",
+                "daemon_plan_requests",
+                "host_state",
+                "workload_runs",
+                "workload_run_events",
             }.issubset(tables)
         )
         self.store.integrity_check()
@@ -357,7 +364,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         connection = reopened._connect()
         try:
             self.assertEqual(
-                3, connection.execute("PRAGMA user_version").fetchone()[0]
+                SCHEMA_VERSION, connection.execute("PRAGMA user_version").fetchone()[0]
             )
         finally:
             connection.close()
@@ -1603,7 +1610,7 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         self.assertEqual(second.operation_id, second_active.operation_id)
         self.store.integrity_check()
 
-    def test_v1_to_v3_migration_preserves_existing_operation(self) -> None:
+    def test_v1_to_latest_migration_preserves_operation_and_backfills_host_events(self) -> None:
         operation, _, _ = self._accept()
         connection = sqlite3.connect(str(self.store.database_path))
         try:
@@ -1611,6 +1618,12 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             connection.execute("DROP INDEX revision_lifecycle_latest")
             connection.execute("DROP INDEX execution_scope_lease_operation")
             for table in (
+                "workload_run_events",
+                "workload_runs",
+                "host_state",
+                "event_delivery",
+                "daemon_plan_requests",
+                "host_events",
                 "execution_scope_leases",
                 "atomic_success_commits",
                 "active_revisions",
@@ -1628,11 +1641,16 @@ class SQLiteOperationJournalTests(unittest.TestCase):
             self.store.database_path, clock=lambda: self.now[0]
         )
         self.assertEqual(operation, migrated.get(operation.operation_id))
+        projected = migrated.host_events_after(0)
+        self.assertEqual(len(migrated.events(operation.operation_id)), len(projected))
+        self.assertTrue(
+            all(item["operation_id"] == operation.operation_id for item in projected)
+        )
         migrated.integrity_check()
         connection = migrated._connect()
         try:
             self.assertEqual(
-                3, connection.execute("PRAGMA user_version").fetchone()[0]
+                SCHEMA_VERSION, connection.execute("PRAGMA user_version").fetchone()[0]
             )
         finally:
             connection.close()
@@ -1656,6 +1674,17 @@ class SQLiteOperationJournalTests(unittest.TestCase):
         )
         connection = sqlite3.connect(str(self.store.database_path))
         try:
+            connection.execute("DROP INDEX host_events_delivery")
+            connection.execute("DROP INDEX workload_runs_state")
+            for table in (
+                "workload_run_events",
+                "workload_runs",
+                "host_state",
+                "event_delivery",
+                "daemon_plan_requests",
+                "host_events",
+            ):
+                connection.execute("DROP TABLE " + table)
             connection.execute("DROP INDEX execution_scope_lease_operation")
             connection.execute("DROP TABLE execution_scope_leases")
             connection.execute("PRAGMA user_version = 2")

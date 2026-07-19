@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from ..domain._contracts import (
     ContractValidationError,
@@ -273,6 +273,174 @@ class SQLiteOperationJournal:
             ).fetchall()
             for row in operation_ids:
                 cls._verified_events(connection, row["operation_id"])
+            host_operation_events = connection.execute(
+                """
+                SELECT h.event_id, h.operation_id, h.event_digest, h.payload_json,
+                       e.event_digest AS operation_event_digest,
+                       e.payload_json AS operation_event_json
+                FROM host_events AS h
+                LEFT JOIN operation_events AS e ON e.event_id = h.event_id
+                WHERE h.event_type = 'operation'
+                ORDER BY h.cursor
+                """
+            ).fetchall()
+            operation_event_count = int(
+                connection.execute("SELECT COUNT(*) FROM operation_events").fetchone()[0]
+            )
+            if len(host_operation_events) != operation_event_count or any(
+                row["operation_id"] is None
+                or row["operation_event_digest"] != row["event_digest"]
+                or row["operation_event_json"] != row["payload_json"]
+                for row in host_operation_events
+            ):
+                raise IntegrityError(
+                    "Host event stream does not reconcile with operation events."
+                )
+            unknown_host_events = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM host_events
+                    WHERE event_type NOT IN ('operation', 'workload')
+                       OR (event_type = 'operation' AND (
+                            operation_id IS NULL OR workload_run_id IS NOT NULL
+                       ))
+                       OR (event_type = 'workload' AND (
+                            operation_id IS NOT NULL OR workload_run_id IS NULL
+                       ))
+                    """
+                ).fetchone()[0]
+            )
+            if unknown_host_events:
+                raise IntegrityError("Host event stream contains an invalid event type.")
+            latest_host_cursor = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(cursor), 0) FROM host_events"
+                ).fetchone()[0]
+            )
+            delivery_rows = connection.execute(
+                "SELECT * FROM event_delivery ORDER BY consumer_id"
+            ).fetchall()
+            for row in delivery_rows:
+                require_text(row["consumer_id"], "consumer_id")
+                parse_utc(row["updated_at"])
+                if not 0 <= int(row["acknowledged_cursor"]) <= latest_host_cursor:
+                    raise IntegrityError("Event delivery cursor exceeds durable history.")
+            for row in connection.execute(
+                "SELECT * FROM daemon_plan_requests ORDER BY actor_id, idempotency_key_digest"
+            ).fetchall():
+                require_text(row["actor_id"], "actor_id", 255)
+                require_digest(row["idempotency_key_digest"], "idempotency_key_digest")
+                require_digest(row["request_digest"], "request_digest")
+                require_text(row["plan_id"], "plan_id", 255)
+                parse_utc(row["created_at"])
+            for row in connection.execute(
+                "SELECT * FROM host_state ORDER BY host_id"
+            ).fetchall():
+                capabilities = json.loads(row["capabilities_json"])
+                expected_lifecycle = (
+                    "maintenance"
+                    if bool(row["maintenance_mode"])
+                    else ("drained" if bool(row["drained"]) else "ready")
+                )
+                if (
+                    not isinstance(capabilities, dict)
+                    or canonical_json(capabilities) != row["capabilities_json"]
+                    or row["lifecycle_state"] != expected_lifecycle
+                    or int(row["protocol_version"]) < 1
+                ):
+                    raise IntegrityError("Host state is not canonical or internally consistent.")
+                parse_utc(row["started_at"])
+                parse_utc(row["heartbeat_at"])
+                parse_utc(row["updated_at"])
+            workload_run_ids = connection.execute(
+                "SELECT * FROM workload_runs ORDER BY run_id"
+            ).fetchall()
+            workload_event_count = 0
+            for run_row in workload_run_ids:
+                request = json.loads(run_row["request_json"])
+                if (
+                    not isinstance(request, dict)
+                    or canonical_json(request) != run_row["request_json"]
+                    or canonical_digest(request) != run_row["request_digest"]
+                    or request.get("actor_id") != run_row["actor_id"]
+                    or request.get("host_id") != run_row["host_id"]
+                    or request.get("app") != run_row["app"]
+                    or request.get("environment") != run_row["environment"]
+                    or request.get("revision_id") != run_row["revision_id"]
+                    or request.get("revision_digest") != run_row["revision_digest"]
+                    or request.get("workload_name") != run_row["workload_name"]
+                    or request.get("workload_kind") != run_row["workload_kind"]
+                    or request.get("trigger_kind") != run_row["trigger_kind"]
+                    or run_row["state"]
+                    not in {"accepted", "running", "succeeded", "failed", "cancelled"}
+                ):
+                    raise IntegrityError("Workload-run identity is not canonical.")
+                require_digest(run_row["idempotency_key_digest"], "idempotency_key_digest")
+                require_digest(run_row["revision_digest"], "revision_digest")
+                parse_utc(run_row["accepted_at"])
+                if run_row["started_at"] is not None:
+                    parse_utc(run_row["started_at"])
+                if run_row["cancellation_requested_at"] is not None:
+                    parse_utc(run_row["cancellation_requested_at"])
+                terminal = run_row["state"] in {"succeeded", "failed", "cancelled"}
+                if terminal:
+                    parse_utc(run_row["completed_at"])
+                    require_digest(run_row["result_digest"], "result_digest")
+                    if run_row["lease_owner"] is not None or run_row["lease_expires"] is not None:
+                        raise IntegrityError("Terminal workload run retains an execution lease.")
+                elif run_row["completed_at"] is not None or run_row["result_digest"] is not None:
+                    raise IntegrityError("Nonterminal workload run contains terminal evidence.")
+                event_rows = connection.execute(
+                    """
+                    SELECT sequence, event_id, event_digest, payload_json
+                    FROM workload_run_events WHERE run_id = ? ORDER BY sequence
+                    """,
+                    (run_row["run_id"],),
+                ).fetchall()
+                previous_digest = None
+                for expected_sequence, event_row in enumerate(event_rows, start=1):
+                    payload = json.loads(event_row["payload_json"])
+                    if (
+                        int(event_row["sequence"]) != expected_sequence
+                        or payload.get("run_id") != run_row["run_id"]
+                        or payload.get("sequence") != expected_sequence
+                        or payload.get("previous_event_digest") != previous_digest
+                        or canonical_json(payload) != event_row["payload_json"]
+                        or canonical_digest(payload) != event_row["event_digest"]
+                    ):
+                        raise IntegrityError("Workload-run event chain is invalid.")
+                    previous_digest = event_row["event_digest"]
+                if not event_rows:
+                    raise IntegrityError("Workload run has no acceptance event.")
+                final_payload = json.loads(event_rows[-1]["payload_json"])
+                if terminal and final_payload.get("event_type") != run_row["state"]:
+                    raise IntegrityError("Terminal workload event does not match run state.")
+                workload_event_count += len(event_rows)
+            host_workload_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM host_events WHERE event_type = 'workload'"
+                ).fetchone()[0]
+            )
+            mismatched_workload_events = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM host_events AS h
+                    LEFT JOIN workload_run_events AS w ON w.event_id = h.event_id
+                    WHERE h.event_type = 'workload'
+                      AND (
+                        w.event_id IS NULL
+                        OR w.run_id != h.workload_run_id
+                        OR w.event_digest != h.event_digest
+                        OR w.payload_json != h.payload_json
+                      )
+                    """
+                ).fetchone()[0]
+            )
+            if host_workload_count != workload_event_count or mismatched_workload_events:
+                raise IntegrityError(
+                    "Host event stream does not reconcile with workload-run events."
+                )
             input_rows = connection.execute(
                 "SELECT operation_id FROM operation_inputs ORDER BY operation_id"
             ).fetchall()
@@ -1129,6 +1297,21 @@ class SQLiteOperationJournal:
             ),
         )
         connection.execute(
+            """
+            INSERT INTO host_events(
+                event_id, event_type, operation_id, workload_run_id,
+                event_digest, occurred_at, payload_json
+            ) VALUES (?, 'operation', ?, NULL, ?, ?, ?)
+            """,
+            (
+                event.event_id,
+                event.operation_id,
+                canonical_digest(event),
+                event.occurred_at,
+                payload_json,
+            ),
+        )
+        connection.execute(
             "UPDATE operations SET state = ? WHERE operation_id = ?",
             (event.state.value, event.operation_id),
         )
@@ -1140,6 +1323,156 @@ class SQLiteOperationJournal:
         finally:
             connection.close()
             self._repair_permissions()
+
+    def list_operations(
+        self,
+        *,
+        limit: int = 100,
+        state: Optional[OperationState] = None,
+    ) -> Tuple[Dict[str, Any], ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+            raise ContractValidationError("limit must be an integer from 1 through 1000.")
+        if state is not None and not isinstance(state, OperationState):
+            raise ContractValidationError("state must be an OperationState when provided.")
+        connection = self._connect()
+        try:
+            where = "WHERE o.state = ?" if state is not None else ""
+            parameters: tuple[object, ...] = (() if state is None else (state.value,)) + (limit,)
+            rows = connection.execute(
+                f"""
+                SELECT o.operation_id, o.request_id, o.operation_class, o.state,
+                       o.host_id, o.app, o.environment, o.revision_id,
+                       o.decision_id, o.accepted_at, r.receipt_id,
+                       r.outcome, r.receipt_digest
+                FROM operations AS o
+                LEFT JOIN terminal_receipts AS r ON r.operation_id = o.operation_id
+                {where}
+                ORDER BY o.accepted_at DESC, o.operation_id DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+            return tuple(
+                {
+                    "operation_id": row["operation_id"],
+                    "request_id": row["request_id"],
+                    "operation_class": row["operation_class"],
+                    "state": row["state"],
+                    "host_id": row["host_id"],
+                    "app": row["app"],
+                    "environment": row["environment"],
+                    "revision_id": row["revision_id"],
+                    "decision_id": row["decision_id"],
+                    "accepted_at": row["accepted_at"],
+                    "receipt": None
+                    if row["receipt_id"] is None
+                    else {
+                        "receipt_id": row["receipt_id"],
+                        "outcome": row["outcome"],
+                        "receipt_digest": row["receipt_digest"],
+                    },
+                }
+                for row in rows
+            )
+        finally:
+            connection.close()
+            self._repair_permissions()
+
+    def host_events_after(
+        self,
+        cursor: int,
+        *,
+        limit: int = 250,
+    ) -> Tuple[Dict[str, Any], ...]:
+        if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
+            raise ContractValidationError("cursor must be a non-negative integer.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+            raise ContractValidationError("limit must be an integer from 1 through 1000.")
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT cursor, event_id, event_type, operation_id,
+                       workload_run_id, event_digest, occurred_at, payload_json
+                FROM host_events WHERE cursor > ? ORDER BY cursor LIMIT ?
+                """,
+                (cursor, limit),
+            ).fetchall()
+            operation_ids = {
+                row["operation_id"] for row in rows if row["operation_id"] is not None
+            }
+            for operation_id in operation_ids:
+                self._verified_events(connection, operation_id)
+            result = []
+            for row in rows:
+                if row["event_type"] == "workload":
+                    workload_event = connection.execute(
+                        """
+                        SELECT run_id, event_digest, payload_json
+                        FROM workload_run_events WHERE event_id = ?
+                        """,
+                        (row["event_id"],),
+                    ).fetchone()
+                    if (
+                        workload_event is None
+                        or workload_event["run_id"] != row["workload_run_id"]
+                        or workload_event["event_digest"] != row["event_digest"]
+                        or workload_event["payload_json"] != row["payload_json"]
+                    ):
+                        raise IntegrityError("Host workload event does not reconcile.")
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, ValueError) as exc:
+                    raise IntegrityError("Host event payload is malformed.") from exc
+                if (
+                    canonical_json(payload) != row["payload_json"]
+                    or canonical_digest(payload) != row["event_digest"]
+                ):
+                    raise IntegrityError("Host event payload failed digest validation.")
+                result.append(
+                    {
+                        "cursor": int(row["cursor"]),
+                        "event_id": row["event_id"],
+                        "event_type": row["event_type"],
+                        "operation_id": row["operation_id"],
+                        "workload_run_id": row["workload_run_id"],
+                        "event_digest": row["event_digest"],
+                        "occurred_at": row["occurred_at"],
+                        "payload": payload,
+                    }
+                )
+            return tuple(result)
+        finally:
+            connection.close()
+            self._repair_permissions()
+
+    def acknowledge_host_events(self, consumer_id: str, cursor: int) -> int:
+        require_text(consumer_id, "consumer_id")
+        if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
+            raise ContractValidationError("cursor must be a non-negative integer.")
+        with self._transaction() as connection:
+            latest = int(connection.execute("SELECT COALESCE(MAX(cursor), 0) FROM host_events").fetchone()[0])
+            if cursor > latest:
+                raise OperationConflict("Event acknowledgement exceeds the host event cursor.")
+            existing = connection.execute(
+                "SELECT acknowledged_cursor FROM event_delivery WHERE consumer_id = ?",
+                (consumer_id,),
+            ).fetchone()
+            acknowledged = max(cursor, 0 if existing is None else int(existing[0]))
+            now = datetime.fromtimestamp(self._clock_sample(), timezone.utc).isoformat().replace(
+                "+00:00", "Z"
+            )
+            connection.execute(
+                """
+                INSERT INTO event_delivery(consumer_id, acknowledged_cursor, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(consumer_id) DO UPDATE SET
+                    acknowledged_cursor = excluded.acknowledged_cursor,
+                    updated_at = excluded.updated_at
+                """,
+                (consumer_id, acknowledged, now),
+            )
+            return acknowledged
 
     @classmethod
     def _verified_events(

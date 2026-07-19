@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from .domain import Revision, Workload, WorkloadKind, canonical_digest
+from .cron import CronExpressionError, validate_cron_expression
 from .validation import CanonicalValidationError, parse_domain, parse_environment, parse_identifier
 
 
@@ -952,6 +953,10 @@ def _validate_cron(value: Optional[str], field_name: str) -> None:
     fields = value.split()
     if len(fields) != 5 or any(_CRON_FIELD.fullmatch(item) is None for item in fields):
         raise ManifestV2Error("%s must be a five-field cron expression." % field_name)
+    try:
+        validate_cron_expression(value)
+    except CronExpressionError as exc:
+        raise ManifestV2Error("%s is invalid: %s" % (field_name, exc)) from exc
 
 
 def _without_none(value: Any) -> Any:

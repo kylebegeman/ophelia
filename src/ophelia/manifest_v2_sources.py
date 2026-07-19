@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterator, Tuple
 
 from .manifest_v2 import ManifestV2, WorkloadV2
+from .domain import canonical_digest
 
 
 class ManifestV2SourceError(ValueError):
@@ -115,9 +116,73 @@ def manifest_v2_sources_digest(manifest: ManifestV2, staged_root: Path) -> str:
         if stat.S_ISDIR(metadata.st_mode):
             digest.update(b"directory\0")
         elif stat.S_ISREG(metadata.st_mode):
-            digest.update(b"file\0" + path.read_bytes() + b"\0")
+            digest.update(b"file\0")
+            _update_digest_from_file(digest, path)
+            digest.update(b"\0")
         else:
             raise ManifestV2SourceError("Staged manifest sources contain a special file.")
+    return "sha256:" + digest.hexdigest()
+
+
+def manifest_v2_request_digest(manifest: ManifestV2, manifest_path: Path) -> str:
+    """Bind a planning request to manifest content and every declared source byte."""
+
+    source_root = Path(manifest_path).expanduser().parent.resolve(strict=True)
+    inputs = []
+    for artifact in manifest.artifacts:
+        if artifact.static_root is not None:
+            relative = _safe_relative(artifact.static_root, "static artifact root")
+            source = _trusted_source(source_root, relative, require_directory=True)
+            inputs.append(
+                {
+                    "target": relative.as_posix(),
+                    "declared_digest": artifact.digest,
+                    "source_digest": _source_tree_digest(source),
+                }
+            )
+    for service_name, workload in _runtime_workloads(manifest):
+        for index, raw_source in enumerate(workload.env_files):
+            relative = _safe_relative(raw_source, "env file")
+            source = _trusted_source(source_root, relative, require_directory=False)
+            inputs.append(
+                {
+                    "target": support_file_target(
+                        workload,
+                        index,
+                        raw_source,
+                        service_name=service_name,
+                    ).as_posix(),
+                    "sha256": _file_sha256(source),
+                }
+            )
+    return canonical_digest(
+        {
+            "manifest_digest": manifest.canonical_digest(),
+            "source_inputs": sorted(inputs, key=lambda item: item["target"]),
+        }
+    )
+
+
+def _source_tree_digest(root: Path) -> str:
+    """Digest a trusted source tree without following links or special files."""
+
+    digest = hashlib.sha256()
+    for path in [root, *sorted(root.rglob("*"))]:
+        relative = path.relative_to(root)
+        metadata = path.lstat()
+        digest.update((relative.as_posix() or ".").encode("utf-8") + b"\0")
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ManifestV2SourceError("Static artifacts may not contain symbolic links.")
+        if stat.S_ISDIR(metadata.st_mode):
+            digest.update(b"directory\0")
+        elif stat.S_ISREG(metadata.st_mode):
+            digest.update(b"file\0")
+            _update_digest_from_file(digest, path)
+            digest.update(b"\0")
+        else:
+            raise ManifestV2SourceError(
+                "Static artifacts may contain only files and directories."
+            )
     return "sha256:" + digest.hexdigest()
 
 
@@ -183,23 +248,61 @@ def _copy_file(source: Path, target: Path, *, allowed_output: Path) -> None:
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
         raise ManifestV2SourceError("Manifest source targets must be unique.")
+    source_descriptor = os.open(
+        source,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    if not stat.S_ISREG(os.fstat(source_descriptor).st_mode):
+        os.close(source_descriptor)
+        raise ManifestV2SourceError("Manifest source file must remain a regular file.")
+    try:
+        descriptor = os.open(
+            target,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            with os.fdopen(source_descriptor, "rb") as handle:
+                source_descriptor = -1
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    offset = 0
+                    while offset < len(chunk):
+                        offset += os.write(descriptor, chunk[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        if source_descriptor >= 0:
+            os.close(source_descriptor)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    _update_digest_from_file(digest, path)
+    return digest.hexdigest()
+
+
+def _update_digest_from_file(digest, path: Path) -> None:
     descriptor = os.open(
-        target,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
     )
     try:
-        with source.open("rb") as handle:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ManifestV2SourceError("Manifest source file must remain a regular file.")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
             while True:
                 chunk = handle.read(1024 * 1024)
                 if not chunk:
                     break
-                offset = 0
-                while offset < len(chunk):
-                    offset += os.write(descriptor, chunk[offset:])
-        os.fsync(descriptor)
+                digest.update(chunk)
     finally:
-        os.close(descriptor)
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _require_output(path: Path, root: Path) -> None:

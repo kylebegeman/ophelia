@@ -83,3 +83,4 @@
 | [0079](0079-product-operations-execution-bridge.md) | 2026-07-14 | landed | Product operations execution bridge | product-contracts, forge, execution, traffic, backup, restore, rollback, receipts, cli, docs, tests |
 | [0080](0080-release-050.md) | 2026-07-19 | landed | Release 0.5.0 | release, kernel, journal, recovery, static, forge, security, docs, tests |
 | [0081](0081-manifest-v2-compose-kernel.md) | 2026-07-19 | landed | Manifest v2 and journaled Compose kernel | manifest-v2, workloads, compose, caddy, journal, cli, security, docs, tests |
+| [0082](0082-opheliad-single-host-authority.md) | 2026-07-19 | landed | Durable opheliad single-host authority | daemon, unix-api, recovery, workloads, cron, journal, installer, systemd, cli, security, docs, tests |

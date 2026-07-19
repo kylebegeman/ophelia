@@ -29,6 +29,7 @@ test = ["jsonschema>=4"]
 [project.scripts]
 ship = "ophelia.main:main"
 ophelia = "ophelia.main:main"
+opheliad = "ophelia.daemon.main:main"
 
 [project.urls]
 Repository = "https://github.com/mrbagels/ophelia"
@@ -41,4 +42,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"ophelia.resources" = ["templates/**/*.tpl"]
+"ophelia.resources" = ["templates/**/*.tpl", "systemd/*.service"]
