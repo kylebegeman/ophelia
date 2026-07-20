@@ -101,3 +101,4 @@
 | [0097](0097-multi-network-http-probes.md) | 2026-07-20 | landed | Multi-network HTTP readiness probes for release 0.6.7 | release, manifest-v2, compose, networking, health, lumen, tests |
 | [0098](0098-confined-runtime-probes.md) | 2026-07-20 | landed | Confined runtime probes and non-root support files for release 0.6.8 | release, manifest-v2, compose, health, security, lumen, tests |
 | [0099](0099-grouped-caddy-site-routes.md) | 2026-07-20 | landed | Grouped same-host Caddy routes for release 0.6.9 | release, manifest-v2, caddy, routing, lumen, tests |
+| [0100](0100-legacy-route-v2-cutover.md) | 2026-07-20 | landed | Compensatable legacy route takeover for release 0.6.10 | release, manifest-v2, caddy, migration, recovery, lumen, tests |
