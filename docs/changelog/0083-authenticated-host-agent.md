@@ -79,8 +79,9 @@ violations before installation.
 
 ## Follow-Ups
 
-- Implement the matching Lumen certificate authority, enrollment endpoint,
-  exchange authority, command queue, Decision signer, and DeployProvider.
+- The matching Lumen certificate authority, enrollment endpoint, exchange
+  authority, command queue, Decision signer, and DeployProvider are implemented
+  in the Lumen Platform V1 program.
 - Exercise revocation, rotation, failed startup rollback, and disconnect replay
   on disposable Linux hosts.
 - Encrypted backup, clean-host restore, and continuous observations were

@@ -87,3 +87,4 @@
 | [0083](0083-authenticated-host-agent.md) | 2026-07-19 | landed | Authenticated outbound host agent and lifecycle | agent, enrollment, mtls, decisions, replay, certificates, upgrades, daemon, journal, systemd, cli, security, docs, tests |
 | [0084](0084-encrypted-host-recovery-observations.md) | 2026-07-19 | landed | Encrypted host recovery and continuous observations | backup, restore, recovery, age, observations, daemon, agent, journal, identity, systemd, cli, security, docs, tests |
 | [0085](0085-release-060.md) | 2026-07-19 | landed | Release 0.6.0 | release, manifest-v2, daemon, agent, recovery, observations, security, docs, tests |
+| [0086](0086-lumen-decision-plan-projection.md) | 2026-07-19 | landed | Lumen Decision plan projection | agent, manifest-v2, decisions, lumen, deploy, contracts, docs, tests |

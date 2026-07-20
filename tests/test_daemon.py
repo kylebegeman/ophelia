@@ -852,6 +852,9 @@ update: {{strategy: recreate}}
 
             result = agent.store.pending_results(config.host_id)[0]["result"]["result"]
             self.assertNotIn("confirmation_token", result)
+            self.assertEqual("sha256:", result["request_digest"][:7])
+            self.assertEqual("sha256:", result["observed_state_digest"][:7])
+            self.assertEqual("sha256:", result["policy_digest"][:7])
             connection = service.journal._connect()
             try:
                 payload_json = connection.execute(
