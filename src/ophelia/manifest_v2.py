@@ -1161,7 +1161,12 @@ def _tree_digest(root: Path) -> str:
             digest.update(b"d\0" + relative + b"\0")
         elif stat.S_ISREG(metadata.st_mode):
             digest.update(b"f\0" + relative + b"\0")
-            digest.update(path.read_bytes())
+            with path.open("rb") as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
         else:
             raise ManifestV2Error("Static artifacts may contain only files and directories.")
     return "sha256:" + digest.hexdigest()

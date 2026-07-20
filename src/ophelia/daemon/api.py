@@ -125,6 +125,7 @@ class DaemonAPIHandler(BaseHTTPRequestHandler):
                 idempotency_key = self._idempotency_key()
                 body = self._read_json()
                 status, payload = self._post(parsed.path, body, actor, idempotency_key)
+            self.daemon_service._clear_error("api")
             self._json(status, request_id, payload)
         except KeyError:
             self._error(404, request_id, "not_found", "The requested Ophelia resource was not found.")
@@ -136,7 +137,8 @@ class DaemonAPIHandler(BaseHTTPRequestHandler):
             self._error(400, request_id, "invalid_request", str(exc))
         except OperationConflict as exc:
             self._error(409, request_id, "operation_conflict", str(exc))
-        except Exception:
+        except Exception as exc:
+            self.daemon_service._record_error("api", exc)
             self._error(
                 500,
                 request_id,

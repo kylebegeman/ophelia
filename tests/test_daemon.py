@@ -25,7 +25,11 @@ from ophelia.daemon.agent_store import AgentStore
 from ophelia.daemon.service import OpheliaDaemon
 from ophelia.daemon.store import DaemonStore
 from ophelia.daemon.install import daemon_install_plan
-from ophelia.daemon.enrollment import _enable_agent_config, enrollment_plan
+from ophelia.daemon.enrollment import (
+    EnrollmentError,
+    _enable_agent_config,
+    enrollment_plan,
+)
 from ophelia.daemon.systemd import notify_systemd
 from ophelia.daemon.decisions import verify_lumen_decision
 from ophelia.daemon.upgrades import (
@@ -62,7 +66,7 @@ class FakeRunner:
         exit_code = 0
         reason = "success"
         if command[:3] == ["docker", "image", "inspect"]:
-            stdout = PINNED_IMAGE + "\n"
+            stdout = "node\n" if "--format" in command else PINNED_IMAGE + "\n"
         elif command[:2] == ["docker", "inspect"]:
             exit_code = 1
             reason = "nonzero_exit"
@@ -212,6 +216,19 @@ class DaemonConfigTests(unittest.TestCase):
                     socket_path=root / "daemon.sock",
                 )
 
+    def test_control_plane_url_rejects_invalid_ports_and_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "agent.toml"
+            for url in ("https://control.example.com:invalid", "https://bad host"):
+                path.write_text('control_plane_url = %s\n' % json.dumps(url))
+                with self.assertRaisesRegex(DaemonConfigError, "control_plane_url"):
+                    load_daemon_config(
+                        path,
+                        runtime_root=root / "runtime",
+                        socket_path=root / "daemon.sock",
+                    )
+
 
 class DaemonInstallTests(unittest.TestCase):
     def test_enrollment_config_pins_the_planned_logical_host_identity(self) -> None:
@@ -240,7 +257,7 @@ class DaemonInstallTests(unittest.TestCase):
             source.mkdir()
             (source / "pyproject.toml").write_text("[project]\nname='fixture'\n")
             install_root = root / "install"
-            release = install_root / "releases" / "0.6.0"
+            release = install_root / "releases" / package_version()
             release.mkdir(parents=True)
             config = root / "agent.toml"
             unit = root / "opheliad.service"
@@ -262,7 +279,7 @@ class DaemonInstallTests(unittest.TestCase):
                         {
                             "schema_version": 1,
                             "kind": "ophelia.daemon-install",
-                            "version": "0.6.0",
+                            "version": package_version(),
                             "source_digest": incomplete["observations"]["source_digest"],
                         }
                     )
@@ -312,6 +329,25 @@ class DaemonInstallTests(unittest.TestCase):
         self.assertTrue(plan["can_apply"])
         self.assertNotIn("secret-one-time-token", json.dumps(plan))
         self.assertTrue(plan["observations"]["token_digest"].startswith("sha256:"))
+
+    def test_enrollment_plan_rejects_an_invalid_control_plane_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            token = root / "enrollment.token"
+            token.write_text("secret-one-time-token")
+            token.chmod(0o600)
+            config = root / "agent.toml"
+            config.write_text("agent_enabled = false\n")
+
+            with self.assertRaisesRegex(EnrollmentError, "invalid port"):
+                enrollment_plan(
+                    host_id="host_fixture-1",
+                    control_plane_url="https://control.example.com:invalid",
+                    token_file=token,
+                    trust_root=root / "trust",
+                    identity_root=root / "identity",
+                    config_path=config,
+                )
 
 
 class AgentUpgradeTests(unittest.TestCase):
@@ -750,6 +786,51 @@ class OutboundAgentTests(unittest.TestCase):
             self.assertEqual(1, len(transport.requests[1]["command_results"]))
             self.assertEqual(1, agent.store.state(config.host_id)["acknowledged_command_sequence"])
 
+    def test_invalid_command_batch_does_not_commit_result_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = DaemonConfig(
+                host_id="host_fixture-1",
+                runtime_root=root / "runtime",
+                socket_path=root / "opheliad.sock",
+                allowed_uids=(os.geteuid(),),
+                allowed_manifest_roots=(root,),
+                require_edge_runtime=False,
+            )
+            service = OpheliaDaemon(config, runner=FakeRunner())
+            service.store.register_host(
+                host_id=config.host_id,
+                capabilities=service.capabilities(),
+                agent_version="0.6.0",
+                protocol_version=1,
+            )
+            command = _agent_command(
+                sequence=1,
+                operation="host.drain",
+                payload={"enabled": True},
+            )
+            invalid_response = _agent_response(
+                acknowledged_command_sequence=1,
+                commands=[{"schema_version": 1}],
+            )
+            agent = OutboundHostAgent(
+                service,
+                FakeAgentTransport(
+                    [_agent_response(commands=[command]), invalid_response]
+                ),
+                command_verifier=lambda _: "sha256:" + "a" * 64,
+            )
+
+            agent.run_once()
+            with self.assertRaisesRegex(ValueError, "command fields"):
+                agent.run_once()
+
+            self.assertEqual(
+                0,
+                agent.store.state(config.host_id)["acknowledged_command_sequence"],
+            )
+            self.assertEqual(1, len(agent.store.pending_results(config.host_id)))
+
     def test_invalid_command_payload_is_durably_rejected_without_storing_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -840,7 +921,8 @@ update: {{strategy: recreate}}
                                 payload={"manifest": manifest, "files": []},
                             )
                         ]
-                    )
+                    ),
+                    _agent_response(acknowledged_command_sequence=1),
                 ]
             )
             agent = OutboundHostAgent(
@@ -851,6 +933,8 @@ update: {{strategy: recreate}}
             agent.run_once()
 
             result = agent.store.pending_results(config.host_id)[0]["result"]["result"]
+            inbox = config.runtime_root / "inbox" / "command_fixture-1"
+            self.assertTrue(inbox.is_dir())
             self.assertNotIn("confirmation_token", result)
             self.assertEqual("sha256:", result["request_digest"][:7])
             self.assertEqual("sha256:", result["observed_state_digest"][:7])
@@ -864,6 +948,19 @@ update: {{strategy: recreate}}
                 connection.close()
             self.assertNotIn(manifest.strip(), payload_json)
             self.assertIn("bundle_digest", payload_json)
+
+            agent.run_once()
+
+            self.assertFalse(inbox.exists())
+            self.assertEqual((), agent.store.acknowledged_bundle_ids(1))
+            connection = service.journal._connect()
+            try:
+                pruned_at = connection.execute(
+                    "SELECT bundle_pruned_at FROM agent_commands WHERE sequence = 1"
+                ).fetchone()[0]
+            finally:
+                connection.close()
+            self.assertIsNotNone(pruned_at)
 
     def test_signed_lumen_decision_binds_plan_without_persisting_nonce(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

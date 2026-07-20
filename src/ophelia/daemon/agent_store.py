@@ -366,6 +366,54 @@ class AgentStore:
             )
             return sequence
 
+    def acknowledged_bundle_ids(self, sequence: int) -> Tuple[str, ...]:
+        """Return terminal source-bundle commands safe to remove from the inbox."""
+
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            raise ValueError("Acknowledged command sequence must be non-negative.")
+        connection = self.journal._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT command_id FROM agent_commands
+                WHERE sequence <= ?
+                  AND state IN ('succeeded', 'failed')
+                  AND operation IN ('manifest.plan', 'host.upgrade')
+                  AND bundle_pruned_at IS NULL
+                ORDER BY sequence
+                """,
+                (sequence,),
+            ).fetchall()
+            return tuple(str(row["command_id"]) for row in rows)
+        finally:
+            connection.close()
+            self.journal._repair_permissions()
+
+    def mark_bundle_pruned(self, command_id: str) -> None:
+        """Record successful cleanup so later exchanges do not rescan it."""
+
+        if not isinstance(command_id, str) or _COMMAND_ID.fullmatch(command_id) is None:
+            raise ValueError("Agent command id is invalid.")
+        with self.journal._transaction() as connection:
+            row = connection.execute(
+                "SELECT operation, state FROM agent_commands WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(command_id)
+            if row["operation"] not in {"manifest.plan", "host.upgrade"} or row[
+                "state"
+            ] not in _TERMINAL:
+                raise OperationConflict("Only terminal source bundles may be pruned.")
+            connection.execute(
+                """
+                UPDATE agent_commands
+                SET bundle_pruned_at = COALESCE(bundle_pruned_at, ?)
+                WHERE command_id = ?
+                """,
+                (self._now(), command_id),
+            )
+
     @staticmethod
     def _from_row(row) -> AgentCommand:
         result = None if row["result_json"] is None else json.loads(row["result_json"])

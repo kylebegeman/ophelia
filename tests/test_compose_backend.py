@@ -62,11 +62,46 @@ class FakeRunner:
             if stdout:
                 stdout += "\n"
         elif command[:3] == ["docker", "image", "inspect"]:
-            stdout = PINNED_IMAGE + "\n"
+            stdout = "node\n" if "--format" in command else PINNED_IMAGE + "\n"
         return ProcessResult(tuple(command), 0, "success", stdout, "", False, False, 1)
 
 
 class ComposeRevisionBackendTests(unittest.TestCase):
+    def test_non_root_policy_rejects_an_image_that_defaults_to_root(self) -> None:
+        class RootImageRunner(FakeRunner):
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                result = super().run(argv, **kwargs)
+                if list(argv)[:3] == ["docker", "image", "inspect"] and "--format" in argv:
+                    return ProcessResult(
+                        tuple(argv), 0, "success", "\n", "", False, False, 1
+                    )
+                return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=RootImageRunner(),
+                require_edge_runtime=False,
+            )
+
+            preflight = backend.preflight(revision)
+
+            self.assertFalse(preflight.ok)
+            self.assertIn(
+                "container_non_root_identity_unverified", preflight.blocker_codes
+            )
+
     def test_blue_green_candidate_defers_fenced_worker_until_activation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -105,6 +140,163 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             self.assertEqual(revision.revision_id, active["revision_id"])
             self.assertIn("jobs", runner.running[backend.project])
             self.assertIn("web", runner.running[backend.project])
+            caddy_commands = [
+                command
+                for command in runner.commands
+                if "caddy" in command
+                and ("validate" in " ".join(command) or "reload" in " ".join(command))
+            ]
+            self.assertTrue(caddy_commands)
+            validate = next(
+                command for command in caddy_commands if "validate" in " ".join(command)
+            )
+            reload = next(
+                command for command in caddy_commands if "reload" in " ".join(command)
+            )
+            self.assertEqual(
+                ["--envfile", "/etc/caddy/env"],
+                validate[
+                    validate.index("--envfile") : validate.index("--envfile") + 2
+                ],
+            )
+            self.assertIn("--envfile /etc/caddy/env", reload[-1])
+            self.assertIn("caddy reload --config -", reload[-1])
+
+    def test_candidate_readiness_and_active_liveness_use_distinct_probes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(
+                staging,
+                runtime_root,
+                probes="""
+    readiness: {command: [\"/bin/ready\"]}
+    liveness: {command: [\"/bin/live\"]}
+""",
+            )
+            observed: List[Sequence[str]] = []
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=FakeRunner(),
+                probe_checker=lambda _workload, probe: observed.append(probe.command) or True,
+                require_edge_runtime=False,
+            )
+
+            workload = manifest.workload("web")
+            self.assertTrue(backend._probe(workload, candidate=True))
+            self.assertTrue(backend._probe(workload, candidate=False))
+
+            self.assertEqual([("/bin/ready",), ("/bin/live",)], observed)
+
+    def test_caddy_activation_prunes_unreferenced_managed_route_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            shared = runtime_root / "platform" / "shared"
+            shared.mkdir(parents=True)
+            (shared / "compose.yml").write_text("services: {caddy: {image: caddy}}\n")
+            caddy = runtime_root / "caddy"
+            caddy.mkdir()
+            active = "OPHELIA_ROUTE_AUTH_" + "A" * 24
+            stale = "OPHELIA_ROUTE_AUTH_" + "B" * 24
+            (caddy / "env").write_text(
+                '%s="active"\n%s="stale"\nUNMANAGED="preserved"\n'
+                % (active, stale)
+            )
+            candidate = staging / "caddy" / "routes.caddy"
+            candidate.write_text(
+                "example.com {\n  reverse_proxy app:8080 {\n"
+                f'    header_up Authorization "Bearer {{${active}}}"\n'
+                "  }\n}\n"
+            )
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=FakeRunner(),
+            )
+
+            backend._activate_caddy(candidate)
+
+            materialized = (caddy / "env").read_text()
+            self.assertIn(active, materialized)
+            self.assertNotIn(stale, materialized)
+            self.assertIn("UNMANAGED", materialized)
+
+    def test_failed_caddy_activation_restores_routes_and_prunes_candidate_secret(
+        self,
+    ) -> None:
+        class FailingValidationRunner(FakeRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.failed = False
+
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                if "validate" in argv and not self.failed:
+                    self.failed = True
+                    raise RuntimeError("invalid candidate")
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            shared = runtime_root / "platform" / "shared"
+            shared.mkdir(parents=True)
+            (shared / "compose.yml").write_text("services: {caddy: {image: caddy}}\n")
+            old_key = "OPHELIA_ROUTE_AUTH_" + "A" * 24
+            candidate_key = "OPHELIA_ROUTE_AUTH_" + "B" * 24
+            runner = FailingValidationRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+            )
+            backend.caddy_include.parent.mkdir(parents=True)
+            previous_routes = (
+                "old.example.com {\n  reverse_proxy old:8080 {\n"
+                f'    header_up Authorization "Bearer {{${old_key}}}"\n'
+                "  }\n}\n"
+            )
+            backend.caddy_include.write_text(previous_routes)
+            env_path = runtime_root / "caddy" / "env"
+            env_path.write_text(f'{old_key}="old"\n{candidate_key}="candidate"\n')
+            candidate = staging / "caddy" / "routes.caddy"
+            candidate.write_text(
+                "new.example.com {\n  reverse_proxy new:8080 {\n"
+                f'    header_up Authorization "Bearer {{${candidate_key}}}"\n'
+                "  }\n}\n"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "invalid candidate"):
+                backend._activate_caddy(candidate)
+
+            self.assertEqual(previous_routes, backend.caddy_include.read_text())
+            restored_env = env_path.read_text()
+            self.assertIn(old_key, restored_env)
+            self.assertNotIn(candidate_key, restored_env)
 
     def test_failed_candidate_removal_cleans_runtime_and_never_removes_active(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -277,6 +469,7 @@ def _stage_manifest(
     *,
     web_replicas: int = 1,
     strategy: str = "blue_green",
+    probes: str = "",
 ):
     staging.mkdir(parents=True)
     source = staging.parent / "app.ophelia.yml"
@@ -293,6 +486,7 @@ workloads:
     artifact: app
     port: 8080
     replicas: {web_replicas}
+{probes.rstrip()}
   jobs:
     kind: worker
     artifact: app

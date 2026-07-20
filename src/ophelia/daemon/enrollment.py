@@ -458,6 +458,10 @@ def _absolute_path(value: Path, field: str) -> Path:
 
 def _https_url(value: str) -> str:
     parsed = urlparse(value)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise EnrollmentError("Control-plane URL contains an invalid port.") from exc
     if (
         parsed.scheme != "https"
         or not parsed.hostname
@@ -465,6 +469,7 @@ def _https_url(value: str) -> str:
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
+        or any(ord(character) <= 32 or ord(character) == 127 for character in value)
     ):
         raise EnrollmentError("Control-plane URL must be safe HTTPS.")
     return value.rstrip("/")

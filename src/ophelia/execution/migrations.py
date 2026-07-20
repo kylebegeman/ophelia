@@ -6,7 +6,7 @@ import sqlite3
 from typing import Sequence, Tuple
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
     (
@@ -360,6 +360,14 @@ _MIGRATIONS: Sequence[Tuple[int, Tuple[str, ...]]] = (
             """
             CREATE INDEX host_observations_latest
             ON host_observations(host_id, observation_id DESC)
+            """,
+        ),
+    ),
+    (
+        7,
+        (
+            """
+            ALTER TABLE agent_commands ADD COLUMN bundle_pruned_at TEXT
             """,
         ),
     ),

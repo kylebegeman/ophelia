@@ -422,6 +422,15 @@ class SQLiteOperationJournal:
                     for field in ("completed_at", "result_digest", "result_json")
                 ):
                     raise IntegrityError("Nonterminal agent command contains terminal evidence.")
+                if row["bundle_pruned_at"] is not None:
+                    if not terminal or row["operation"] not in {
+                        "manifest.plan",
+                        "host.upgrade",
+                    }:
+                        raise IntegrityError(
+                            "Only terminal source-bundle commands may be marked pruned."
+                        )
+                    parse_utc(row["bundle_pruned_at"])
                 previous_sequence = sequence
             maximum_command = max(previous_sequence, maximum_acknowledged)
             for row in connection.execute(

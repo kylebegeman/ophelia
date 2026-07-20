@@ -335,7 +335,12 @@ def tree_digest(root: Path) -> str:
             digest.update(b"directory\0")
         elif stat.S_ISREG(metadata.st_mode):
             digest.update(b"file\0")
-            digest.update(child.read_bytes())
+            with child.open("rb") as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
             digest.update(b"\0")
         else:
             raise StagingError(f"Operation staging contains a special file: {child}")

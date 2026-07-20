@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import tempfile
+import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
+from unittest import mock
 
+from ophelia.domain import Actor, ApprovedPlanRef, AuthorizationKind
 from ophelia.domain.receipts import ReceiptOutcome
 from ophelia.execution.subprocesses import ProcessResult
 from ophelia.manifest_v2_execution import (
     apply_manifest_v2_plan,
+    local_approval_key,
     load_manifest_v2_plan,
     plan_manifest_v2,
+    submit_manifest_v2_plan,
 )
 
 
@@ -28,7 +35,9 @@ class FakeRunner:
         self.commands.append(command)
         project = _option(command, "-p")
         stdout = ""
-        if "up" in command:
+        if command[:3] == ["docker", "image", "inspect"] and "--format" in command:
+            stdout = "node\n"
+        elif "up" in command:
             values = command[command.index("up") + 1 :]
             services = [item for item in values if not item.startswith("-") and "=" not in item]
             self.running.setdefault(project, set()).update(services)
@@ -42,6 +51,85 @@ class FakeRunner:
 
 
 class ManifestV2ExecutionTests(unittest.TestCase):
+    def test_remote_approval_uses_the_shorter_decision_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(
+                f"""
+version: 2
+app: remote-decision-demo
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  worker: {{kind: worker, artifact: app}}
+routes: []
+update: {{strategy: recreate}}
+"""
+            )
+            plan_report = plan_manifest_v2(
+                manifest_path,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                approval_key=b"fixture-approval-key-with-enough-entropy",
+                require_edge_runtime=False,
+            )
+            loaded = load_manifest_v2_plan(runtime_root, plan_report["plan_id"])
+            actor = Actor("actor_lumen-1", "test", "mutual-tls-host-agent")
+            approved_at = datetime.now(timezone.utc)
+            expires_at = (approved_at + timedelta(minutes=10)).isoformat().replace(
+                "+00:00", "Z"
+            )
+            approval = ApprovedPlanRef.bind(
+                loaded["plan"],
+                actor_id=actor.actor_id,
+                decision_id="decision_lumen-1",
+                authorization_kind=AuthorizationKind.LUMEN_DECISION,
+                issuer="lumen-control-plane",
+                audience=loaded["plan"].host_id,
+                approved_at=approved_at.isoformat().replace("+00:00", "Z"),
+                expires_at=expires_at,
+                approval_nonce="fixture-nonce",
+            )
+
+            result = submit_manifest_v2_plan(
+                loaded,
+                actor=actor,
+                approval=approval,
+                runtime_root=runtime_root,
+                runner=FakeRunner(),
+                require_edge_runtime=False,
+                execute=False,
+            )
+
+            self.assertEqual("accepted", result["operation"]["state"])
+            self.assertIsNone(result["receipt"])
+
+    def test_local_approval_key_creation_is_single_winner_under_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime_root = Path(directory) / "runtime"
+            barrier = threading.Barrier(8)
+            from ophelia import manifest_v2_execution as execution
+
+            original = execution._atomic_bytes
+
+            def synchronized(path: Path, data: bytes) -> bool:
+                barrier.wait(timeout=5)
+                return original(path, data)
+
+            with mock.patch.object(execution, "_atomic_bytes", synchronized):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                    values = list(
+                        pool.map(
+                            lambda _: local_approval_key(runtime_root, create=True),
+                            range(8),
+                        )
+                    )
+
+            self.assertEqual(1, len(set(values)))
+            self.assertEqual(values[0], local_approval_key(runtime_root, create=False))
+
     def test_plan_apply_and_retry_use_one_durable_operation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

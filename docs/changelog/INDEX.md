@@ -92,3 +92,4 @@
 | [0088](0088-recreate-readiness-order.md) | 2026-07-19 | landed | Recreate deployment readiness ordering | manifest-v2, execution, recreate, readiness, rollback, tests |
 | [0089](0089-packaged-edge-bootstrap.md) | 2026-07-19 | landed | Packaged edge bootstrap | edge, caddy, package, bootstrap, tests |
 | [0090](0090-explicit-sandbox-security-profiles.md) | 2026-07-19 | landed | Explicit sandbox security profiles | manifest-v2, security, compose, sandbox, runner, tests |
+| [0091](0091-runtime-hardening-audit.md) | 2026-07-19 | landed | Runtime hardening audit and release 0.6.1 | release, manifest-v2, daemon, agent, caddy, security, reliability, performance, tests |

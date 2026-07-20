@@ -52,6 +52,11 @@ and the append-only plan index. Apply requires the exact plan-bound local
 approval or a separately verified Lumen Decision claim, then runs through the
 authoritative operation journal and receipt pipeline.
 
+`security.run_as_non_root: true` is an enforced runtime assertion. Set an
+explicit non-zero `run_as_user`, or ensure the image declares a non-root
+`USER`. Preflight blocks an image whose effective user is empty, `root`, or a
+zero UID instead of treating the manifest flag as advisory metadata.
+
 Manifest-relative env files and static artifact trees are copied into private
 operation staging during planning. Their exact paths and bytes are bound into
 the reviewed plan. Apply rejects missing, added, or changed staged input before

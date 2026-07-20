@@ -364,6 +364,10 @@ def _optional_https_url(value: object) -> Optional[str]:
     if not isinstance(value, str) or len(value) > 2048:
         raise DaemonConfigError("control_plane_url must be a bounded HTTPS URL.")
     parsed = urlparse(value)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise DaemonConfigError("control_plane_url contains an invalid port.") from exc
     if (
         parsed.scheme != "https"
         or not parsed.hostname
@@ -371,6 +375,7 @@ def _optional_https_url(value: object) -> Optional[str]:
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
+        or any(ord(character) <= 32 or ord(character) == 127 for character in value)
     ):
         raise DaemonConfigError(
             "control_plane_url must be HTTPS without credentials, query, or fragment."

@@ -411,7 +411,7 @@ def _compose_service(
             "%s:%s:%s" % (item.source, item.target, item.permissions)
             for item in workload.devices
         ]
-    health = workload.readiness or workload.startup
+    health = workload.liveness or workload.readiness or workload.startup
     healthcheck = _compose_healthcheck(health)
     if healthcheck is not None:
         service["healthcheck"] = healthcheck

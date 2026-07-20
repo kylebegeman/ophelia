@@ -56,8 +56,14 @@ def local_approval_key(runtime_root: Path, *, create: bool) -> bytes:
     if not create:
         raise ValueError("Local approval key is not initialized; run manifest plan locally first.")
     value = os.urandom(32)
-    _atomic_bytes(path, value)
-    return value
+    if _atomic_bytes(path, value):
+        return value
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Local approval key path is unsafe.")
+    winner = path.read_bytes()
+    _validate_approval_key(winner)
+    os.chmod(path, 0o600)
+    return winner
 
 
 def plan_manifest_v2(
@@ -352,13 +358,22 @@ def submit_manifest_v2_plan(
         relative_root=staging.candidate.relative_to(runtime_root).as_posix(),
         artifact_digest=first_artifact,
     )
+    plan_expiry = datetime.fromisoformat(
+        loaded_plan["expires_at"].replace("Z", "+00:00")
+    )
+    approval_expiry = datetime.fromisoformat(
+        approval.expires_at.replace("Z", "+00:00")
+    )
+    execution_deadline = min(plan_expiry, approval_expiry).isoformat().replace(
+        "+00:00", "Z"
+    )
     execution_input = ExecutionInput.bind(
         request=request,
         plan=plan,
         approved_plan=approval,
         revision=revision,
         artifact_ref=artifact_ref,
-        deadline=loaded_plan["expires_at"],
+        deadline=execution_deadline,
     )
     journal = SQLiteOperationJournal.beneath_runtime_root(runtime_root)
     required_edge = (
@@ -621,10 +636,14 @@ def _write_plan_index(runtime_root: Path, plan_id: str, staging_operation_id: st
         if target.is_symlink() or target.read_bytes() != data:
             raise ValueError("Manifest v2 plan id collision.")
         return
-    _atomic_bytes(target, data)
+    if not _atomic_bytes(target, data):
+        if target.is_symlink() or not target.is_file() or target.read_bytes() != data:
+            raise ValueError("Manifest v2 plan id collision.")
 
 
-def _atomic_bytes(path: Path, data: bytes) -> None:
+def _atomic_bytes(path: Path, data: bytes) -> bool:
+    """Publish immutable bytes without replacing a concurrent winner."""
+
     temporary = path.parent / ("." + path.name + ".tmp-" + os.urandom(6).hex())
     descriptor = os.open(
         temporary,
@@ -638,13 +657,22 @@ def _atomic_bytes(path: Path, data: bytes) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-    os.replace(temporary, path)
-    os.chmod(path, 0o600)
-    directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
-        os.fsync(directory)
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError:
+            return False
+        os.chmod(path, 0o600)
+        directory = os.open(
+            path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return True
     finally:
-        os.close(directory)
+        temporary.unlink(missing_ok=True)
 
 
 def _read_json(path: Path) -> Dict[str, Any]:

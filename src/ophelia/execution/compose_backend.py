@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 import urllib.error
@@ -53,6 +54,9 @@ class CommandRunner(Protocol):
 
 class ComposeBackendError(RuntimeError):
     """A revision could not satisfy its approved Compose runtime contract."""
+
+
+_ROUTE_AUTH_ENV = re.compile(r"\{\$(OPHELIA_ROUTE_AUTH_[A-F0-9]{24})\}")
 
 
 class ComposeRevisionBackend:
@@ -178,6 +182,13 @@ class ComposeRevisionBackend:
                             timeout_seconds=self.command_timeout_seconds,
                         )
                     evidence.append(artifact.digest)
+                for _service_name, workload in self._runtime_workloads():
+                    if (
+                        workload.security.run_as_non_root
+                        and workload.security.run_as_user is None
+                        and not self._image_declares_non_root(workload)
+                    ):
+                        blockers.append("container_non_root_identity_unverified")
                 self._ensure_network("ophelia-app", external=False)
                 if any(item.kind is WorkloadKind.WEB for item in self.manifest.workloads):
                     self._ensure_network("ophelia-edge", external=True)
@@ -899,8 +910,36 @@ class ComposeRevisionBackend:
             timeout_seconds=30,
         )
 
+    def _image_declares_non_root(self, workload: WorkloadV2) -> bool:
+        artifact = self.manifest.artifact(workload.artifact)
+        if artifact.image is None:
+            return True
+        inspected = self.runner.run(
+            [
+                "docker",
+                "image",
+                "inspect",
+                artifact.image,
+                "--format",
+                "{{.Config.User}}",
+            ],
+            timeout_seconds=30,
+            check=False,
+        )
+        if inspected.exit_reason != "success":
+            return False
+        user = inspected.stdout.strip()
+        if not user or user.lower() == "root":
+            return False
+        identity = user.split(":", 1)[0]
+        return not identity.isdigit() or int(identity) != 0
+
     def _probe(self, workload: WorkloadV2, *, candidate: bool) -> bool:
-        probe = workload.readiness or workload.startup
+        probe = (
+            workload.readiness or workload.startup
+            if candidate
+            else workload.liveness or workload.readiness or workload.startup
+        )
         if probe is None:
             return True
         if self.probe_checker is not None:
@@ -975,25 +1014,46 @@ class ComposeRevisionBackend:
             raise ComposeBackendError("Candidate Caddy routes are missing or unsafe.")
         self.caddy_include.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         previous = self.caddy_include.read_bytes() if self.caddy_include.is_file() else None
+        env_path = self.runtime_root / "caddy" / "env"
+        previous_env = env_path.read_bytes() if env_path.is_file() else None
         _atomic_bytes(self.caddy_include, candidate.read_bytes(), mode=0o600)
         if not self.shared_compose.is_file():
             if self.require_edge_runtime and self.manifest.routes:
                 self._restore_caddy_bytes(previous)
+                _restore_private_file(env_path, previous_env)
+                _prune_route_auth_env(env_path, self.caddy_include.parent)
                 raise ComposeBackendError("Shared Caddy runtime is unavailable.")
+            _prune_route_auth_env(env_path, self.caddy_include.parent)
             return
         try:
+            _prune_route_auth_env(env_path, self.caddy_include.parent)
             self._caddy("validate", "--config", "/etc/caddy/Caddyfile")
             self._caddy("reload", "--config", "/etc/caddy/Caddyfile")
         except Exception:
             self._restore_caddy_bytes(previous)
-            if previous is not None:
-                self._caddy("reload", "--config", "/etc/caddy/Caddyfile", check=False)
+            _restore_private_file(env_path, previous_env)
+            _prune_route_auth_env(env_path, self.caddy_include.parent)
+            self._caddy("reload", "--config", "/etc/caddy/Caddyfile", check=False)
             raise
 
     def _deactivate_caddy(self) -> None:
+        previous = self.caddy_include.read_bytes() if self.caddy_include.is_file() else None
+        env_path = self.runtime_root / "caddy" / "env"
+        previous_env = env_path.read_bytes() if env_path.is_file() else None
         self.caddy_include.unlink(missing_ok=True)
-        if self.shared_compose.is_file():
-            self._caddy("reload", "--config", "/etc/caddy/Caddyfile", check=False)
+        try:
+            _prune_route_auth_env(env_path, self.caddy_include.parent)
+            if self.shared_compose.is_file():
+                self._caddy("validate", "--config", "/etc/caddy/Caddyfile")
+                self._caddy("reload", "--config", "/etc/caddy/Caddyfile")
+        except Exception:
+            self._restore_caddy_bytes(previous)
+            _restore_private_file(env_path, previous_env)
+            if self.shared_compose.is_file():
+                self._caddy(
+                    "reload", "--config", "/etc/caddy/Caddyfile", check=False
+                )
+            raise
 
     def _restore_caddy_bytes(self, previous: Optional[bytes]) -> None:
         if previous is None:
@@ -1002,11 +1062,36 @@ class ComposeRevisionBackend:
             _atomic_bytes(self.caddy_include, previous, mode=0o600)
 
     def _caddy(self, *arguments: str, check: bool = True) -> ProcessResult:
+        command_arguments = list(arguments)
+        prefix = [
+            "docker",
+            "compose",
+            "-f",
+            str(self.shared_compose),
+            "exec",
+            "-T",
+            "caddy",
+        ]
+        if command_arguments and command_arguments[0] == "reload":
+            command = [
+                *prefix,
+                "sh",
+                "-ec",
+                "caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile "
+                "--envfile /etc/caddy/env | caddy reload --config -",
+            ]
+        else:
+            if (
+                command_arguments
+                and command_arguments[0] == "validate"
+                and "--envfile" not in command_arguments
+            ):
+                command_arguments.extend(
+                    ["--adapter", "caddyfile", "--envfile", "/etc/caddy/env"]
+                )
+            command = [*prefix, "caddy", *command_arguments]
         return self.runner.run(
-            [
-                "docker", "compose", "-f", str(self.shared_compose),
-                "exec", "-T", "caddy", "caddy", *arguments,
-            ],
+            command,
             timeout_seconds=60,
             check=check,
         )
@@ -1293,6 +1378,50 @@ def _update_private_env(path: Path, updates: Mapping[str, str]) -> None:
     _atomic_bytes(path, ("\n".join(output) + "\n").encode("utf-8"), mode=0o600)
 
 
+def _prune_route_auth_env(path: Path, sites_root: Path) -> None:
+    """Remove managed route credentials no longer referenced by active sites."""
+
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ComposeBackendError("Caddy environment path is unsafe.")
+    active = set()
+    if sites_root.is_symlink() or not sites_root.is_dir():
+        raise ComposeBackendError("Caddy sites directory is unsafe.")
+    for site in sorted(sites_root.glob("*.caddy")):
+        if site.is_symlink() or not site.is_file() or site.stat().st_size > 1024 * 1024:
+            raise ComposeBackendError("Caddy site include is unavailable or unsafe.")
+        active.update(_ROUTE_AUTH_ENV.findall(site.read_text(encoding="utf-8")))
+    if not path.exists():
+        return
+    original = path.read_text(encoding="utf-8").splitlines()
+    output = []
+    seen = set()
+    for line in original:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output.append(line)
+            continue
+        name = line.split("=", 1)[0].strip()
+        if not name or name in seen:
+            raise ComposeBackendError("Caddy environment contains an invalid assignment.")
+        seen.add(name)
+        if name.startswith("OPHELIA_ROUTE_AUTH_") and name not in active:
+            continue
+        output.append(line)
+    if output != original:
+        _atomic_bytes(
+            path,
+            (("\n".join(output) + "\n") if output else "").encode("utf-8"),
+            mode=0o600,
+        )
+
+
+def _restore_private_file(path: Path, value: Optional[bytes]) -> None:
+    if value is None:
+        path.unlink(missing_ok=True)
+    else:
+        _atomic_bytes(path, value, mode=0o600)
+
+
 def _atomic_bytes(path: Path, value: bytes, *, mode: int) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if path.parent.is_symlink() or path.is_symlink():
@@ -1348,7 +1477,12 @@ def _static_tree_digest(root: Path) -> str:
             digest.update(b"d\0" + relative + b"\0")
         elif path.is_file():
             digest.update(b"f\0" + relative + b"\0")
-            digest.update(path.read_bytes())
+            with path.open("rb") as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
         else:
             raise ComposeBackendError("Static artifact runtime contains a special file.")
     return "sha256:" + digest.hexdigest()

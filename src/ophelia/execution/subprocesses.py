@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Mapping, Optional, Sequence, Tuple
@@ -28,6 +28,29 @@ class ProcessFailure(RuntimeError):
         self.result = result
         detail = result.stderr.strip() or result.stdout.strip() or result.exit_reason
         super().__init__("External process failed (%s): %s" % (result.exit_reason, detail))
+
+
+class _BoundedOutput:
+    """Continuously drain one process pipe while retaining only bounded bytes."""
+
+    def __init__(self, maximum: int) -> None:
+        self.maximum = maximum
+        self.value = bytearray()
+        self.truncated = False
+
+    def drain(self, stream) -> None:
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                remaining = self.maximum - len(self.value)
+                if remaining > 0:
+                    self.value.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    self.truncated = True
+        finally:
+            stream.close()
 
 
 class SubprocessRunner:
@@ -68,42 +91,70 @@ class SubprocessRunner:
         if timeout_seconds <= 0 or timeout_seconds > 86400:
             raise ValueError("timeout_seconds must be greater than zero and no more than 86400.")
         started = time.monotonic()
-        with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(mode="w+b") as stderr_file:
-            process = subprocess.Popen(
-                command,
-                cwd=cwd,
-                env=None if env is None else dict(env),
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                start_new_session=True,
-                close_fds=True,
-            )
-            reason = "exited"
-            deadline = started + timeout_seconds
-            while process.poll() is None:
-                if cancellation_requested is not None and cancellation_requested():
-                    reason = "cancelled"
-                    self._terminate(process)
-                    break
-                if time.monotonic() >= deadline:
-                    reason = "timeout"
-                    self._terminate(process)
-                    break
-                time.sleep(min(self.poll_interval_seconds, max(0.0, deadline - time.monotonic())))
-            if process.poll() is None:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=None if env is None else dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            close_fds=True,
+        )
+        assert process.stdout is not None and process.stderr is not None
+        stdout = _BoundedOutput(self.max_output_bytes)
+        stderr = _BoundedOutput(self.max_output_bytes)
+        drainers = [
+            threading.Thread(target=stdout.drain, args=(process.stdout,), daemon=True),
+            threading.Thread(target=stderr.drain, args=(process.stderr,), daemon=True),
+        ]
+        for drainer in drainers:
+            drainer.start()
+        reason = "exited"
+        deadline = started + timeout_seconds
+        while process.poll() is None:
+            if cancellation_requested is not None and cancellation_requested():
+                reason = "cancelled"
                 self._terminate(process)
-            exit_code = process.wait()
-            result = ProcessResult(
-                argv=tuple(self._redact(item) for item in command),
-                exit_code=exit_code,
-                exit_reason=reason if reason != "exited" else ("success" if exit_code == 0 else "nonzero_exit"),
-                stdout=self._read(stdout_file),
-                stderr=self._read(stderr_file),
-                stdout_truncated=self._truncated(stdout_file),
-                stderr_truncated=self._truncated(stderr_file),
-                duration_ms=max(1, int((time.monotonic() - started) * 1000)),
+                break
+            if time.monotonic() >= deadline:
+                reason = "timeout"
+                self._terminate(process)
+                break
+            time.sleep(
+                min(
+                    self.poll_interval_seconds,
+                    max(0.0, deadline - time.monotonic()),
+                )
             )
+        if process.poll() is None:
+            self._terminate(process)
+        exit_code = process.wait()
+        for drainer in drainers:
+            drainer.join(timeout=1.0)
+        if any(drainer.is_alive() for drainer in drainers):
+            # A descendant inherited a pipe after the command process exited.
+            # Fence that leaked process group so output collection cannot hang.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            for drainer in drainers:
+                drainer.join(timeout=2.0)
+        if any(drainer.is_alive() for drainer in drainers):
+            raise RuntimeError("External process output pipes did not close.")
+        result = ProcessResult(
+            argv=tuple(self._redact(item) for item in command),
+            exit_code=exit_code,
+            exit_reason=reason
+            if reason != "exited"
+            else ("success" if exit_code == 0 else "nonzero_exit"),
+            stdout=self._redact(stdout.value.decode("utf-8", errors="replace")),
+            stderr=self._redact(stderr.value.decode("utf-8", errors="replace")),
+            stdout_truncated=stdout.truncated,
+            stderr_truncated=stderr.truncated,
+            duration_ms=max(1, int((time.monotonic() - started) * 1000)),
+        )
         if check and result.exit_reason != "success":
             raise ProcessFailure(result)
         return result
@@ -121,17 +172,6 @@ class SubprocessRunner:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-
-    def _read(self, handle) -> str:
-        handle.flush()
-        handle.seek(0)
-        value = handle.read(self.max_output_bytes).decode("utf-8", errors="replace")
-        return self._redact(value)
-
-    def _truncated(self, handle) -> bool:
-        handle.flush()
-        handle.seek(0, os.SEEK_END)
-        return handle.tell() > self.max_output_bytes
 
     def _redact(self, value: str) -> str:
         result = value

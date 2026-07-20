@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -167,17 +168,18 @@ class OutboundHostAgent:
             response.get("acknowledged_command_sequence"),
             "acknowledged_command_sequence",
         )
-        self.service.journal.acknowledge_host_events(
-            "control-plane", acknowledged_event
-        )
-        self.store.acknowledge_results(
-            self.service.config.host_id, acknowledged_command
-        )
         commands = response.get("commands")
         if not isinstance(commands, list) or len(commands) > self.service.config.agent_command_batch:
             raise ValueError("Control-plane command batch is invalid.")
-        for raw in commands:
-            command = self._validate_command(raw)
+        validated_commands = tuple(self._validate_command(raw) for raw in commands)
+        self.service.journal.acknowledge_host_events(
+            "control-plane", acknowledged_event
+        )
+        acknowledged_command = self.store.acknowledge_results(
+            self.service.config.host_id, acknowledged_command
+        )
+        self._prune_acknowledged_bundles(acknowledged_command)
+        for command in validated_commands:
             preparation_error = None
             try:
                 prepared = self._prepare_payload(command)
@@ -436,6 +438,27 @@ class OutboundHostAgent:
                 if result.get("result", {}).get("restart_required") is True:
                     self.service.request_restart()
                     break
+
+    def _prune_acknowledged_bundles(self, sequence: int) -> None:
+        inbox = self.service.config.runtime_root / "inbox"
+        errors = []
+        for command_id in self.store.acknowledged_bundle_ids(sequence):
+            try:
+                root = inbox / command_id
+                if root.exists() or root.is_symlink():
+                    if root.is_symlink() or not root.is_dir():
+                        raise ValueError("Acknowledged agent inbox path is unsafe.")
+                    shutil.rmtree(root)
+                self.store.mark_bundle_pruned(command_id)
+            except Exception as exc:
+                errors.append("%s:%s" % (command_id, type(exc).__name__))
+        if errors:
+            self.service._record_error(
+                "agent-inbox",
+                RuntimeError("Agent inbox cleanup failed for " + ", ".join(errors)),
+            )
+        else:
+            self.service._clear_error("agent-inbox")
 
     def _execute(self, command: AgentCommand) -> Dict[str, Any]:
         actor = self._actor(command.actor_id)

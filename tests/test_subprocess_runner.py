@@ -34,6 +34,27 @@ class SubprocessRunnerTests(unittest.TestCase):
         self.assertEqual("timeout", raised.exception.result.exit_reason)
         self.assertLess(time.monotonic() - started, 3)
 
+    def test_successful_parent_does_not_wait_for_descendant_inherited_pipes(self) -> None:
+        runner = SubprocessRunner()
+        started = time.monotonic()
+
+        result = runner.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import subprocess, sys; "
+                    "subprocess.Popen([sys.executable, '-c', "
+                    "'import time; time.sleep(30)']); print('done')"
+                ),
+            ],
+            timeout_seconds=5,
+        )
+
+        self.assertEqual("success", result.exit_reason)
+        self.assertIn("done", result.stdout)
+        self.assertLess(time.monotonic() - started, 4)
+
     def test_nonzero_exit_is_structured_and_redacted(self) -> None:
         runner = SubprocessRunner(redact_values=("super-secret",))
 
