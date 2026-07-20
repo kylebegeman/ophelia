@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from ophelia.manifest_v2 import ManifestV2Error, load_manifest_v2, migrate_v1_document
 
 
@@ -14,6 +16,72 @@ PINNED_IMAGE = (
 
 
 class ManifestV2Tests(unittest.TestCase):
+    def test_stable_data_aliases_require_data_network_and_recreate_updates(self) -> None:
+        valid = self._load(
+            f"""
+version: 2
+app: database-service
+environment: staging
+artifacts:
+  database: {{image: "{PINNED_IMAGE}"}}
+workloads:
+  postgres:
+    kind: internal
+    artifact: database
+    port: 5432
+    networks: [data]
+    network_aliases:
+      data: [database-service-postgres]
+routes: []
+update: {{strategy: recreate}}
+"""
+        )
+
+        self.assertEqual(
+            (("data", ("database-service-postgres",)),),
+            valid.workload("postgres").network_aliases,
+        )
+
+        missing_network = f"""
+version: 2
+app: database-service
+environment: staging
+artifacts:
+  database: {{image: "{PINNED_IMAGE}"}}
+workloads:
+  postgres:
+    kind: internal
+    artifact: database
+    port: 5432
+    network_aliases:
+      data: [database-service-postgres]
+routes: []
+update: {{strategy: recreate}}
+"""
+        with self.assertRaisesRegex(ManifestV2Error, "requires the workload to join"):
+            self._load(missing_network)
+
+        overlapping = missing_network.replace(
+            "    network_aliases:\n",
+            "    networks: [data]\n    network_aliases:\n",
+        ).replace("kind: internal", "kind: web").replace("recreate", "blue_green")
+        with self.assertRaisesRegex(ManifestV2Error, "require update.strategy recreate"):
+            self._load(overlapping)
+
+        invalid_alias = missing_network.replace(
+            "    network_aliases:\n",
+            "    networks: [data]\n    network_aliases:\n",
+        ).replace("database-service-postgres", "DATABASE_SERVICE")
+        with self.assertRaisesRegex(ManifestV2Error, "lowercase alphanumeric"):
+            self._load(invalid_alias)
+
+        duplicate_alias = valid.to_lock_dict()
+        duplicate_alias["workloads"]["replica"] = {
+            **duplicate_alias["workloads"]["postgres"],
+        }
+        with self.assertRaisesRegex(ManifestV2Error, "unique across workloads"):
+            self._load(yaml.safe_dump(duplicate_alias))
+
     def test_loads_and_normalizes_all_workload_kinds(self) -> None:
         manifest = self._load(
             f"""

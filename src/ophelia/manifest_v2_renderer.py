@@ -303,7 +303,10 @@ def _compose_service(
             ]
         }
     if "data" in workload.networks:
-        networks["ophelia-data"] = {}
+        data_aliases = dict(workload.network_aliases).get("data", ())
+        networks["ophelia-data"] = (
+            {"aliases": list(data_aliases)} if data_aliases else {}
+        )
     security_options: List[str] = []
     if workload.security.no_new_privileges:
         security_options.append("no-new-privileges:true")

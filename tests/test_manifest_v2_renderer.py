@@ -50,6 +50,13 @@ workloads:
       add_capabilities: [SYS_ADMIN, SETUID, SETGID, DAC_OVERRIDE]
     devices:
       - {{source: /dev/net/tun, permissions: rwm}}
+  database:
+    kind: internal
+    artifact: app
+    port: 5432
+    networks: [data]
+    network_aliases:
+      data: [rendered-demo-database]
 routes:
   - name: public
     domain: rendered-demo.example.com
@@ -57,6 +64,8 @@ routes:
 secrets:
   - name: DATABASE_URL
     ref: secret://rendered-demo/production/database-url
+update:
+  strategy: recreate
 """
             )
             manifest = load_manifest_v2(manifest_path)
@@ -89,6 +98,10 @@ secrets:
         self.assertTrue(compose["services"]["jobs"]["privileged"])
         self.assertEqual("1000", compose["services"]["jobs"]["user"])
         self.assertNotIn("ophelia-edge", compose["services"]["jobs"]["networks"])
+        self.assertEqual(
+            ["rendered-demo-database"],
+            compose["services"]["database"]["networks"]["ophelia-data"]["aliases"],
+        )
         self.assertIn("rendered-demo.example.com", caddy)
         self.assertIn(revision.revision_id.removeprefix("rev_")[:12], caddy)
         self.assertNotIn("secret_value", bundle[Path("manifest.lock.json")])

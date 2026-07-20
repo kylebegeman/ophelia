@@ -117,6 +117,7 @@ class WorkloadV2:
     mounts: Tuple[MountV2, ...] = ()
     devices: Tuple[DeviceV2, ...] = ()
     networks: Tuple[str, ...] = ("app",)
+    network_aliases: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
     startup: Optional[ProbeV2] = None
     readiness: Optional[ProbeV2] = None
     liveness: Optional[ProbeV2] = None
@@ -344,7 +345,8 @@ _TOP_LEVEL = {
 _ARTIFACT_KEYS = {"image", "static_root"}
 _WORKLOAD_KEYS = {
     "kind", "artifact", "command", "port", "endpoints", "replicas", "schedule",
-    "concurrency_policy", "env", "env_files", "mounts", "devices", "networks", "startup",
+    "concurrency_policy", "env", "env_files", "mounts", "devices", "networks",
+    "network_aliases", "startup",
     "readiness", "liveness", "resources", "security", "shutdown_grace_seconds",
     "update",
 }
@@ -479,6 +481,22 @@ def parse_manifest_v2(raw: Mapping[str, Any], *, source_root: Path) -> ManifestV
             raise ManifestV2Error("Migration workloads must reference a container image artifact.")
 
     update = _update(raw.get("update"), workloads)
+    stable_aliases = [
+        alias
+        for item in workloads
+        for _network, aliases in item.network_aliases
+        for alias in aliases
+    ]
+    if len(stable_aliases) != len(set(stable_aliases)):
+        raise ManifestV2Error(
+            "Stable network aliases must be unique across workloads in one manifest."
+        )
+    if update.strategy != "recreate" and any(
+        item.network_aliases for item in workloads
+    ):
+        raise ManifestV2Error(
+            "Stable network aliases require update.strategy recreate to prevent revision overlap."
+        )
     if update.strategy == "blue_green" and any(
         item.compatibility != "backward_compatible" for item in migrations
     ):
@@ -704,6 +722,11 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         raise ManifestV2Error("Workload networks must be app, edge, or data.")
     if kind is not WorkloadKind.WEB and "edge" in networks:
         raise ManifestV2Error("Only web workloads may explicitly join the edge network.")
+    network_aliases = _network_aliases(
+        value.get("network_aliases", {}),
+        "workloads.%s.network_aliases" % name,
+        networks=networks,
+    )
     startup = _probe(value.get("startup"), "workloads.%s.startup" % name)
     readiness = _probe(value.get("readiness"), "workloads.%s.readiness" % name)
     liveness = _probe(value.get("liveness"), "workloads.%s.liveness" % name)
@@ -732,6 +755,7 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         mounts=mounts,
         devices=devices,
         networks=networks,
+        network_aliases=network_aliases,
         startup=startup,
         readiness=readiness,
         liveness=liveness,
@@ -1234,6 +1258,30 @@ def _text_tuple(value: Any, field_name: str) -> Tuple[str, ...]:
     return parsed
 
 
+def _network_aliases(
+    value: Any,
+    field_name: str,
+    *,
+    networks: Tuple[str, ...],
+) -> Tuple[Tuple[str, Tuple[str, ...]], ...]:
+    mapping = _mapping(value, field_name)
+    unknown = sorted(str(key) for key in mapping if key != "data")
+    if unknown:
+        raise ManifestV2Error(
+            "%s supports stable aliases only for the shared data network." % field_name
+        )
+    aliases = _text_tuple(mapping.get("data", []), field_name + ".data")
+    if aliases and "data" not in networks:
+        raise ManifestV2Error(
+            "%s.data requires the workload to join the data network." % field_name
+        )
+    parsed = tuple(
+        _identifier(alias, "%s.data[%d]" % (field_name, index))
+        for index, alias in enumerate(aliases)
+    )
+    return (("data", parsed),) if parsed else ()
+
+
 def _command(value: Any, field_name: str) -> Tuple[str, ...]:
     return _text_tuple(value, field_name)
 
@@ -1322,6 +1370,9 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
         "mounts": [asdict(item) for item in value.mounts],
         "devices": [asdict(item) for item in value.devices],
         "networks": list(value.networks),
+        "network_aliases": {
+            network: list(aliases) for network, aliases in value.network_aliases
+        },
         "startup": _probe_wire(value.startup),
         "readiness": _probe_wire(value.readiness),
         "liveness": _probe_wire(value.liveness),

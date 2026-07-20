@@ -93,3 +93,4 @@
 | [0089](0089-packaged-edge-bootstrap.md) | 2026-07-19 | landed | Packaged edge bootstrap | edge, caddy, package, bootstrap, tests |
 | [0090](0090-explicit-sandbox-security-profiles.md) | 2026-07-19 | landed | Explicit sandbox security profiles | manifest-v2, security, compose, sandbox, runner, tests |
 | [0091](0091-runtime-hardening-audit.md) | 2026-07-19 | landed | Runtime hardening audit and release 0.6.1 | release, manifest-v2, daemon, agent, caddy, security, reliability, performance, tests |
+| [0092](0092-stable-data-network-aliases.md) | 2026-07-20 | landed | Stable data-network aliases and release 0.6.2 | release, manifest-v2, networking, data, compose, lumen, tests, docs |

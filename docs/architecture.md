@@ -99,13 +99,29 @@ manifests for apps that do not belong to a single app repo yet, such as:
 
 ## Networking
 
-Use two Docker networks:
+Manifest v2 uses three Docker network classes:
 
 - `ophelia-edge`: Caddy to public app traffic
-- `ophelia-internal`: app to Postgres/Redis traffic
+- `ophelia-<app>-<environment>-app`: revision-isolated communication inside one app
+- `ophelia-data`: explicitly declared communication with separately deployed data services
 
-Shared services live in `platform/shared/compose.yml`. Generated app bundles
-join both networks with stable aliases like `demo-service-web`.
+Workloads join only their declared networks. A separately deployed stateful
+service can expose a stable cross-app address on `ophelia-data` with
+`network_aliases.data`. Stable aliases require `update.strategy: recreate`, so
+the old revision is stopped before the new revision claims the same address:
+
+```yaml
+workloads:
+  postgres:
+    kind: internal
+    artifact: postgres
+    port: 5432
+    networks: [data]
+    network_aliases:
+      data: [demo-service-postgres]
+update:
+  strategy: recreate
+```
 
 The shared Caddy service also maps `host.docker.internal` to Docker's
 host-gateway address so tunnel-style manifests can proxy to host-published
