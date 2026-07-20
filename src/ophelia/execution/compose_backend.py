@@ -11,8 +11,6 @@ import re
 import shutil
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import (
     Any,
@@ -1200,7 +1198,7 @@ class ComposeRevisionBackend:
         return True
 
     def _requires_http_probe_image(self) -> bool:
-        return any(
+        return bool(self.manifest.routes) or any(
             probe is not None and probe.http is not None
             for workload in self.manifest.workloads
             for probe in (workload.startup, workload.readiness, workload.liveness)
@@ -1661,11 +1659,55 @@ class ComposeRevisionBackend:
         )
 
     def _verify_route(self, route: RouteV2) -> bool:
-        request = urllib.request.Request("https://" + route.domain + (route.path_prefix or "/"), method="GET")
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "ophelia-edge",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--pids-limit",
+            "32",
+            "--memory",
+            "32m",
+            "--cpus",
+            "0.25",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=1m",
+            _HTTP_PROBE_IMAGE,
+            "--silent",
+            "--show-error",
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code}",
+            "--max-time",
+            "10",
+            "--request",
+            "GET",
+            "--connect-to",
+            "%s:443:caddy:443" % route.domain,
+        ]
+        if route.tls.mode == "internal":
+            # The server certificate is issued by Caddy's private CA. This probe
+            # establishes that the activated SNI/Host route reaches a live
+            # origin; public trust and access policy are verified separately by
+            # the deployment controller outside the host.
+            command.append("--insecure")
+        command.append("https://" + route.domain + (route.path_prefix or "/"))
         try:
-            with urllib.request.urlopen(request, timeout=10) as response:
-                return 200 <= response.status < 500
-        except (OSError, urllib.error.URLError):
+            result = self.runner.run(
+                command,
+                timeout_seconds=12,
+                check=False,
+            )
+            status = int(result.stdout.strip())
+            return result.exit_reason == "success" and 100 <= status < 500
+        except (OSError, RuntimeError, ProcessFailure, TypeError, ValueError):
             return False
 
     def _fence(self) -> RuntimeSideEffectFence:

@@ -203,6 +203,15 @@ forwards Caddy's verified SHA-256 client-certificate fingerprint. Use a direct
 DNS record for this hostname. A TLS-terminating CDN cannot preserve the client
 certificate boundary.
 
+After activation, Ophelia verifies each route from a confined, digest-pinned
+probe on the local `ophelia-edge` network. The probe preserves the declared
+hostname for TLS SNI and HTTP routing while connecting directly to Caddy, so a
+Cloudflare Access policy or public DNS path cannot make a healthy origin appear
+broken. For `tls.mode: internal`, the probe intentionally accepts Caddy's
+private server certificate because Caddy configuration validation already owns
+that trust boundary. A deployment controller should run its separately
+credentialed public-edge smoke check after Ophelia commits the origin.
+
 The remaining sections document manifest v1 compatibility behavior.
 
 ## Top-level Fields

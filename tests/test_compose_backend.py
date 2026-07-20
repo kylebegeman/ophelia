@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
 
@@ -10,7 +11,7 @@ from ophelia.domain.receipts import VerificationStatus
 from ophelia.execution.compose_backend import ComposeRevisionBackend, _HTTP_PROBE_IMAGE
 from ophelia.execution.contracts import ExecutionFence
 from ophelia.execution.subprocesses import ProcessResult
-from ophelia.manifest_v2 import HttpProbeV2, ProbeV2, load_manifest_v2
+from ophelia.manifest_v2 import HttpProbeV2, ProbeV2, RouteTlsV2, load_manifest_v2
 from ophelia.manifest_v2_renderer import render_revision_bundle
 
 
@@ -342,6 +343,134 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             self.assertTrue(result.ok)
             self.assertIn(_HTTP_PROBE_IMAGE.split("@", 1)[1], result.evidence_digests)
             self.assertIn(["docker", "pull", _HTTP_PROBE_IMAGE], runner.commands)
+
+    def test_preflight_pulls_the_pinned_http_probe_image_for_route_verification(self) -> None:
+        class MissingProbeImageRunner(FakeRunner):
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                command = list(argv)
+                if command[:4] == ["docker", "image", "inspect", _HTTP_PROBE_IMAGE]:
+                    self.commands.append(command)
+                    return ProcessResult(
+                        tuple(command), 1, "nonzero_exit", "", "missing", False, False, 1
+                    )
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            runner = MissingProbeImageRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                require_edge_runtime=False,
+            )
+
+            result = backend.preflight(revision)
+
+            self.assertTrue(result.ok)
+            self.assertIn(_HTTP_PROBE_IMAGE.split("@", 1)[1], result.evidence_digests)
+            self.assertIn(["docker", "pull", _HTTP_PROBE_IMAGE], runner.commands)
+
+    def test_route_verifier_probes_the_local_edge_with_original_sni_and_host(self) -> None:
+        class RouteProbeRunner(FakeRunner):
+            status = "401"
+
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                command = list(argv)
+                if command[:2] == ["docker", "run"]:
+                    self.commands.append(command)
+                    return ProcessResult(
+                        tuple(command), 0, "success", self.status, "", False, False, 1
+                    )
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            runner = RouteProbeRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                require_edge_runtime=False,
+            )
+            route = replace(
+                manifest.routes[0],
+                path_prefix="/ophelia",
+                tls=RouteTlsV2(mode="internal"),
+            )
+
+            self.assertTrue(backend._verify_route(route))
+
+            command = next(item for item in runner.commands if item[:2] == ["docker", "run"])
+            self.assertEqual("ophelia-edge", command[command.index("--network") + 1])
+            self.assertIn(_HTTP_PROBE_IMAGE, command)
+            self.assertIn("--read-only", command)
+            self.assertEqual("ALL", command[command.index("--cap-drop") + 1])
+            self.assertEqual(
+                "compose-demo.example.com:443:caddy:443",
+                command[command.index("--connect-to") + 1],
+            )
+            self.assertIn("--insecure", command)
+            self.assertEqual(
+                "https://compose-demo.example.com/ophelia",
+                command[-1],
+            )
+
+            runner.status = "503"
+            self.assertFalse(backend._verify_route(route))
+
+    def test_route_verifier_preserves_public_certificate_validation(self) -> None:
+        class RouteProbeRunner(FakeRunner):
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                command = list(argv)
+                if command[:2] == ["docker", "run"]:
+                    self.commands.append(command)
+                    return ProcessResult(
+                        tuple(command), 0, "success", "200", "", False, False, 1
+                    )
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            runner = RouteProbeRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                require_edge_runtime=False,
+            )
+
+            self.assertTrue(backend._verify_route(manifest.routes[0]))
+
+            command = next(item for item in runner.commands if item[:2] == ["docker", "run"])
+            self.assertNotIn("--insecure", command)
 
     def test_caddy_activation_prunes_unreferenced_managed_route_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
