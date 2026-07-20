@@ -38,6 +38,7 @@ class SelfTestTests(unittest.TestCase):
         self.assertEqual(len(templates), 1)
         self.assertEqual(templates[0]["status"], "passed")
         self.assertIn("importlib.resources", templates[0].get("message", ""))
+        self.assertIn("edge/compose.yml", templates[0].get("message", ""))
 
     def test_no_secret_value_appears_in_output(self) -> None:
         previous = os.environ.get("DATABASE_URL")

@@ -47,6 +47,7 @@ def validate_caddy(
         return {"returncode": 1, "stdout": "", "stderr": "timeout must be greater than 0", "command": []}
     runtime_root = runtime_root.expanduser()
     ophelia_root = ophelia_root.expanduser()
+    ophelia_root = _edge_source_root(runtime_root, ophelia_root)
     static_root = (static_root or Path(os.environ.get("OPHELIA_STATIC_ROOT", str(runtime_root / "static")))).expanduser()
     caddyfile = ophelia_root / "platform" / "shared" / "caddy" / "Caddyfile"
     env_file = runtime_root / "caddy" / "env"
@@ -91,6 +92,7 @@ def reload_caddy(
 ) -> Dict[str, object]:
     runtime_root = runtime_root.expanduser()
     ophelia_root = ophelia_root.expanduser()
+    ophelia_root = _edge_source_root(runtime_root, ophelia_root)
     config_path = ophelia_root / "platform" / "shared" / "caddy" / "Caddyfile"
     report: Dict[str, object] = {
         "kind": "ophelia.edge.reload",
@@ -180,6 +182,7 @@ def discover_shared_caddy_container(
     timeout: int = 30,
 ) -> Dict[str, object]:
     warnings: List[Dict[str, str]] = []
+    ophelia_root = _edge_source_root(runtime_root.expanduser(), ophelia_root.expanduser())
     for candidate in SHARED_CADDY_CONTAINER_CANDIDATES:
         inspection = _inspect_container(
             candidate, runtime_root, ophelia_root, timeout
@@ -304,6 +307,13 @@ def _inspect_container(
             for destination, source in expected.items()
         ),
     }
+
+
+def _edge_source_root(runtime_root: Path, configured_root: Path) -> Path:
+    runtime_caddyfile = runtime_root / "platform" / "shared" / "caddy" / "Caddyfile"
+    if runtime_caddyfile.is_file() and not runtime_caddyfile.is_symlink():
+        return runtime_root
+    return configured_root
 
 
 def _process_summary(report: Dict[str, object]) -> Dict[str, object]:

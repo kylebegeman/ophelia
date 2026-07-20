@@ -323,7 +323,8 @@ with `--host` so the token is calculated from the staged remote runtime bundle:
 | Preview runtime changes | `ship deploy <manifest> --plan` and `ship diff <manifest>` |
 | Pin production images | `ship release image-lock plan <manifest> --json` then `ship release image-lock apply <manifest> --confirm <token>` |
 | Apply a release | `ship deploy <manifest> --apply --verify` |
-| Reload the shared edge | `ship caddy reload --json` |
+| Bootstrap the shared edge | `ship caddy bootstrap --runtime-root /var/lib/ophelia --start --json` |
+| Reload the shared edge | `ship caddy reload --runtime-root /var/lib/ophelia --json` |
 | Inspect runtime | `ship status`, `ship doctor`, `ship releases <app>`, `ship release show <app> active` |
 | Verify after apply | `ship verify <manifest>` or `ship verify <app>` |
 | Roll back | `ship rollback plan <app> <release-id>` then `ship rollback apply <app> <release-id> --confirm <token>` |

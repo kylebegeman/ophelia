@@ -42,4 +42,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"ophelia.resources" = ["templates/**/*.tpl", "systemd/*.service", "systemd/*.py"]
+"ophelia.resources" = ["templates/**/*.tpl", "systemd/*.service", "systemd/*.py", "edge/**/*.yml", "edge/**/Caddyfile"]

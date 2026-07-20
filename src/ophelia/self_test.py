@@ -33,6 +33,11 @@ _TEMPLATE_FILES = (
     ("caddy", "site.caddy.tpl"),
 )
 
+_EDGE_FILES = (
+    ("compose.yml",),
+    ("caddy", "Caddyfile"),
+)
+
 # Key docs that should exist in a source checkout. Best-effort only.
 _DOC_PATHS = (
     "README.md",
@@ -157,7 +162,14 @@ def _check_templates() -> str:
         if not text:
             raise RuntimeError(f"packaged template {'/'.join(parts)} is empty")
         resolved.append("/".join(parts))
-    return "resolved packaged templates via importlib.resources: " + ", ".join(resolved)
+    edge = resources.files("ophelia.resources").joinpath("edge")
+    for parts in _EDGE_FILES:
+        node = edge.joinpath(*parts)
+        text = node.read_text(encoding="utf-8")
+        if not text:
+            raise RuntimeError(f"packaged edge resource {'/'.join(parts)} is empty")
+        resolved.append("edge/" + "/".join(parts))
+    return "resolved packaged runtime resources via importlib.resources: " + ", ".join(resolved)
 
 
 def _check_default_config_load() -> str:

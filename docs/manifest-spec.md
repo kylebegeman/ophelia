@@ -777,11 +777,18 @@ Use these values as the recommended source for app-owned `/ophelia/release`
 responses. They are runtime-owned keys; manifest `env` and service `env` values
 with the same names are ignored during Compose rendering.
 
+An installed Ophelia package can materialize and start the shared edge without
+a source checkout:
+
+```bash
+ship caddy bootstrap --runtime-root /var/lib/ophelia --start --json
+```
+
 After changing shared Caddy files, use the native reload command instead of
 custom container discovery:
 
 ```bash
-ship caddy reload --runtime-root ~/ophelia-runtime --ophelia-root ~/ophelia --json
+ship caddy reload --runtime-root /var/lib/ophelia --json
 ```
 
 The command validates config first, prefers the `shared-caddy-1` container, uses
