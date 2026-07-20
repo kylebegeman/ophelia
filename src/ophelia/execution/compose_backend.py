@@ -9,11 +9,14 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Set, Tuple
+
+import yaml
 
 from ..domain._contracts import canonical_digest
 from ..domain.receipts import (
@@ -166,6 +169,16 @@ class ComposeRevisionBackend:
                         raise ValueError("invalid secret scalar")
             except (OSError, RuntimeError, ValueError):
                 blockers.append("secret_binding_unavailable")
+        if "candidate_bundle_mismatch" not in blockers:
+            try:
+                result = self._validate_compose_candidate(
+                    self.candidate_root,
+                    check=False,
+                )
+                if result.exit_reason != "success":
+                    blockers.append("compose_candidate_invalid")
+            except (OSError, RuntimeError, ProcessFailure):
+                blockers.append("container_runtime_unavailable")
         if not blockers:
             try:
                 for artifact in self.manifest.artifacts:
@@ -202,6 +215,7 @@ class ComposeRevisionBackend:
                 {
                     "revision_digest": revision.content_digest(),
                     "candidate_verified": "candidate_bundle_mismatch" not in blockers,
+                    "compose_candidate_valid": "compose_candidate_invalid" not in blockers,
                     "runtime_available": "container_runtime_unavailable" not in blockers,
                     "edge_available": "edge_runtime_missing" not in blockers,
                     "secret_bindings_available": not any(
@@ -227,6 +241,7 @@ class ComposeRevisionBackend:
             self._materialize_static_artifacts()
             self._materialize_secrets()
             self._materialize_route_auth()
+            self._validate_compose_candidate(self.revision_root, check=True)
             self._run_migrations()
             if self.manifest.update.strategy == "recreate":
                 previous = self._previous_runtime(self._read_active(required=False))
@@ -890,6 +905,83 @@ class ComposeRevisionBackend:
             check=check,
         )
 
+    def _validate_compose_candidate(
+        self,
+        root: Path,
+        *,
+        check: bool,
+    ) -> ProcessResult:
+        """Validate Compose structure without reading unresolved secret values."""
+
+        compose_path = Path(root) / "compose.yml"
+        validation_path = compose_path
+        temporary_path: Optional[Path] = None
+        try:
+            document = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+            missing_secret_env_paths = {
+                path for path in self._secret_env_paths() if not Path(path).is_file()
+            }
+            if missing_secret_env_paths:
+                projected = _replace_secret_env_files(
+                    document,
+                    missing_secret_env_paths,
+                )
+                temporary = tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    prefix="ophelia-compose-validation-",
+                    suffix=".yml",
+                    delete=False,
+                )
+                temporary_path = Path(temporary.name)
+                try:
+                    yaml.safe_dump(
+                        projected,
+                        temporary,
+                        default_flow_style=False,
+                        sort_keys=True,
+                    )
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                finally:
+                    temporary.close()
+                validation_path = temporary_path
+            return self.runner.run(
+                [
+                    "docker",
+                    "compose",
+                    "-p",
+                    self.project,
+                    "--project-directory",
+                    str(Path(root)),
+                    "-f",
+                    str(validation_path),
+                    "config",
+                    "--quiet",
+                    "--no-env-resolution",
+                    "--no-path-resolution",
+                ],
+                timeout_seconds=min(self.command_timeout_seconds, 60.0),
+                check=check,
+            )
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    def _secret_env_paths(self) -> Set[str]:
+        paths: Set[str] = set()
+        for service_name, workload in self._runtime_workloads():
+            targeted = [
+                item
+                for item in self.manifest.secrets
+                if not item.workloads
+                or workload.name in item.workloads
+                or service_name in item.workloads
+            ]
+            if any(item.mode == "env" for item in targeted):
+                paths.add(str(self.secret_root / (service_name + ".env")))
+        return paths
+
     def _ensure_network(self, name: str, *, external: bool) -> None:
         actual = name
         if name == "ophelia-app":
@@ -1336,6 +1428,24 @@ def _copy_tree(source: Path, target: Path) -> None:
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     _atomic_bytes(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"), mode=0o600)
+
+
+def _replace_secret_env_files(document: Any, secret_env_paths: Set[str]) -> Dict[str, Any]:
+    if not isinstance(document, dict) or not isinstance(document.get("services"), dict):
+        raise ComposeBackendError("Candidate Compose document has an invalid service shape.")
+    for service in document["services"].values():
+        if not isinstance(service, dict):
+            raise ComposeBackendError("Candidate Compose service has an invalid shape.")
+        entries = service.get("env_file")
+        if entries is None:
+            continue
+        if not isinstance(entries, list) or any(not isinstance(item, str) for item in entries):
+            raise ComposeBackendError("Candidate Compose env_file has an invalid shape.")
+        service["env_file"] = [
+            "/dev/null" if item in secret_env_paths else item
+            for item in entries
+        ]
+    return document
 
 
 def _decode_secret_file(value: str, encoding: str) -> bytes:

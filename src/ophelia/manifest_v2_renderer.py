@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Mapping
 import yaml
 
 from .domain import Revision, WorkloadKind
-from .manifest_v2 import ManifestV2, ProbeV2, WorkloadV2
+from .manifest_v2 import ManifestV2, ProbeV2, WorkloadV2, resource_memory_bytes
 from .manifest_v2_sources import mounted_file_target, support_file_target
 
 
@@ -250,7 +250,7 @@ def _compose_document(
     }
     if volumes:
         document["volumes"] = volumes
-    return document
+    return _escape_compose_interpolation(document)
 
 
 def _compose_service(
@@ -325,7 +325,9 @@ def _compose_service(
         "cap_add": list(workload.security.add_capabilities),
         "cap_drop": list(workload.security.drop_capabilities),
         "pids_limit": workload.resources.pids,
-        "mem_limit": workload.resources.memory,
+        # Compose accepts a smaller set of suffixes than manifest v2. Exact
+        # bytes preserve the declared quantity across Compose versions.
+        "mem_limit": resource_memory_bytes(workload.resources.memory),
         "cpus": workload.resources.cpu,
         "labels": {
             "ophelia.managed": "true",
@@ -442,11 +444,26 @@ def _compose_healthcheck(probe: ProbeV2 | None) -> Dict[str, Any] | None:
         # candidate. Avoid assuming curl, wget, or Python exists in the image.
         return None
     return {
-        "test": list(probe.command),
+        "test": ["CMD", *probe.command],
         "interval": "%ss" % _number(probe.interval_seconds),
         "timeout": "%ss" % _number(min(probe.timeout_seconds, 30.0)),
         "retries": max(1, int(probe.timeout_seconds / probe.interval_seconds)),
     }
+
+
+def _escape_compose_interpolation(value: Any) -> Any:
+    """Keep manifest strings literal when Compose processes its input."""
+
+    if isinstance(value, str):
+        return value.replace("$", "$$")
+    if isinstance(value, list):
+        return [_escape_compose_interpolation(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _escape_compose_interpolation(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _render_caddy(manifest: ManifestV2, revision: Revision, *, runtime_root: Path) -> str:

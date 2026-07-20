@@ -351,6 +351,101 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertIn("candidate_bundle_mismatch", result.blocker_codes)
 
+    def test_invalid_compose_candidate_blocks_preflight_before_runtime_changes(self) -> None:
+        class InvalidComposeRunner(FakeRunner):
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                result = super().run(argv, **kwargs)
+                if "config" in argv:
+                    return ProcessResult(
+                        tuple(argv),
+                        1,
+                        "nonzero_exit",
+                        "",
+                        "invalid compose candidate",
+                        False,
+                        False,
+                        1,
+                    )
+                return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            runner = InvalidComposeRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                require_edge_runtime=False,
+            )
+
+            result = backend.preflight(revision)
+
+            self.assertFalse(result.ok)
+            self.assertIn("compose_candidate_invalid", result.blocker_codes)
+            config = next(command for command in runner.commands if "config" in command)
+            self.assertIn("--no-env-resolution", config)
+            self.assertIn("--no-path-resolution", config)
+            self.assertFalse(any("pull" in command for command in runner.commands))
+
+    def test_preflight_validates_a_secret_free_projection_and_removes_it(self) -> None:
+        class ProjectionRunner(FakeRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.config_path: Path | None = None
+                self.config_text = ""
+
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                if "config" in argv:
+                    self.config_path = Path(argv[argv.index("-f") + 1])
+                    self.config_text = self.config_path.read_text(encoding="utf-8")
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(
+                staging,
+                runtime_root,
+                secrets="""
+secrets:
+  - name: API_TOKEN
+    ref: secret://compose-demo/production/api-token
+""",
+            )
+            runner = ProjectionRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                secret_resolver=lambda _: "secret-value",
+                require_edge_runtime=False,
+            )
+
+            result = backend.preflight(revision)
+
+            self.assertTrue(result.ok)
+            self.assertIn("/dev/null", runner.config_text)
+            self.assertNotIn("secret-value", runner.config_text)
+            self.assertIsNotNone(runner.config_path)
+            assert runner.config_path is not None
+            self.assertFalse(runner.config_path.exists())
+
     def test_replica_count_is_scaled_and_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -470,6 +565,7 @@ def _stage_manifest(
     web_replicas: int = 1,
     strategy: str = "blue_green",
     probes: str = "",
+    secrets: str = "",
 ):
     staging.mkdir(parents=True)
     source = staging.parent / "app.ophelia.yml"
@@ -496,6 +592,7 @@ routes:
   - name: public
     domain: compose-demo.example.com
     target: {{workload: web, port: 8080}}
+{secrets.rstrip()}
 update: {{strategy: {strategy}}}
 """
     )
@@ -505,6 +602,7 @@ update: {{strategy: {strategy}}}
         manifest,
         revision,
         runtime_root=runtime_root,
+        secret_runtime_root=runtime_root / "run" / "secrets",
     ).items():
         target = staging / relative
         target.parent.mkdir(parents=True, exist_ok=True)

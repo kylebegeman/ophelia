@@ -6,7 +6,12 @@ from pathlib import Path
 
 import yaml
 
-from ophelia.manifest_v2 import ManifestV2Error, load_manifest_v2, migrate_v1_document
+from ophelia.manifest_v2 import (
+    ManifestV2Error,
+    load_manifest_v2,
+    migrate_v1_document,
+    resource_memory_bytes,
+)
 
 
 PINNED_IMAGE = (
@@ -16,6 +21,19 @@ PINNED_IMAGE = (
 
 
 class ManifestV2Tests(unittest.TestCase):
+    def test_memory_quantities_have_unambiguous_byte_semantics(self) -> None:
+        expected = {
+            "1k": 1024,
+            "2Mi": 2 * 1024**2,
+            "3GiB": 3 * 1024**3,
+            "4GB": 4 * 1000**3,
+            "5P": 5 * 1000**5,
+        }
+
+        for quantity, byte_count in expected.items():
+            with self.subTest(quantity=quantity):
+                self.assertEqual(byte_count, resource_memory_bytes(quantity))
+
     def test_stable_data_aliases_require_data_network_and_recreate_updates(self) -> None:
         valid = self._load(
             f"""

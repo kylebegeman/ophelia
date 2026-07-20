@@ -63,6 +63,17 @@ the reviewed plan. Apply rejects missing, added, or changed staged input before
 journaling an operation. Published static artifacts live under a
 revision-specific runtime directory, and Caddy switches to that immutable tree.
 
+Memory quantities use IEC suffixes such as `Mi` and `Gi`, Docker lower-case
+shorthand such as `m` and `g`, or upper-case decimal SI suffixes such as `MB`
+and `GB`. Ophelia renders every quantity to exact bytes and validates the
+immutable Compose candidate during preflight, before images, networks, or
+workloads are changed.
+
+Manifest command, entrypoint, environment, and path strings are literal input.
+Ophelia escapes Compose interpolation when rendering them, so a shell variable
+such as `$DATABASE_URL` reaches the container rather than expanding on the
+deployment host. Command probes render as Compose `CMD` health checks.
+
 Example:
 
 ```yaml

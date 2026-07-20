@@ -24,7 +24,9 @@ from .validation import CanonicalValidationError, parse_domain, parse_environmen
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _PINNED_IMAGE = re.compile(r"^\S+@(?P<digest>sha256:[0-9a-f]{64})$")
 _SECRET_REF = re.compile(r"^secret://[a-z][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)+$")
-_RESOURCE_MEMORY = re.compile(r"^[1-9][0-9]*(?:Ki|Mi|Gi|Ti|k|m|g|t|[KMGTP]i?B?)$")
+_RESOURCE_MEMORY = re.compile(
+    r"^(?P<amount>[1-9][0-9]*)(?P<suffix>Ki|Mi|Gi|Ti|k|m|g|t|[KMGTP]i?B?)$"
+)
 _CPU = re.compile(r"^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$")
 _CRON_FIELD = re.compile(r"^[0-9*/?,\-]+$")
 _ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -33,9 +35,60 @@ _DEVICE_PATH = re.compile(r"^/dev/[A-Za-z0-9._/-]+$")
 _HTTP_HEADER = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
+_BINARY_MEMORY_MULTIPLIERS = {
+    "k": 1024,
+    "m": 1024**2,
+    "g": 1024**3,
+    "t": 1024**4,
+    "Ki": 1024,
+    "Mi": 1024**2,
+    "Gi": 1024**3,
+    "Ti": 1024**4,
+    "Pi": 1024**5,
+    "KiB": 1024,
+    "MiB": 1024**2,
+    "GiB": 1024**3,
+    "TiB": 1024**4,
+    "PiB": 1024**5,
+}
+_DECIMAL_MEMORY_MULTIPLIERS = {
+    "K": 1000,
+    "M": 1000**2,
+    "G": 1000**3,
+    "T": 1000**4,
+    "P": 1000**5,
+    "KB": 1000,
+    "MB": 1000**2,
+    "GB": 1000**3,
+    "TB": 1000**4,
+    "PB": 1000**5,
+}
+
 
 class ManifestV2Error(ValueError):
     """A manifest v2 document is invalid or unsafe."""
+
+
+def resource_memory_bytes(value: str) -> int:
+    """Return a manifest v2 memory quantity as exact bytes.
+
+    IEC suffixes and Docker's lower-case shorthand are binary. Upper-case SI
+    suffixes without ``i`` are decimal. Returning bytes gives downstream
+    runtimes one unambiguous representation instead of leaking input syntax
+    whose accepted suffixes differ between Compose versions.
+    """
+
+    matched = _RESOURCE_MEMORY.fullmatch(value)
+    if matched is None:
+        raise ManifestV2Error("Invalid manifest v2 memory quantity.")
+    digits = matched.group("amount")
+    suffix = matched.group("suffix")
+    multiplier = _BINARY_MEMORY_MULTIPLIERS.get(suffix)
+    if multiplier is None:
+        multiplier = _DECIMAL_MEMORY_MULTIPLIERS.get(suffix)
+    if multiplier is None:
+        raise ManifestV2Error("Unsupported manifest v2 memory suffix.")
+    return int(digits) * multiplier
 
 
 @dataclass(frozen=True)

@@ -37,10 +37,13 @@ workloads:
     readiness:
       http: {{path: /ready, port: 8080}}
       timeout_seconds: 90
+    resources: {{memory: 512Mi}}
   jobs:
     kind: worker
     artifact: app
-    command: ["./worker"]
+    command: ["/bin/sh", "-ec", 'echo "$TOKEN"']
+    liveness:
+      command: ["./worker", "health"]
     security:
       run_as_user: 1000
       no_new_privileges: false
@@ -89,6 +92,7 @@ update:
         self.assertIn("web", compose["services"])
         self.assertIn("jobs", compose["services"])
         self.assertTrue(compose["services"]["web"]["read_only"])
+        self.assertEqual(536870912, compose["services"]["web"]["mem_limit"])
         self.assertEqual(["ALL"], compose["services"]["web"]["cap_drop"])
         self.assertEqual(["no-new-privileges:true"], compose["services"]["web"]["security_opt"])
         self.assertEqual(
@@ -103,6 +107,14 @@ update:
             ["/dev/net/tun:/dev/net/tun:rwm"], compose["services"]["jobs"]["devices"]
         )
         self.assertTrue(compose["services"]["jobs"]["privileged"])
+        self.assertEqual(
+            ["/bin/sh", "-ec", 'echo "$$TOKEN"'],
+            compose["services"]["jobs"]["command"],
+        )
+        self.assertEqual(
+            ["CMD", "./worker", "health"],
+            compose["services"]["jobs"]["healthcheck"]["test"],
+        )
         self.assertEqual("1000", compose["services"]["jobs"]["user"])
         self.assertNotIn("ophelia-edge", compose["services"]["jobs"]["networks"])
         self.assertEqual(
