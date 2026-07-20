@@ -41,6 +41,15 @@ workloads:
     kind: worker
     artifact: app
     command: ["./worker"]
+    security:
+      run_as_user: 1000
+      no_new_privileges: false
+      privileged: true
+      seccomp_profile: unconfined
+      apparmor_profile: unconfined
+      add_capabilities: [SYS_ADMIN, SETUID, SETGID, DAC_OVERRIDE]
+    devices:
+      - {{source: /dev/net/tun, permissions: rwm}}
 routes:
   - name: public
     domain: rendered-demo.example.com
@@ -66,6 +75,19 @@ secrets:
         self.assertTrue(compose["services"]["web"]["read_only"])
         self.assertEqual(["ALL"], compose["services"]["web"]["cap_drop"])
         self.assertEqual(["no-new-privileges:true"], compose["services"]["web"]["security_opt"])
+        self.assertEqual(
+            ["seccomp=unconfined", "apparmor=unconfined"],
+            compose["services"]["jobs"]["security_opt"],
+        )
+        self.assertEqual(
+            ["DAC_OVERRIDE", "SETGID", "SETUID", "SYS_ADMIN"],
+            compose["services"]["jobs"]["cap_add"],
+        )
+        self.assertEqual(
+            ["/dev/net/tun:/dev/net/tun:rwm"], compose["services"]["jobs"]["devices"]
+        )
+        self.assertTrue(compose["services"]["jobs"]["privileged"])
+        self.assertEqual("1000", compose["services"]["jobs"]["user"])
         self.assertNotIn("ophelia-edge", compose["services"]["jobs"]["networks"])
         self.assertIn("rendered-demo.example.com", caddy)
         self.assertIn(revision.revision_id.removeprefix("rev_")[:12], caddy)

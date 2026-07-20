@@ -506,10 +506,10 @@ Platform Strategy And Technical Architecture</h1>
 <p>Audience: product owner, Ophelia implementers, Lumen architects,
 operators, and implementation agents</p>
 <div class="artifact-actions">
-  <a href="ophelia-platform-strategy.md">View Markdown source</a>
-  <a href="ophelia-platform-strategy.md" download>Export Markdown source</a>
+<p><a href="ophelia-platform-strategy.md">View Markdown source</a>
+<a href="ophelia-platform-strategy.md" download>Export Markdown
+source</a></p>
 </div>
-
 <h2 id="executive-conclusion">Executive Conclusion</h2>
 <p>Ophelia is already the nucleus of a real platform. It is more than a
 deployment script collection: it has the contract, planning, evidence,
@@ -553,10 +553,14 @@ direction was accepted on 2026-07-19 and is the architectural north star
 for work on <code>next</code>.</p>
 <p>Acceptance of the direction does not by itself authorize production
 mutation, host migration, data movement, DNS changes, or deletion. The
-active <a href="../ROADMAP.md">Roadmap</a> remains the delivery record for
-converting the direction into reviewed, verified releases.</p>
+active <a href="../ROADMAP.md">Roadmap</a> remains the delivery record
+for converting the direction into reviewed, verified releases.</p>
 <p>The document uses these labels consistently:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Label</th>
@@ -616,7 +620,7 @@ manifest must not automatically become arbitrary host access.</p>
 core.</li>
 <li>Automatic cross-host rescheduling before independent hosts are
 reliable.</li>
-<li>Replacing Lumen&#39;s AI task scheduler with another scheduler inside
+<li>Replacing Lumen’s AI task scheduler with another scheduler inside
 Ophelia.</li>
 <li>Hiding risky host operations behind opaque convenience
 commands.</li>
@@ -725,6 +729,11 @@ the VPS side an independent, durable reconciler instead of a collection
 of synchronous CLI operations.</p>
 <h3 id="current-components">Current Components</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Component</th>
@@ -794,6 +803,11 @@ and plugins</td>
 </table>
 <h3 id="capability-matrix">Capability Matrix</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Area</th>
@@ -1001,6 +1015,11 @@ evidence, and approval.</li>
 <h3 id="comparable-platforms-and-lessons">Comparable Platforms And
 Lessons</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Reference</th>
@@ -1051,7 +1070,7 @@ rootless mode</a></td>
 </table>
 <p>Lakebed is a different layer. It is a constrained TypeScript
 application runtime; Ophelia is a host and infrastructure runtime.
-Ophelia should borrow Lakebed&#39;s discipline, not embed its framework. A
+Ophelia should borrow Lakebed’s discipline, not embed its framework. A
 Lakebed-like capsule profile could later run on top of Ophelia.</p>
 <p>The clearest positioning is:</p>
 <blockquote>
@@ -1124,6 +1143,12 @@ operations.</li>
 </ul>
 <h2 id="confirmed-risk-register">Confirmed Risk Register</h2>
 <table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
 <thead>
 <tr>
 <th>ID</th>
@@ -1320,7 +1345,7 @@ unsupported versions, and unknown fields.</p>
 state. It must not write into an application directory,
 <code>sites.d</code>, Compose state, Docker, addons, DNS, or the active
 SQLite projection.</p>
-<p>&quot;Read-only&quot; means no change to protected desired, active, observed,
+<p>“Read-only” means no change to protected desired, active, observed,
 provider, or runtime surfaces. Planning may write only to its
 operation-specific staging tree and an append-only plan journal. Tests
 should hash protected application, active Caddy, addon, and runtime
@@ -1421,6 +1446,11 @@ the same revision contract.</li>
      revisions and health     traffic and TLS     volumes, DB, Redis</code></pre>
 <h3 id="component-responsibilities">Component Responsibilities</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Component</th>
@@ -1481,9 +1511,13 @@ while allowing an explicit development root:</p>
 <pre class="text"><code>/etc/ophelia/
   agent.toml
   trust/
-    host.crt
-    host.key
     control-plane-ca.pem
+    decision-public.pem
+
+/var/lib/ophelia-identity/
+  host.crt
+  host.key
+  enrollment.json
 
 /var/lib/ophelia/
   operations.db
@@ -1517,6 +1551,11 @@ filesystem or a root-only runtime directory outside immutable revisions.
 Secret references may be recorded; secret values may not.</p>
 <h3 id="authority-matrix">Authority Matrix</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Entity</th>
@@ -1583,6 +1622,10 @@ both databases.</p>
 <p>Every mutation should be represented by these related
 identifiers:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Identifier</th>
@@ -1592,7 +1635,7 @@ identifiers:</p>
 <tbody>
 <tr>
 <td><code>request_id</code></td>
-<td>Correlates the caller&#39;s attempt and transport retry</td>
+<td>Correlates the caller’s attempt and transport retry</td>
 </tr>
 <tr>
 <td><code>plan_id</code></td>
@@ -1680,6 +1723,11 @@ reference or caller-supplied actor label is never sufficient.</p>
 <p>The engine should express every phase with explicit preconditions,
 postconditions, timeout, emitted events, and compensation.</p>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Phase</th>
@@ -1975,6 +2023,11 @@ model and produce the same semantic digest.</p>
 <h3 id="workload-kinds">Workload Kinds</h3>
 <p>Manifest v2 should model workloads independently of routes:</p>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Kind</th>
@@ -2060,50 +2113,55 @@ than forcing every deployment shape into a container service.</p>
 <span id="cb17-35"><a href="#cb17-35" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">pids</span><span class="kw">:</span><span class="at"> </span><span class="dv">256</span></span>
 <span id="cb17-36"><a href="#cb17-36" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">security</span><span class="kw">:</span></span>
 <span id="cb17-37"><a href="#cb17-37" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">run_as_non_root</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
-<span id="cb17-38"><a href="#cb17-38" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">read_only_root</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
-<span id="cb17-39"><a href="#cb17-39" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">no_new_privileges</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
-<span id="cb17-40"><a href="#cb17-40" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">drop_capabilities</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;ALL&quot;</span><span class="kw">]</span></span>
-<span id="cb17-41"><a href="#cb17-41" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">shutdown_grace_seconds</span><span class="kw">:</span><span class="at"> </span><span class="dv">30</span></span>
-<span id="cb17-42"><a href="#cb17-42" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-43"><a href="#cb17-43" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">jobs</span><span class="kw">:</span></span>
-<span id="cb17-44"><a href="#cb17-44" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">kind</span><span class="kw">:</span><span class="at"> worker</span></span>
-<span id="cb17-45"><a href="#cb17-45" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">artifact</span><span class="kw">:</span><span class="at"> app_image</span></span>
-<span id="cb17-46"><a href="#cb17-46" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">command</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;./bin/worker&quot;</span><span class="kw">]</span></span>
-<span id="cb17-47"><a href="#cb17-47" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">networks</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">app</span><span class="kw">]</span></span>
-<span id="cb17-48"><a href="#cb17-48" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">update</span><span class="kw">:</span></span>
-<span id="cb17-49"><a href="#cb17-49" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">overlap</span><span class="kw">:</span><span class="at"> forbid</span></span>
-<span id="cb17-50"><a href="#cb17-50" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-51"><a href="#cb17-51" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">cleanup</span><span class="kw">:</span></span>
-<span id="cb17-52"><a href="#cb17-52" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">kind</span><span class="kw">:</span><span class="at"> cron</span></span>
-<span id="cb17-53"><a href="#cb17-53" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">artifact</span><span class="kw">:</span><span class="at"> app_image</span></span>
-<span id="cb17-54"><a href="#cb17-54" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">command</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;./bin/cleanup&quot;</span><span class="kw">]</span></span>
-<span id="cb17-55"><a href="#cb17-55" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">schedule</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;17 3 * * *&quot;</span></span>
-<span id="cb17-56"><a href="#cb17-56" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">concurrency_policy</span><span class="kw">:</span><span class="at"> forbid</span></span>
-<span id="cb17-57"><a href="#cb17-57" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-58"><a href="#cb17-58" aria-hidden="true" tabindex="-1"></a><span class="fu">migrations</span><span class="kw">:</span></span>
-<span id="cb17-59"><a href="#cb17-59" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">pre_traffic</span><span class="kw">:</span></span>
-<span id="cb17-60"><a href="#cb17-60" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">workload</span><span class="kw">:</span></span>
-<span id="cb17-61"><a href="#cb17-61" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">kind</span><span class="kw">:</span><span class="at"> migration</span></span>
-<span id="cb17-62"><a href="#cb17-62" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">artifact</span><span class="kw">:</span><span class="at"> app_image</span></span>
-<span id="cb17-63"><a href="#cb17-63" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">command</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;./bin/migrate&quot;</span><span class="kw">]</span></span>
-<span id="cb17-64"><a href="#cb17-64" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">compatibility</span><span class="kw">:</span><span class="at"> backward_compatible</span></span>
-<span id="cb17-65"><a href="#cb17-65" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">timeout_seconds</span><span class="kw">:</span><span class="at"> </span><span class="dv">300</span></span>
-<span id="cb17-66"><a href="#cb17-66" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-67"><a href="#cb17-67" aria-hidden="true" tabindex="-1"></a><span class="fu">routes</span><span class="kw">:</span></span>
-<span id="cb17-68"><a href="#cb17-68" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> public</span></span>
-<span id="cb17-69"><a href="#cb17-69" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">domain</span><span class="kw">:</span><span class="at"> demo-service.example.com</span></span>
-<span id="cb17-70"><a href="#cb17-70" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">target</span><span class="kw">:</span></span>
-<span id="cb17-71"><a href="#cb17-71" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">workload</span><span class="kw">:</span><span class="at"> web</span></span>
-<span id="cb17-72"><a href="#cb17-72" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">port</span><span class="kw">:</span><span class="at"> </span><span class="dv">8080</span></span>
-<span id="cb17-73"><a href="#cb17-73" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-74"><a href="#cb17-74" aria-hidden="true" tabindex="-1"></a><span class="fu">update</span><span class="kw">:</span></span>
-<span id="cb17-75"><a href="#cb17-75" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">strategy</span><span class="kw">:</span><span class="at"> blue_green</span></span>
-<span id="cb17-76"><a href="#cb17-76" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">auto_rollback</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
-<span id="cb17-77"><a href="#cb17-77" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">drain_seconds</span><span class="kw">:</span><span class="at"> </span><span class="dv">30</span></span>
+<span id="cb17-38"><a href="#cb17-38" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">run_as_user</span><span class="kw">:</span><span class="at"> </span><span class="dv">1000</span><span class="co"> # required when privileged is true</span></span>
+<span id="cb17-39"><a href="#cb17-39" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">read_only_root</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb17-40"><a href="#cb17-40" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">no_new_privileges</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb17-41"><a href="#cb17-41" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">privileged</span><span class="kw">:</span><span class="at"> </span><span class="ch">false</span></span>
+<span id="cb17-42"><a href="#cb17-42" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">seccomp_profile</span><span class="kw">:</span><span class="at"> runtime_default</span></span>
+<span id="cb17-43"><a href="#cb17-43" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">apparmor_profile</span><span class="kw">:</span><span class="at"> runtime_default</span></span>
+<span id="cb17-44"><a href="#cb17-44" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">add_capabilities</span><span class="kw">:</span><span class="at"> </span><span class="kw">[]</span></span>
+<span id="cb17-45"><a href="#cb17-45" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">drop_capabilities</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;ALL&quot;</span><span class="kw">]</span></span>
+<span id="cb17-46"><a href="#cb17-46" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">shutdown_grace_seconds</span><span class="kw">:</span><span class="at"> </span><span class="dv">30</span></span>
+<span id="cb17-47"><a href="#cb17-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-48"><a href="#cb17-48" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb17-49"><a href="#cb17-49" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">kind</span><span class="kw">:</span><span class="at"> worker</span></span>
+<span id="cb17-50"><a href="#cb17-50" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">artifact</span><span class="kw">:</span><span class="at"> app_image</span></span>
+<span id="cb17-51"><a href="#cb17-51" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">command</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;./bin/worker&quot;</span><span class="kw">]</span></span>
+<span id="cb17-52"><a href="#cb17-52" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">networks</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">app</span><span class="kw">]</span></span>
+<span id="cb17-53"><a href="#cb17-53" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">update</span><span class="kw">:</span></span>
+<span id="cb17-54"><a href="#cb17-54" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">overlap</span><span class="kw">:</span><span class="at"> forbid</span></span>
+<span id="cb17-55"><a href="#cb17-55" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-56"><a href="#cb17-56" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">cleanup</span><span class="kw">:</span></span>
+<span id="cb17-57"><a href="#cb17-57" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">kind</span><span class="kw">:</span><span class="at"> cron</span></span>
+<span id="cb17-58"><a href="#cb17-58" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">artifact</span><span class="kw">:</span><span class="at"> app_image</span></span>
+<span id="cb17-59"><a href="#cb17-59" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">command</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;./bin/cleanup&quot;</span><span class="kw">]</span></span>
+<span id="cb17-60"><a href="#cb17-60" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">schedule</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;17 3 * * *&quot;</span></span>
+<span id="cb17-61"><a href="#cb17-61" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">concurrency_policy</span><span class="kw">:</span><span class="at"> forbid</span></span>
+<span id="cb17-62"><a href="#cb17-62" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-63"><a href="#cb17-63" aria-hidden="true" tabindex="-1"></a><span class="fu">migrations</span><span class="kw">:</span></span>
+<span id="cb17-64"><a href="#cb17-64" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">pre_traffic</span><span class="kw">:</span></span>
+<span id="cb17-65"><a href="#cb17-65" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">workload</span><span class="kw">:</span></span>
+<span id="cb17-66"><a href="#cb17-66" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">kind</span><span class="kw">:</span><span class="at"> migration</span></span>
+<span id="cb17-67"><a href="#cb17-67" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">artifact</span><span class="kw">:</span><span class="at"> app_image</span></span>
+<span id="cb17-68"><a href="#cb17-68" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">command</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;./bin/migrate&quot;</span><span class="kw">]</span></span>
+<span id="cb17-69"><a href="#cb17-69" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">compatibility</span><span class="kw">:</span><span class="at"> backward_compatible</span></span>
+<span id="cb17-70"><a href="#cb17-70" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">timeout_seconds</span><span class="kw">:</span><span class="at"> </span><span class="dv">300</span></span>
+<span id="cb17-71"><a href="#cb17-71" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-72"><a href="#cb17-72" aria-hidden="true" tabindex="-1"></a><span class="fu">routes</span><span class="kw">:</span></span>
+<span id="cb17-73"><a href="#cb17-73" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> public</span></span>
+<span id="cb17-74"><a href="#cb17-74" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">domain</span><span class="kw">:</span><span class="at"> demo-service.example.com</span></span>
+<span id="cb17-75"><a href="#cb17-75" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">target</span><span class="kw">:</span></span>
+<span id="cb17-76"><a href="#cb17-76" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">workload</span><span class="kw">:</span><span class="at"> web</span></span>
+<span id="cb17-77"><a href="#cb17-77" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">port</span><span class="kw">:</span><span class="at"> </span><span class="dv">8080</span></span>
 <span id="cb17-78"><a href="#cb17-78" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-79"><a href="#cb17-79" aria-hidden="true" tabindex="-1"></a><span class="fu">secrets</span><span class="kw">:</span></span>
-<span id="cb17-80"><a href="#cb17-80" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> DATABASE_URL</span></span>
-<span id="cb17-81"><a href="#cb17-81" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">ref</span><span class="kw">:</span><span class="at"> secret://demo-service/production/database-url</span></span></code></pre></div>
+<span id="cb17-79"><a href="#cb17-79" aria-hidden="true" tabindex="-1"></a><span class="fu">update</span><span class="kw">:</span></span>
+<span id="cb17-80"><a href="#cb17-80" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">strategy</span><span class="kw">:</span><span class="at"> blue_green</span></span>
+<span id="cb17-81"><a href="#cb17-81" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">auto_rollback</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb17-82"><a href="#cb17-82" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">drain_seconds</span><span class="kw">:</span><span class="at"> </span><span class="dv">30</span></span>
+<span id="cb17-83"><a href="#cb17-83" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-84"><a href="#cb17-84" aria-hidden="true" tabindex="-1"></a><span class="fu">secrets</span><span class="kw">:</span></span>
+<span id="cb17-85"><a href="#cb17-85" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> DATABASE_URL</span></span>
+<span id="cb17-86"><a href="#cb17-86" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">ref</span><span class="kw">:</span><span class="at"> secret://demo-service/production/database-url</span></span></code></pre></div>
 <h3 id="probe-semantics">Probe Semantics</h3>
 <ul>
 <li><strong>Startup</strong> answers whether the process has initialized
@@ -2290,7 +2348,7 @@ low ports through Caddy, volume ownership, network behavior, resource
 limits, and host upgrades.</p>
 <p>If rootful Docker remains the default, the document and
 implementation must state clearly that <code>opheliad</code> access to
-the Docker socket is host-root equivalent. The daemon&#39;s network exposure
+the Docker socket is host-root equivalent. The daemon’s network exposure
 and authorization then become a critical host boundary.</p>
 <h3 id="audit-integrity">Audit Integrity</h3>
 <p>Operation history should be append-only at the API level and
@@ -2313,6 +2371,10 @@ Observability</h2>
 <p>Initial service objectives should be explicit and adjustable by
 environment. Suggested defaults for production are:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Objective</th>
@@ -2415,6 +2477,10 @@ archives, and restore verification should become one backup domain.</p>
 <p>Consistency is an evidence-backed level, not a free-form success
 label:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Level</th>
@@ -2673,7 +2739,7 @@ Activity, Incidents, monitoring, Connections, authentication, and secret
 references.</p>
 <p>It also already deploys through Ophelia in CI and exposes
 application-owned health and release endpoints. However, that
-operational CI path is separate from Lumen&#39;s in-application deploy
+operational CI path is separate from Lumen’s in-application deploy
 operator. The current in-application plan is descriptive rather than a
 provider-calculated Ophelia plan, verification steps can be marked
 successful without real provider verification, and deployment work is
@@ -2685,6 +2751,11 @@ lifecycle semantics.</p>
 systems.</p>
 <h3 id="ownership-mapping">Ownership Mapping</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Lumen concept</th>
@@ -2921,7 +2992,7 @@ ordinary revision pipeline.</p>
 <li>retain build and deploy as separate receipts</li>
 </ul>
 <p>Artifact-first deployment remains the near-term default because it
-keeps Ophelia&#39;s runtime smaller and makes rollback deterministic.</p>
+keeps Ophelia’s runtime smaller and makes rollback deterministic.</p>
 <h3 id="templates-and-services">Templates And Services</h3>
 <p>A template catalog can provide reviewed manifests for:</p>
 <ul>
@@ -3029,6 +3100,10 @@ migrate one operation at a time behind compatibility wrappers.</p>
 Databases</h3>
 <p>Suggested authoritative <code>operations.db</code> tables:</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Table</th>
@@ -3268,7 +3343,7 @@ hosts.</li>
 </ul>
 <h3 id="p3-lumen-cockpit">P3: Lumen Cockpit</h3>
 <p>Goal: make Lumen the authoritative human and AI operator experience
-over Ophelia&#39;s runtime truth.</p>
+over Ophelia’s runtime truth.</p>
 <p>Work:</p>
 <ol type="1">
 <li>Correct settled-Decision enforcement and remove durable raw
@@ -3364,7 +3439,7 @@ transport.</li>
 <li>Approve and activate revision A.</li>
 <li>Plan and activate revision B using health-gated traffic
 switching.</li>
-<li>Prove the web blue-green path and the worker&#39;s fenced,
+<li>Prove the web blue-green path and the worker’s fenced,
 non-overlapping lease handoff independently.</li>
 <li>Force a declared verification failure and prove automatic
 compensation.</li>
@@ -3411,6 +3486,10 @@ from machine-readable evidence:</p>
 <h2 id="test-and-release-strategy">Test And Release Strategy</h2>
 <h3 id="test-layers">Test Layers</h3>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Layer</th>
@@ -3476,7 +3555,7 @@ managed roots.</li>
 and runtime hashes unchanged; all allowed writes stay inside staging or
 the append-only plan journal, and no mutating backend is called.</li>
 <li>Every entrypoint refuses the same blocked policy.</li>
-<li>Deploy A, activate B, roll back to A, and verify A&#39;s externally
+<li>Deploy A, activate B, roll back to A, and verify A’s externally
 visible behavior.</li>
 <li>Kill the executor after every phase boundary and recover to one
 verified active revision.</li>
@@ -3599,6 +3678,11 @@ runtime and expose a clear degraded state.</p>
 <p>These defaults are recommended for the first implementation. Each
 should become an architecture decision record when accepted.</p>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th>Decision</th>

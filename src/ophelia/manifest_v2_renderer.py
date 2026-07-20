@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, List, Mapping
 
 import yaml
 
@@ -304,13 +304,22 @@ def _compose_service(
         }
     if "data" in workload.networks:
         networks["ophelia-data"] = {}
+    security_options: List[str] = []
+    if workload.security.no_new_privileges:
+        security_options.append("no-new-privileges:true")
+    if workload.security.seccomp_profile == "unconfined":
+        security_options.append("seccomp=unconfined")
+    if workload.security.apparmor_profile == "unconfined":
+        security_options.append("apparmor=unconfined")
     service: Dict[str, Any] = {
         "image": artifact.image,
         "restart": "no" if one_shot_profile else "unless-stopped",
         "environment": environment,
         "networks": networks,
+        "privileged": workload.security.privileged,
         "read_only": workload.security.read_only_root,
-        "security_opt": ["no-new-privileges:true"] if workload.security.no_new_privileges else [],
+        "security_opt": security_options,
+        "cap_add": list(workload.security.add_capabilities),
         "cap_drop": list(workload.security.drop_capabilities),
         "pids_limit": workload.resources.pids,
         "mem_limit": workload.resources.memory,
@@ -326,6 +335,8 @@ def _compose_service(
         },
         "stop_grace_period": "%ds" % workload.shutdown_grace_seconds,
     }
+    if workload.security.run_as_user is not None:
+        service["user"] = str(workload.security.run_as_user)
     if workload.command:
         service["command"] = list(workload.command)
     exposed_ports = sorted(
@@ -395,6 +406,11 @@ def _compose_service(
         )
     if volume_mounts:
         service["volumes"] = volume_mounts
+    if workload.devices:
+        service["devices"] = [
+            "%s:%s:%s" % (item.source, item.target, item.permissions)
+            for item in workload.devices
+        ]
     health = workload.readiness or workload.startup
     healthcheck = _compose_healthcheck(health)
     if healthcheck is not None:

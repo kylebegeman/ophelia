@@ -29,6 +29,7 @@ _CPU = re.compile(r"^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$")
 _CRON_FIELD = re.compile(r"^[0-9*/?,\-]+$")
 _ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _MOUNT_TARGET = re.compile(r"^/(?!.*(?:^|/)\.\.(?:/|$))[^\x00\r\n]*$")
+_DEVICE_PATH = re.compile(r"^/dev/[A-Za-z0-9._/-]+$")
 _HTTP_HEADER = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
@@ -71,8 +72,13 @@ class ResourceV2:
 @dataclass(frozen=True)
 class SecurityV2:
     run_as_non_root: bool = True
+    run_as_user: Optional[int] = None
     read_only_root: bool = True
     no_new_privileges: bool = True
+    privileged: bool = False
+    seccomp_profile: str = "runtime_default"
+    apparmor_profile: str = "runtime_default"
+    add_capabilities: Tuple[str, ...] = ()
     drop_capabilities: Tuple[str, ...] = ("ALL",)
 
 
@@ -89,6 +95,13 @@ class MountV2:
 
 
 @dataclass(frozen=True)
+class DeviceV2:
+    source: str
+    target: str
+    permissions: str = "rwm"
+
+
+@dataclass(frozen=True)
 class WorkloadV2:
     name: str
     kind: WorkloadKind
@@ -102,6 +115,7 @@ class WorkloadV2:
     env: Tuple[Tuple[str, str], ...] = ()
     env_files: Tuple[str, ...] = ()
     mounts: Tuple[MountV2, ...] = ()
+    devices: Tuple[DeviceV2, ...] = ()
     networks: Tuple[str, ...] = ("app",)
     startup: Optional[ProbeV2] = None
     readiness: Optional[ProbeV2] = None
@@ -330,7 +344,7 @@ _TOP_LEVEL = {
 _ARTIFACT_KEYS = {"image", "static_root"}
 _WORKLOAD_KEYS = {
     "kind", "artifact", "command", "port", "endpoints", "replicas", "schedule",
-    "concurrency_policy", "env", "env_files", "mounts", "networks", "startup",
+    "concurrency_policy", "env", "env_files", "mounts", "devices", "networks", "startup",
     "readiness", "liveness", "resources", "security", "shutdown_grace_seconds",
     "update",
 }
@@ -338,7 +352,8 @@ _PROBE_KEYS = {"http", "command", "interval_seconds", "timeout_seconds"}
 _HTTP_PROBE_KEYS = {"path", "port", "method", "expect_status"}
 _RESOURCE_KEYS = {"memory", "cpu", "pids"}
 _SECURITY_KEYS = {
-    "run_as_non_root", "read_only_root", "no_new_privileges", "drop_capabilities",
+    "run_as_non_root", "run_as_user", "read_only_root", "no_new_privileges", "privileged",
+    "seccomp_profile", "apparmor_profile", "add_capabilities", "drop_capabilities",
 }
 _WORKLOAD_UPDATE_KEYS = {"overlap"}
 _MIGRATION_KEYS = {"workload", "compatibility", "timeout_seconds", "backup_required"}
@@ -353,6 +368,7 @@ _CLIENT_AUTH_FORWARD_KEYS = {
 _UPDATE_KEYS = {"strategy", "auto_rollback", "drain_seconds"}
 _SECRET_KEYS = {"name", "ref", "workloads", "mode", "target", "encoding"}
 _MOUNT_KEYS = {"source", "target", "read_only"}
+_DEVICE_KEYS = {"source", "target", "permissions"}
 _RELEASE_KEYS = {"id", "commit_sha", "build_time"}
 
 
@@ -677,6 +693,12 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         _mount(item, "workloads.%s.mounts[%d]" % (name, index))
         for index, item in enumerate(_list(value.get("mounts", []), "workloads.%s.mounts" % name))
     )
+    devices = tuple(
+        _device(item, "workloads.%s.devices[%d]" % (name, index))
+        for index, item in enumerate(
+            _list(value.get("devices", []), "workloads.%s.devices" % name)
+        )
+    )
     networks = _text_tuple(value.get("networks", ["app"]), "workloads.%s.networks" % name)
     if any(item not in {"app", "edge", "data"} for item in networks):
         raise ManifestV2Error("Workload networks must be app, edge, or data.")
@@ -708,6 +730,7 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         env=env,
         env_files=env_files,
         mounts=mounts,
+        devices=devices,
         networks=networks,
         startup=startup,
         readiness=readiness,
@@ -1004,16 +1027,83 @@ def _security(raw: Any, field_name: str) -> SecurityV2:
         return SecurityV2()
     value = _mapping(raw, field_name)
     _shape(value, _SECURITY_KEYS, field_name)
-    capabilities = _text_tuple(
+    dropped_capabilities = _text_tuple(
         value.get("drop_capabilities", ["ALL"]), field_name + ".drop_capabilities"
     )
-    if not capabilities or any(not re.fullmatch(r"[A-Z][A-Z0-9_]*", item) for item in capabilities):
+    added_capabilities = _text_tuple(
+        value.get("add_capabilities", []), field_name + ".add_capabilities"
+    )
+    if not dropped_capabilities or any(
+        not re.fullmatch(r"[A-Z][A-Z0-9_]*", item) for item in dropped_capabilities
+    ):
         raise ManifestV2Error("%s.drop_capabilities contains an invalid capability." % field_name)
+    if any(not re.fullmatch(r"[A-Z][A-Z0-9_]*", item) for item in added_capabilities):
+        raise ManifestV2Error("%s.add_capabilities contains an invalid capability." % field_name)
+    if "ALL" in added_capabilities:
+        raise ManifestV2Error("%s.add_capabilities may not grant ALL." % field_name)
+    if set(added_capabilities) & (set(dropped_capabilities) - {"ALL"}):
+        raise ManifestV2Error("%s may not add and drop the same capability." % field_name)
+    seccomp_profile = (
+        _optional_text(value.get("seccomp_profile"), field_name + ".seccomp_profile")
+        or "runtime_default"
+    )
+    apparmor_profile = (
+        _optional_text(value.get("apparmor_profile"), field_name + ".apparmor_profile")
+        or "runtime_default"
+    )
+    if seccomp_profile not in {"runtime_default", "unconfined"}:
+        raise ManifestV2Error(
+            "%s.seccomp_profile must be runtime_default or unconfined." % field_name
+        )
+    if apparmor_profile not in {"runtime_default", "unconfined"}:
+        raise ManifestV2Error(
+            "%s.apparmor_profile must be runtime_default or unconfined." % field_name
+        )
+    run_as_non_root = _boolean(
+        value.get("run_as_non_root", True), field_name + ".run_as_non_root"
+    )
+    raw_run_as_user = value.get("run_as_user")
+    run_as_user = (
+        None
+        if raw_run_as_user is None
+        else _nonnegative_int(
+            raw_run_as_user, field_name + ".run_as_user", maximum=4_294_967_294
+        )
+    )
+    if run_as_non_root and run_as_user == 0:
+        raise ManifestV2Error("%s.run_as_user must be non-zero." % field_name)
+    privileged = _boolean(value.get("privileged", False), field_name + ".privileged")
+    no_new_privileges = _boolean(
+        value.get("no_new_privileges", True), field_name + ".no_new_privileges"
+    )
+    read_only_root = _boolean(
+        value.get("read_only_root", True), field_name + ".read_only_root"
+    )
+    if privileged:
+        if not run_as_non_root or run_as_user is None:
+            raise ManifestV2Error(
+                "%s.privileged requires run_as_non_root: true and an explicit non-zero "
+                "run_as_user." % field_name
+            )
+        if no_new_privileges:
+            raise ManifestV2Error(
+                "%s.privileged requires no_new_privileges: false." % field_name
+            )
+        if seccomp_profile != "unconfined" or apparmor_profile != "unconfined":
+            raise ManifestV2Error(
+                "%s.privileged requires explicit unconfined seccomp and AppArmor profiles."
+                % field_name
+            )
     return SecurityV2(
-        _boolean(value.get("run_as_non_root", True), field_name + ".run_as_non_root"),
-        _boolean(value.get("read_only_root", True), field_name + ".read_only_root"),
-        _boolean(value.get("no_new_privileges", True), field_name + ".no_new_privileges"),
-        tuple(sorted(set(capabilities))),
+        run_as_non_root=run_as_non_root,
+        run_as_user=run_as_user,
+        read_only_root=read_only_root,
+        no_new_privileges=no_new_privileges,
+        privileged=privileged,
+        seccomp_profile=seccomp_profile,
+        apparmor_profile=apparmor_profile,
+        add_capabilities=tuple(sorted(set(added_capabilities))),
+        drop_capabilities=tuple(sorted(set(dropped_capabilities))),
     )
 
 
@@ -1038,6 +1128,24 @@ def _mount(raw: Any, field_name: str) -> MountV2:
     if _MOUNT_TARGET.fullmatch(target) is None:
         raise ManifestV2Error("%s.target must be a safe absolute container path." % field_name)
     return MountV2(source, target, _boolean(value.get("read_only", True), field_name + ".read_only"))
+
+
+def _device(raw: Any, field_name: str) -> DeviceV2:
+    value = _mapping(raw, field_name)
+    _shape(value, _DEVICE_KEYS, field_name)
+    source = _text(value.get("source"), field_name + ".source")
+    target = _optional_text(value.get("target"), field_name + ".target") or source
+    permissions = _optional_text(value.get("permissions"), field_name + ".permissions") or "rwm"
+    paths_are_bounded = all(
+        _DEVICE_PATH.fullmatch(path) is not None
+        and all(part not in {"", ".", ".."} for part in path.split("/")[2:])
+        for path in (source, target)
+    )
+    if not paths_are_bounded:
+        raise ManifestV2Error("%s source and target must be bounded /dev paths." % field_name)
+    if not permissions or re.fullmatch(r"r?w?m?", permissions) is None:
+        raise ManifestV2Error("%s.permissions must be a canonical subset of rwm." % field_name)
+    return DeviceV2(source, target, permissions)
 
 
 def _tree_digest(root: Path) -> str:
@@ -1207,6 +1315,7 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
         "env": dict(value.env),
         "env_files": list(value.env_files),
         "mounts": [asdict(item) for item in value.mounts],
+        "devices": [asdict(item) for item in value.devices],
         "networks": list(value.networks),
         "startup": _probe_wire(value.startup),
         "readiness": _probe_wire(value.readiness),
@@ -1214,6 +1323,7 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
         "resources": asdict(value.resources),
         "security": {
             **asdict(value.security),
+            "add_capabilities": list(value.security.add_capabilities),
             "drop_capabilities": list(value.security.drop_capabilities),
         },
         "shutdown_grace_seconds": value.shutdown_grace_seconds,

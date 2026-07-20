@@ -1099,8 +1099,13 @@ workloads:
       pids: 256
     security:
       run_as_non_root: true
+      run_as_user: 1000 # required when privileged is true
       read_only_root: true
       no_new_privileges: true
+      privileged: false
+      seccomp_profile: runtime_default
+      apparmor_profile: runtime_default
+      add_capabilities: []
       drop_capabilities: ["ALL"]
     shutdown_grace_seconds: 30
 

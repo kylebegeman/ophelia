@@ -122,6 +122,99 @@ routes: []
         with self.assertRaisesRegex(ManifestV2Error, "digest-pinned"):
             self._load(mutable)
 
+    def test_security_profiles_are_strict_and_default_to_runtime_confinement(self) -> None:
+        manifest = self._load(
+            f"""
+version: 2
+app: sandbox-runner
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  runner:
+    kind: worker
+    artifact: app
+    security:
+      run_as_user: 1000
+      no_new_privileges: false
+      privileged: true
+      seccomp_profile: unconfined
+      apparmor_profile: unconfined
+      add_capabilities: [SYS_ADMIN, SETUID, SETGID, DAC_OVERRIDE]
+    devices:
+      - {{source: /dev/net/tun}}
+routes: []
+"""
+        )
+        security = manifest.workload("runner").security
+        self.assertFalse(security.no_new_privileges)
+        self.assertTrue(security.privileged)
+        self.assertEqual(1000, security.run_as_user)
+        self.assertEqual("unconfined", security.seccomp_profile)
+        self.assertEqual("unconfined", security.apparmor_profile)
+        self.assertEqual(
+            ("DAC_OVERRIDE", "SETGID", "SETUID", "SYS_ADMIN"),
+            security.add_capabilities,
+        )
+        self.assertEqual("/dev/net/tun", manifest.workload("runner").devices[0].target)
+
+        invalid = f"""
+version: 2
+app: sandbox-runner
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  runner:
+    kind: worker
+    artifact: app
+    security: {{seccomp_profile: custom.json}}
+routes: []
+"""
+        with self.assertRaisesRegex(ManifestV2Error, "seccomp_profile"):
+            self._load(invalid)
+
+        unsafe_privileged = invalid.replace(
+            "security: {seccomp_profile: custom.json}",
+            "security: {privileged: true, no_new_privileges: false, "
+            "seccomp_profile: unconfined, apparmor_profile: unconfined}",
+        )
+        with self.assertRaisesRegex(ManifestV2Error, "explicit non-zero run_as_user"):
+            self._load(unsafe_privileged)
+
+        unsafe_security_cases = {
+            "root uid": (
+                "{run_as_user: 0}",
+                "run_as_user must be non-zero",
+            ),
+            "privilege escalation remains blocked": (
+                "{privileged: true, run_as_user: 1000, seccomp_profile: unconfined, "
+                "apparmor_profile: unconfined}",
+                "requires no_new_privileges: false",
+            ),
+            "implicit profiles": (
+                "{privileged: true, run_as_user: 1000, no_new_privileges: false}",
+                "requires explicit unconfined",
+            ),
+            "all capabilities": (
+                "{add_capabilities: [ALL]}",
+                "may not grant ALL",
+            ),
+        }
+        for label, (security_yaml, message) in unsafe_security_cases.items():
+            with self.subTest(label=label):
+                candidate = invalid.replace(
+                    "security: {seccomp_profile: custom.json}",
+                    "security: " + security_yaml,
+                )
+                with self.assertRaisesRegex(ManifestV2Error, message):
+                    self._load(candidate)
+
+        unsafe_device = invalid.replace(
+            "security: {seccomp_profile: custom.json}",
+            "devices: [{source: /dev/../etc/shadow}]",
+        )
+        with self.assertRaisesRegex(ManifestV2Error, "bounded /dev paths"):
+            self._load(unsafe_device)
+
     def test_rejects_invalid_workload_route_and_update_combinations(self) -> None:
         cases = {
             "worker route": f"""
