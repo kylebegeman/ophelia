@@ -95,6 +95,12 @@ class MountV2:
 
 
 @dataclass(frozen=True)
+class FileMountV2:
+    source: str
+    target: str
+
+
+@dataclass(frozen=True)
 class DeviceV2:
     source: str
     target: str
@@ -106,6 +112,7 @@ class WorkloadV2:
     name: str
     kind: WorkloadKind
     artifact: str
+    entrypoint: Tuple[str, ...] = ()
     command: Tuple[str, ...] = ()
     port: Optional[int] = None
     endpoints: Tuple[Tuple[str, int], ...] = ()
@@ -115,6 +122,7 @@ class WorkloadV2:
     env: Tuple[Tuple[str, str], ...] = ()
     env_files: Tuple[str, ...] = ()
     mounts: Tuple[MountV2, ...] = ()
+    file_mounts: Tuple[FileMountV2, ...] = ()
     devices: Tuple[DeviceV2, ...] = ()
     networks: Tuple[str, ...] = ("app",)
     network_aliases: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
@@ -344,9 +352,9 @@ _TOP_LEVEL = {
 }
 _ARTIFACT_KEYS = {"image", "static_root"}
 _WORKLOAD_KEYS = {
-    "kind", "artifact", "command", "port", "endpoints", "replicas", "schedule",
-    "concurrency_policy", "env", "env_files", "mounts", "devices", "networks",
-    "network_aliases", "startup",
+    "kind", "artifact", "entrypoint", "command", "port", "endpoints", "replicas", "schedule",
+    "concurrency_policy", "env", "env_files", "mounts", "file_mounts", "devices",
+    "networks", "network_aliases", "startup",
     "readiness", "liveness", "resources", "security", "shutdown_grace_seconds",
     "update",
 }
@@ -370,6 +378,7 @@ _CLIENT_AUTH_FORWARD_KEYS = {
 _UPDATE_KEYS = {"strategy", "auto_rollback", "drain_seconds"}
 _SECRET_KEYS = {"name", "ref", "workloads", "mode", "target", "encoding"}
 _MOUNT_KEYS = {"source", "target", "read_only"}
+_FILE_MOUNT_KEYS = {"source", "target"}
 _DEVICE_KEYS = {"source", "target", "permissions"}
 _RELEASE_KEYS = {"id", "commit_sha", "build_time"}
 
@@ -464,11 +473,13 @@ def parse_manifest_v2(raw: Mapping[str, Any], *, source_root: Path) -> ManifestV
             )
         if workload.kind is WorkloadKind.STATIC and (
             workload.command
+            or workload.entrypoint
             or workload.port is not None
             or workload.replicas != 1
             or workload.env
             or workload.env_files
             or workload.mounts
+            or workload.file_mounts
             or workload.startup is not None
             or workload.readiness is not None
             or workload.liveness is not None
@@ -672,6 +683,7 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
     if artifact not in set(artifact_names):
         raise ManifestV2Error("Workload %s references unknown artifact %s." % (name, artifact))
     command = _command(value.get("command", []), "workloads.%s.command" % name)
+    entrypoint = _command(value.get("entrypoint", []), "workloads.%s.entrypoint" % name)
     port = _optional_port(value.get("port"), "workloads.%s.port" % name)
     endpoints_raw = _mapping(value.get("endpoints", {}), "workloads.%s.endpoints" % name)
     endpoints = tuple(
@@ -711,6 +723,17 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         _mount(item, "workloads.%s.mounts[%d]" % (name, index))
         for index, item in enumerate(_list(value.get("mounts", []), "workloads.%s.mounts" % name))
     )
+    file_mounts = tuple(
+        _file_mount(item, "workloads.%s.file_mounts[%d]" % (name, index))
+        for index, item in enumerate(
+            _list(value.get("file_mounts", []), "workloads.%s.file_mounts" % name)
+        )
+    )
+    mount_targets = [item.target for item in (*mounts, *file_mounts)]
+    if len(mount_targets) != len(set(mount_targets)):
+        raise ManifestV2Error(
+            "workloads.%s mount targets must be unique." % name
+        )
     devices = tuple(
         _device(item, "workloads.%s.devices[%d]" % (name, index))
         for index, item in enumerate(
@@ -744,6 +767,7 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         name=name,
         kind=kind,
         artifact=artifact,
+        entrypoint=entrypoint,
         command=command,
         port=port,
         endpoints=endpoints,
@@ -753,6 +777,7 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         env=env,
         env_files=env_files,
         mounts=mounts,
+        file_mounts=file_mounts,
         devices=devices,
         networks=networks,
         network_aliases=network_aliases,
@@ -1154,6 +1179,19 @@ def _mount(raw: Any, field_name: str) -> MountV2:
     return MountV2(source, target, _boolean(value.get("read_only", True), field_name + ".read_only"))
 
 
+def _file_mount(raw: Any, field_name: str) -> FileMountV2:
+    value = _mapping(raw, field_name)
+    _shape(value, _FILE_MOUNT_KEYS, field_name)
+    source = _text(value.get("source"), field_name + ".source")
+    source_path = Path(source)
+    if source_path.is_absolute() or not source_path.parts or source_path == Path(".") or ".." in source_path.parts:
+        raise ManifestV2Error("%s.source must be a safe relative file path." % field_name)
+    target = _text(value.get("target"), field_name + ".target")
+    if _MOUNT_TARGET.fullmatch(target) is None:
+        raise ManifestV2Error("%s.target must be a safe absolute container path." % field_name)
+    return FileMountV2(source, target)
+
+
 def _device(raw: Any, field_name: str) -> DeviceV2:
     value = _mapping(raw, field_name)
     _shape(value, _DEVICE_KEYS, field_name)
@@ -1360,6 +1398,7 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "kind": value.kind.value,
         "artifact": value.artifact,
+        "entrypoint": list(value.entrypoint),
         "command": list(value.command),
         "port": value.port,
         "endpoints": dict(value.endpoints),
@@ -1368,6 +1407,7 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
         "env": dict(value.env),
         "env_files": list(value.env_files),
         "mounts": [asdict(item) for item in value.mounts],
+        "file_mounts": [asdict(item) for item in value.file_mounts],
         "devices": [asdict(item) for item in value.devices],
         "networks": list(value.networks),
         "network_aliases": {

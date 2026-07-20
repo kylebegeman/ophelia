@@ -43,12 +43,29 @@ def support_file_target(
     )
 
 
+def mounted_file_target(
+    workload: WorkloadV2,
+    index: int,
+    source: str,
+    *,
+    service_name: str | None = None,
+) -> Path:
+    """Return the stable bundle path used by one read-only support-file mount."""
+
+    return (
+        Path("support")
+        / (service_name or workload.name)
+        / "files"
+        / ("%02d-%s" % (index, Path(source).name))
+    )
+
+
 def stage_manifest_v2_sources(
     manifest: ManifestV2,
     manifest_path: Path,
     output_root: Path,
 ) -> str:
-    """Copy static artifacts and env files without following symbolic links."""
+    """Copy static artifacts, env files, and support files without following links."""
 
     source_root = Path(manifest_path).expanduser().parent.resolve(strict=True)
     output_root = Path(output_root)
@@ -82,6 +99,16 @@ def stage_manifest_v2_sources(
                 service_name=service_name,
             )
             _copy_file(source, target, allowed_output=output_root)
+        for index, raw_source in enumerate(item.source for item in workload.file_mounts):
+            relative = _safe_relative(raw_source, "support file")
+            source = _trusted_source(source_root, relative, require_directory=False)
+            target = output_root / mounted_file_target(
+                workload,
+                index,
+                raw_source,
+                service_name=service_name,
+            )
+            _copy_file(source, target, allowed_output=output_root)
     return manifest_v2_sources_digest(manifest, output_root)
 
 
@@ -101,6 +128,16 @@ def manifest_v2_sources_digest(manifest: ManifestV2, staged_root: Path) -> str:
             paths.append(
                 Path(staged_root)
                 / support_file_target(
+                    workload,
+                    index,
+                    source,
+                    service_name=service_name,
+                )
+            )
+        for index, source in enumerate(item.source for item in workload.file_mounts):
+            paths.append(
+                Path(staged_root)
+                / mounted_file_target(
                     workload,
                     index,
                     source,
@@ -147,6 +184,20 @@ def manifest_v2_request_digest(manifest: ManifestV2, manifest_path: Path) -> str
             inputs.append(
                 {
                     "target": support_file_target(
+                        workload,
+                        index,
+                        raw_source,
+                        service_name=service_name,
+                    ).as_posix(),
+                    "sha256": _file_sha256(source),
+                }
+            )
+        for index, raw_source in enumerate(item.source for item in workload.file_mounts):
+            relative = _safe_relative(raw_source, "support file")
+            source = _trusted_source(source_root, relative, require_directory=False)
+            inputs.append(
+                {
+                    "target": mounted_file_target(
                         workload,
                         index,
                         raw_source,
@@ -219,7 +270,7 @@ def _trusted_source(root: Path, relative: Path, *, require_directory: bool) -> P
     if require_directory and not resolved.is_dir():
         raise ManifestV2SourceError("Static artifact source must be a directory.")
     if not require_directory and not resolved.is_file():
-        raise ManifestV2SourceError("Environment source must be a regular file.")
+        raise ManifestV2SourceError("Manifest file source must be a regular file.")
     return resolved
 
 

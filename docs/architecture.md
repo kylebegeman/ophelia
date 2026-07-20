@@ -123,6 +123,26 @@ update:
   strategy: recreate
 ```
 
+Repository-owned configuration files are declared separately from managed
+volumes and runtime secrets. `file_mounts` stages each regular file into the
+immutable revision bundle, includes its bytes in the reviewed plan digest, and
+mounts it read-only at the declared container path:
+
+```yaml
+file_mounts:
+  - source: postgres/init.sql
+    target: /docker-entrypoint-initdb.d/010-init.sql
+```
+
+Workloads may replace an image's default entrypoint with an explicit argument
+array. This remains distinct from `command`, is included in the canonical
+revision, and avoids implicit shell evaluation:
+
+```yaml
+entrypoint: [/bin/sh, -ec]
+command: ["exec application --config /opt/application/config.yml"]
+```
+
 The shared Caddy service also maps `host.docker.internal` to Docker's
 host-gateway address so tunnel-style manifests can proxy to host-published
 services on Linux. For legacy app containers that only bind `127.0.0.1` inside

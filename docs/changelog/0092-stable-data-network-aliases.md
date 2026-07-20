@@ -1,6 +1,6 @@
 ---
 id: 0092
-title: Stable data-network aliases and release 0.6.2
+title: Stable data-network aliases, support files, and release 0.6.2
 date: 2026-07-20
 status: landed
 areas: [release, manifest-v2, networking, data, compose, lumen, tests, docs]
@@ -16,6 +16,16 @@ retain a durable address while Ophelia continues to isolate application
 revisions and Compose projects. Publish the contract as Ophelia 0.6.2 for the
 first Lumen Platform staging deployment.
 
+Manifest v2 also gains first-class read-only support-file mounts. Their source
+bytes are copied into the immutable candidate bundle and included in the plan
+digest, allowing stateful services to consume reviewed initialization files
+without disguising public configuration as runtime secrets.
+
+Workloads can explicitly replace an artifact's default entrypoint with a
+bounded argument array. This supports administrative images whose packaged
+entrypoint is intentionally specialized while keeping shell use visible in the
+reviewed manifest.
+
 ## Safety Invariants
 
 - Aliases are accepted only for the declared `data` network.
@@ -24,6 +34,8 @@ first Lumen Platform staging deployment.
 - Stable aliases require recreate updates, preventing old and candidate
   revisions from claiming the same address at once.
 - Aliases participate in the canonical manifest lock and revision digest.
+- Support-file sources reject traversal, symbolic links, and special files;
+  their staged bytes remain integrity-bound through apply.
 
 ## Verification
 

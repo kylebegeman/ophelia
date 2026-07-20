@@ -53,10 +53,15 @@ workloads:
   database:
     kind: internal
     artifact: app
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["exec database-server"]
     port: 5432
     networks: [data]
     network_aliases:
       data: [rendered-demo-database]
+    file_mounts:
+      - source: config/init.sql
+        target: /docker-entrypoint-initdb.d/010-init.sql
 routes:
   - name: public
     domain: rendered-demo.example.com
@@ -68,6 +73,8 @@ update:
   strategy: recreate
 """
             )
+            (root / "config").mkdir()
+            (root / "config" / "init.sql").write_text("SELECT 1;\n")
             manifest = load_manifest_v2(manifest_path)
             revision = manifest.to_revision(created_at="2026-07-19T12:00:00Z")
 
@@ -101,6 +108,13 @@ update:
         self.assertEqual(
             ["rendered-demo-database"],
             compose["services"]["database"]["networks"]["ophelia-data"]["aliases"],
+        )
+        self.assertEqual(
+            ["/bin/sh", "-ec"], compose["services"]["database"]["entrypoint"]
+        )
+        self.assertIn(
+            "./support/database/files/00-init.sql:/docker-entrypoint-initdb.d/010-init.sql:ro",
+            compose["services"]["database"]["volumes"],
         )
         self.assertIn("rendered-demo.example.com", caddy)
         self.assertIn(revision.revision_id.removeprefix("rev_")[:12], caddy)

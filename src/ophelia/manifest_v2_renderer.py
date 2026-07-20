@@ -11,7 +11,7 @@ import yaml
 
 from .domain import Revision, WorkloadKind
 from .manifest_v2 import ManifestV2, ProbeV2, WorkloadV2
-from .manifest_v2_sources import support_file_target
+from .manifest_v2_sources import mounted_file_target, support_file_target
 
 
 RENDERER_VERSION = "manifest-v2"
@@ -342,6 +342,8 @@ def _compose_service(
         service["user"] = str(workload.security.run_as_user)
     if workload.command:
         service["command"] = list(workload.command)
+    if workload.entrypoint:
+        service["entrypoint"] = list(workload.entrypoint)
     exposed_ports = sorted(
         {
             port
@@ -392,6 +394,19 @@ def _compose_service(
         )
         for mount in workload.mounts
     ]
+    volume_mounts.extend(
+        "%s:%s:ro"
+        % (
+            "./" + mounted_file_target(
+                workload,
+                index,
+                mount.source,
+                service_name=service_name,
+            ).as_posix(),
+            mount.target,
+        )
+        for index, mount in enumerate(workload.file_mounts)
+    )
     for secret in file_secrets:
         assert secret.target is not None
         environment[secret.name] = secret.target

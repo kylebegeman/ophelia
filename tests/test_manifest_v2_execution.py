@@ -239,6 +239,7 @@ update: {{strategy: blue_green}}
             runtime_root = root / "runtime"
             (root / "config").mkdir()
             (root / "config" / "worker.env").write_text("QUEUE=primary\n")
+            (root / "config" / "worker.sql").write_text("SELECT 1;\n")
             path = root / "app.ophelia.yml"
             path.write_text(
                 f"""
@@ -251,6 +252,9 @@ workloads:
     kind: worker
     artifact: app
     env_files: [config/worker.env]
+    file_mounts:
+      - source: config/worker.sql
+        target: /opt/app/worker.sql
 routes: []
 update: {{strategy: recreate}}
 """
@@ -266,6 +270,14 @@ update: {{strategy: recreate}}
             loaded = load_manifest_v2_plan(runtime_root, plan["plan_id"])
             staged = loaded["staging"].candidate / "support" / "worker" / "00-worker.env"
             self.assertEqual("QUEUE=primary\n", staged.read_text())
+            mounted = (
+                loaded["staging"].candidate
+                / "support"
+                / "worker"
+                / "files"
+                / "00-worker.sql"
+            )
+            self.assertEqual("SELECT 1;\n", mounted.read_text())
             staged.chmod(0o600)
             staged.write_text("QUEUE=tampered\n")
 

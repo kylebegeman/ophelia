@@ -45,7 +45,7 @@ public launch decision is made.
 | Stateful apps | Postgres, Redis, named volumes, host-path volumes, export contracts, restore rehearsals, and backup readiness. |
 | Redirects and tunnels | Caddy-rendered redirect and tunnel routes for migration or edge compatibility. |
 | Non-live apps | Explicit lifecycle fields, fresh-install planning, safe volume reset gates, and data verifier execution. |
-| Workload manifests | Strict manifest v2 support for web, worker, cron, task, migration, internal, and static lifecycles through the journaled revision engine. |
+| Workload manifests | Strict manifest v2 support for web, worker, cron, task, migration, internal, and static lifecycles, including explicit entrypoints and plan-bound support files, through the journaled revision engine. |
 | Independent hosts | Durable `opheliad` authority with outbound mutual-TLS Lumen control, encrypted host recovery, and continuous observations. |
 
 ## Why Ophelia Exists
