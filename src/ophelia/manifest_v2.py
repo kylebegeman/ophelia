@@ -481,6 +481,28 @@ def parse_manifest_v2(raw: Mapping[str, Any], *, source_root: Path) -> ManifestV
     route_names = [item.name for item in routes]
     if len(route_names) != len(set(route_names)):
         raise ManifestV2Error("routes must use unique names.")
+    routes_by_domain: Dict[str, List[RouteV2]] = {}
+    for route in routes:
+        routes_by_domain.setdefault(route.domain, []).append(route)
+    for domain, domain_routes in routes_by_domain.items():
+        if len(domain_routes) < 2:
+            continue
+        catch_all = [route for route in domain_routes if route.path_prefix is None]
+        if len(catch_all) > 1:
+            raise ManifestV2Error(
+                "routes for domain %s may declare at most one catch-all route." % domain
+            )
+        prefixes = [route.path_prefix for route in domain_routes if route.path_prefix is not None]
+        if len(prefixes) != len(set(prefixes)):
+            raise ManifestV2Error(
+                "routes for domain %s must use unique path prefixes." % domain
+            )
+        security = _route_site_security(domain_routes[0])
+        if any(_route_site_security(route) != security for route in domain_routes[1:]):
+            raise ManifestV2Error(
+                "routes for domain %s must use the same TLS and client-auth policy."
+                % domain
+            )
     route_map: Dict[str, List[str]] = {name: [] for name in workload_names}
     by_workload = {item.name: item for item in preliminary}
     for route in routes:
@@ -908,6 +930,20 @@ def _route(raw: Any, index: int, workload_names: Iterable[str]) -> RouteV2:
         path_prefix=path_prefix,
         tls=tls,
         client_auth=client_auth,
+    )
+
+
+def _route_site_security(route: RouteV2) -> Tuple[Any, ...]:
+    client_auth = route.client_auth
+    return (
+        route.tls.mode,
+        None
+        if client_auth is None
+        else (
+            client_auth.mode,
+            client_auth.trust_pool_ref,
+            client_auth.trust_pool_encoding,
+        ),
     )
 
 

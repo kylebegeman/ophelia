@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Mapping
 import yaml
 
 from .domain import Revision, WorkloadKind
-from .manifest_v2 import ManifestV2, ProbeV2, WorkloadV2, resource_memory_bytes
+from .manifest_v2 import ManifestV2, ProbeV2, RouteV2, WorkloadV2, resource_memory_bytes
 from .manifest_v2_sources import mounted_file_target, support_file_target
 
 
@@ -469,15 +469,18 @@ def _escape_compose_interpolation(value: Any) -> Any:
 def _render_caddy(manifest: ManifestV2, revision: Revision, *, runtime_root: Path) -> str:
     revision_suffix = revision.revision_id.removeprefix("rev_")[:12]
     blocks = []
+    routes_by_domain: Dict[str, List[RouteV2]] = {}
     for route in manifest.routes:
-        workload = manifest.workload(route.target.workload)
-        lines = [route.domain + " {"]
-        if route.client_auth is not None:
+        routes_by_domain.setdefault(route.domain, []).append(route)
+    for domain, domain_routes in routes_by_domain.items():
+        site_route = domain_routes[0]
+        lines = [domain + " {"]
+        if site_route.client_auth is not None:
             trust_pool = (
                 route_auth_root(
                     manifest,
                     revision,
-                    route.name,
+                    site_route.name,
                     runtime_root=runtime_root,
                 )
                 / "client-ca.pem"
@@ -486,53 +489,84 @@ def _render_caddy(manifest: ManifestV2, revision: Revision, *, runtime_root: Pat
                 [
                     "  tls {",
                     "    client_auth {",
-                    "      mode %s" % route.client_auth.mode,
+                    "      mode %s" % site_route.client_auth.mode,
                     "      trust_pool file %s" % trust_pool,
                     "    }",
                     "  }",
                 ]
             )
-        elif route.tls.mode == "internal":
+        elif site_route.tls.mode == "internal":
             lines.append("  tls internal")
-        if workload.kind is WorkloadKind.STATIC:
-            artifact = manifest.artifact(workload.artifact)
-            root = (
-                Path(runtime_root)
-                / "static"
-                / manifest.app
-                / manifest.environment
-                / "revisions"
-                / revision.revision_id
-                / artifact.name
+        grouped = len(domain_routes) > 1
+        ordered_routes = sorted(
+            domain_routes,
+            key=lambda route: (
+                route.path_prefix is None,
+                -(len(route.path_prefix) if route.path_prefix is not None else 0),
+                route.path_prefix or "",
+                route.name,
+            ),
+        )
+        for route in ordered_routes:
+            handler = _caddy_route_handler(
+                manifest,
+                revision,
+                route,
+                revision_suffix=revision_suffix,
+                runtime_root=runtime_root,
             )
-            lines.extend(["  root * %s" % root, "  file_server"])
-        else:
-            alias = _docker_name("%s-%s-%s" % (manifest.app, workload.name, revision_suffix))
-            proxy_lines = ["reverse_proxy %s:%d {" % (alias, route.target.port)]
-            if route.client_auth is not None and route.client_auth.forward is not None:
-                forward = route.client_auth.forward
-                proxy_lines.extend(
-                    [
-                        "  header_up %s \"%s {$%s}\""
-                        % (
-                            forward.authorization_header,
-                            forward.authorization_scheme,
-                            route_auth_env_key(manifest, route.name),
-                        ),
-                        "  header_up %s \"sha256:{tls_client_fingerprint}\""
-                        % forward.fingerprint_header,
-                    ]
-                )
-            proxy_lines.append("}")
-            if route.path_prefix:
-                lines.append("  handle %s* {" % route.path_prefix)
-                lines.extend("    " + item for item in proxy_lines)
+            if grouped or route.path_prefix is not None:
+                matcher = "" if route.path_prefix is None else " " + route.path_prefix + "*"
+                lines.append("  handle%s {" % matcher)
+                lines.extend("    " + item for item in handler)
                 lines.append("  }")
             else:
-                lines.extend("  " + item for item in proxy_lines)
+                lines.extend("  " + item for item in handler)
         lines.append("}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def _caddy_route_handler(
+    manifest: ManifestV2,
+    revision: Revision,
+    route: RouteV2,
+    *,
+    revision_suffix: str,
+    runtime_root: Path,
+) -> List[str]:
+    workload = manifest.workload(route.target.workload)
+    if workload.kind is WorkloadKind.STATIC:
+        artifact = manifest.artifact(workload.artifact)
+        root = (
+            Path(runtime_root)
+            / "static"
+            / manifest.app
+            / manifest.environment
+            / "revisions"
+            / revision.revision_id
+            / artifact.name
+        )
+        return ["root * %s" % root, "file_server"]
+
+    alias = _docker_name("%s-%s-%s" % (manifest.app, workload.name, revision_suffix))
+    lines = ["reverse_proxy %s:%d {" % (alias, route.target.port)]
+    if route.client_auth is not None and route.client_auth.forward is not None:
+        forward = route.client_auth.forward
+        lines.extend(
+            [
+                "  header_up %s \"%s {$%s}\""
+                % (
+                    forward.authorization_header,
+                    forward.authorization_scheme,
+                    route_auth_env_key(manifest, route.name),
+                ),
+                "  header_up %s \"sha256:{tls_client_fingerprint}\""
+                % forward.fingerprint_header,
+            ]
+        )
+    lines.append("}")
+    return lines
 
 
 def _volume_name(manifest: ManifestV2, source: str) -> str:

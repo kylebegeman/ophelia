@@ -439,6 +439,38 @@ routes:
         with self.assertRaisesRegex(ManifestV2Error, "named endpoint"):
             self._load(value)
 
+    def test_rejects_ambiguous_same_domain_route_policies(self) -> None:
+        base = f"""
+version: 2
+app: shared-domain
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  web: {{kind: web, artifact: app, port: 8080}}
+routes:
+  - name: first
+    domain: shared.example.com
+    target: {{workload: web, port: 8080}}
+    tls: {{mode: internal}}
+  - name: second
+    domain: shared.example.com
+    target: {{workload: web, port: 8080}}
+    tls: {{mode: internal}}
+"""
+        with self.assertRaisesRegex(ManifestV2Error, "at most one catch-all"):
+            self._load(base)
+
+        incompatible_tls = base.replace(
+            "    target: {workload: web, port: 8080}\n    tls: {mode: internal}\n  - name: second",
+            "    target: {workload: web, port: 8080}\n    path_prefix: /first\n    tls: {mode: internal}\n  - name: second",
+            1,
+        ).replace(
+            "  - name: second\n    domain: shared.example.com\n    target: {workload: web, port: 8080}\n    tls: {mode: internal}",
+            "  - name: second\n    domain: shared.example.com\n    target: {workload: web, port: 8080}\n    path_prefix: /second",
+        )
+        with self.assertRaisesRegex(ManifestV2Error, "same TLS and client-auth"):
+            self._load(incompatible_tls)
+
     def test_migrates_v1_service_to_explicit_v2_candidate(self) -> None:
         candidate = migrate_v1_document(
             {

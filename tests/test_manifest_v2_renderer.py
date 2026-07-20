@@ -137,6 +137,44 @@ update:
         refs = json.loads(bundle[Path("secret-refs.json")])
         self.assertEqual("secret://rendered-demo/production/database-url", refs["secrets"][0]["ref"])
 
+    def test_groups_same_domain_routes_into_ordered_handle_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "lumen.ophelia.yml"
+            path.write_text(
+                f"""
+version: 2
+app: lumen-staging
+environment: staging
+artifacts: {{server: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  core: {{kind: web, artifact: server, port: 4773}}
+  product: {{kind: web, artifact: server, port: 3773}}
+routes:
+  - name: product-runtime
+    domain: lumen-staging.example.com
+    target: {{workload: core, port: 4773}}
+    path_prefix: /ophelia
+    tls: {{mode: internal}}
+  - name: product
+    domain: lumen-staging.example.com
+    target: {{workload: product, port: 3773}}
+    tls: {{mode: internal}}
+update: {{strategy: recreate}}
+"""
+            )
+            manifest = load_manifest_v2(path)
+            revision = manifest.to_revision(created_at="2026-07-20T22:00:00Z")
+            caddy = render_revision_bundle(manifest, revision)[Path("caddy/routes.caddy")]
+
+        self.assertEqual(1, caddy.count("lumen-staging.example.com {"))
+        self.assertEqual(1, caddy.count("  tls internal"))
+        self.assertIn("  handle /ophelia* {", caddy)
+        self.assertIn("  handle {", caddy)
+        self.assertLess(caddy.index("  handle /ophelia* {"), caddy.index("  handle {"))
+        self.assertIn("lumen-staging-core-", caddy)
+        self.assertIn("lumen-staging-product-", caddy)
+
     def test_cron_task_and_migration_are_rendered_as_profiles_not_started_services(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
