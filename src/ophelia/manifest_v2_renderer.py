@@ -238,11 +238,8 @@ def _compose_document(
         "services": services,
         "networks": {
             "ophelia-app": {
+                "external": True,
                 "name": _docker_name("ophelia-%s-%s-app" % (manifest.app, manifest.environment)),
-                "labels": {
-                    "ophelia.app": manifest.app,
-                    "ophelia.environment": manifest.environment,
-                },
             },
             "ophelia-edge": {"external": True, "name": "ophelia-edge"},
             "ophelia-data": {"external": True, "name": "ophelia-data"},

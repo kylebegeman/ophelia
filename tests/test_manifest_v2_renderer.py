@@ -91,6 +91,8 @@ update:
         self.assertIn("rendered-demo-production", compose["name"])
         self.assertIn("web", compose["services"])
         self.assertIn("jobs", compose["services"])
+        self.assertTrue(compose["networks"]["ophelia-app"]["external"])
+        self.assertNotIn("labels", compose["networks"]["ophelia-app"])
         self.assertTrue(compose["services"]["web"]["read_only"])
         self.assertEqual(536870912, compose["services"]["web"]["mem_limit"])
         self.assertEqual(["ALL"], compose["services"]["web"]["cap_drop"])

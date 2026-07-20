@@ -74,6 +74,11 @@ Ophelia escapes Compose interpolation when rendering them, so a shell variable
 such as `$DATABASE_URL` reaches the container rather than expanding on the
 deployment host. Command probes render as Compose `CMD` health checks.
 
+Each app and environment receives a stable Ophelia-managed application network.
+Revision-specific Compose projects consume that network as external, allowing
+blue-green revisions to overlap without a Compose ownership-label conflict and
+preventing revision teardown from deleting shared connectivity.
+
 Example:
 
 ```yaml

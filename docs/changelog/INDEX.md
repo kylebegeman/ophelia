@@ -97,3 +97,4 @@
 | [0093](0093-edge-cutover-and-nonrelocating-installs.md) | 2026-07-20 | landed | Safe edge cutover and non-relocating installs for release 0.6.3 | release, edge, caddy, daemon, installer, migration, lumen, tests |
 | [0094](0094-safe-operation-failure-diagnostics.md) | 2026-07-20 | landed | Safe operation failure diagnostics for release 0.6.4 | release, manifest-v2, execution, diagnostics, security, lumen, tests |
 | [0095](0095-compose-memory-and-candidate-validation.md) | 2026-07-20 | landed | Compose memory normalization and candidate validation for release 0.6.5 | release, manifest-v2, compose, preflight, lumen, tests |
+| [0096](0096-stable-external-app-networks.md) | 2026-07-20 | landed | Stable external application networks for release 0.6.6 | release, manifest-v2, compose, networking, lumen, tests |
