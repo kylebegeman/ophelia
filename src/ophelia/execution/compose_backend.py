@@ -14,7 +14,19 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 import yaml
 
@@ -65,6 +77,11 @@ _HTTP_PROBE_IMAGE_DIGEST = (
     "sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
 )
 _HTTP_PROBE_IMAGE = "curlimages/curl@" + _HTTP_PROBE_IMAGE_DIGEST
+
+
+class _LegacyCaddyDisplacement(NamedTuple):
+    legacy: bytes
+    previous_target: Optional[bytes]
 
 
 class ComposeRevisionBackend:
@@ -124,6 +141,12 @@ class ComposeRevisionBackend:
             / "caddy"
             / "sites.d"
             / (manifest.app + "-" + manifest.environment + ".caddy")
+        )
+        self.legacy_caddy_include = (
+            self.runtime_root / "caddy" / "sites.d" / (manifest.app + ".caddy")
+        )
+        self.legacy_caddy_state_root = (
+            self.traffic_root / "displaced-legacy-caddy" / revision.revision_id
         )
         self.shared_compose = self.runtime_root / "platform" / "shared" / "compose.yml"
         self.secret_root = (
@@ -1201,15 +1224,21 @@ class ComposeRevisionBackend:
         if candidate.is_symlink() or not candidate.is_file():
             raise ComposeBackendError("Candidate Caddy routes are missing or unsafe.")
         self.caddy_include.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        previous = self.caddy_include.read_bytes() if self.caddy_include.is_file() else None
+        displaced_legacy = self._prepare_legacy_caddy_displacement()
+        previous = (
+            displaced_legacy.previous_target
+            if displaced_legacy is not None
+            else self._safe_caddy_bytes(self.caddy_include, required=False)
+        )
         env_path = self.runtime_root / "caddy" / "env"
         previous_env = env_path.read_bytes() if env_path.is_file() else None
         _atomic_bytes(self.caddy_include, candidate.read_bytes(), mode=0o600)
         if not self.shared_compose.is_file():
             if self.require_edge_runtime and self.manifest.routes:
-                self._restore_caddy_bytes(previous)
+                self._restore_caddy_predecessor(previous, displaced_legacy)
                 _restore_private_file(env_path, previous_env)
                 _prune_route_auth_env(env_path, self.caddy_include.parent)
+                self._cleanup_legacy_caddy_displacement(displaced_legacy)
                 raise ComposeBackendError("Shared Caddy runtime is unavailable.")
             _prune_route_auth_env(env_path, self.caddy_include.parent)
             return
@@ -1218,17 +1247,25 @@ class ComposeRevisionBackend:
             self._caddy("validate", "--config", "/etc/caddy/Caddyfile")
             self._caddy("reload", "--config", "/etc/caddy/Caddyfile")
         except Exception:
-            self._restore_caddy_bytes(previous)
+            self._restore_caddy_predecessor(previous, displaced_legacy)
             _restore_private_file(env_path, previous_env)
             _prune_route_auth_env(env_path, self.caddy_include.parent)
             self._caddy("reload", "--config", "/etc/caddy/Caddyfile", check=False)
+            self._cleanup_legacy_caddy_displacement(displaced_legacy)
             raise
 
     def _deactivate_caddy(self) -> None:
-        previous = self.caddy_include.read_bytes() if self.caddy_include.is_file() else None
+        previous = self._safe_caddy_bytes(self.caddy_include, required=False)
+        displaced_legacy = self._load_legacy_caddy_displacement()
+        legacy_previous = self._safe_caddy_bytes(
+            self.legacy_caddy_include,
+            required=False,
+        )
         env_path = self.runtime_root / "caddy" / "env"
         previous_env = env_path.read_bytes() if env_path.is_file() else None
         self.caddy_include.unlink(missing_ok=True)
+        if displaced_legacy is not None:
+            self._restore_caddy_predecessor(None, displaced_legacy)
         try:
             _prune_route_auth_env(env_path, self.caddy_include.parent)
             if self.shared_compose.is_file():
@@ -1236,12 +1273,152 @@ class ComposeRevisionBackend:
                 self._caddy("reload", "--config", "/etc/caddy/Caddyfile")
         except Exception:
             self._restore_caddy_bytes(previous)
+            _restore_private_file(self.legacy_caddy_include, legacy_previous)
             _restore_private_file(env_path, previous_env)
             if self.shared_compose.is_file():
                 self._caddy(
                     "reload", "--config", "/etc/caddy/Caddyfile", check=False
                 )
             raise
+        self._cleanup_legacy_caddy_displacement(displaced_legacy)
+
+    def _prepare_legacy_caddy_displacement(
+        self,
+    ) -> Optional[_LegacyCaddyDisplacement]:
+        if (
+            self.legacy_caddy_include == self.caddy_include
+            or self.active_path.is_file()
+        ):
+            return None
+        displaced = self._load_legacy_caddy_displacement()
+        if displaced is not None:
+            live_legacy = self._safe_caddy_bytes(
+                self.legacy_caddy_include,
+                required=False,
+            )
+            if live_legacy is not None:
+                if live_legacy != displaced.legacy:
+                    raise ComposeBackendError(
+                        "Legacy Caddy site changed during V2 activation."
+                    )
+                self.legacy_caddy_include.unlink()
+                _sync_directory(self.legacy_caddy_include.parent)
+            return displaced
+
+        legacy_bytes = self._safe_caddy_bytes(
+            self.legacy_caddy_include,
+            required=False,
+        )
+        if legacy_bytes is None:
+            return None
+        previous_target = self._safe_caddy_bytes(self.caddy_include, required=False)
+        root = self.legacy_caddy_state_root
+        legacy_path = root / "legacy.caddy"
+        previous_path = root / "previous-target.caddy"
+        _atomic_bytes(legacy_path, legacy_bytes, mode=0o600)
+        if previous_target is not None:
+            _atomic_bytes(previous_path, previous_target, mode=0o600)
+        else:
+            previous_path.unlink(missing_ok=True)
+        _atomic_json(
+            root / "state.json",
+            {
+                "schema_version": 1,
+                "kind": "ophelia.displaced-legacy-caddy",
+                "legacy_digest": canonical_digest({"content": legacy_bytes.hex()}),
+                "previous_target_digest": (
+                    None
+                    if previous_target is None
+                    else canonical_digest({"content": previous_target.hex()})
+                ),
+            },
+        )
+        self.legacy_caddy_include.unlink()
+        _sync_directory(self.legacy_caddy_include.parent)
+        return _LegacyCaddyDisplacement(legacy_bytes, previous_target)
+
+    def _load_legacy_caddy_displacement(
+        self,
+    ) -> Optional[_LegacyCaddyDisplacement]:
+        root = self.legacy_caddy_state_root
+        state_path = root / "state.json"
+        if not state_path.exists():
+            return None
+        if root.is_symlink() or not root.is_dir() or state_path.is_symlink():
+            raise ComposeBackendError("Legacy Caddy displacement state is unsafe.")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ComposeBackendError(
+                "Legacy Caddy displacement state is invalid."
+            ) from exc
+        if (
+            not isinstance(state, dict)
+            or state.get("schema_version") != 1
+            or state.get("kind") != "ophelia.displaced-legacy-caddy"
+        ):
+            raise ComposeBackendError("Legacy Caddy displacement state is invalid.")
+        legacy_bytes = self._safe_caddy_bytes(root / "legacy.caddy", required=True)
+        assert legacy_bytes is not None
+        previous_digest = state.get("previous_target_digest")
+        previous_target = self._safe_caddy_bytes(
+            root / "previous-target.caddy",
+            required=previous_digest is not None,
+        )
+        if (
+            state.get("legacy_digest")
+            != canonical_digest({"content": legacy_bytes.hex()})
+            or (
+                previous_digest
+                != (
+                    None
+                    if previous_target is None
+                    else canonical_digest({"content": previous_target.hex()})
+                )
+            )
+        ):
+            raise ComposeBackendError("Legacy Caddy displacement state was altered.")
+        return _LegacyCaddyDisplacement(legacy_bytes, previous_target)
+
+    def _restore_caddy_predecessor(
+        self,
+        previous: Optional[bytes],
+        displaced_legacy: Optional[_LegacyCaddyDisplacement],
+    ) -> None:
+        if displaced_legacy is None:
+            self._restore_caddy_bytes(previous)
+            return
+        self._restore_caddy_bytes(displaced_legacy.previous_target)
+        _atomic_bytes(self.legacy_caddy_include, displaced_legacy.legacy, mode=0o600)
+
+    def _cleanup_legacy_caddy_displacement(
+        self,
+        displaced_legacy: Optional[_LegacyCaddyDisplacement],
+    ) -> None:
+        if displaced_legacy is None:
+            return
+        root = self.legacy_caddy_state_root
+        for name in ("state.json", "legacy.caddy", "previous-target.caddy"):
+            (root / name).unlink(missing_ok=True)
+        if root.is_dir():
+            root.rmdir()
+        parent = root.parent
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+
+    @staticmethod
+    def _safe_caddy_bytes(path: Path, *, required: bool) -> Optional[bytes]:
+        if not path.exists():
+            if required:
+                raise ComposeBackendError("Managed Caddy site is missing.")
+            return None
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size > 1024 * 1024
+        ):
+            raise ComposeBackendError("Managed Caddy site is unavailable or unsafe.")
+        return path.read_bytes()
 
     def _restore_caddy_bytes(self, previous: Optional[bytes]) -> None:
         if previous is None:

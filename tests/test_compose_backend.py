@@ -445,6 +445,139 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             self.assertIn(old_key, restored_env)
             self.assertNotIn(candidate_key, restored_env)
 
+    def test_first_v2_activation_displaces_and_compensation_restores_legacy_site(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            shared = runtime_root / "platform" / "shared"
+            shared.mkdir(parents=True)
+            (shared / "compose.yml").write_text("services: {caddy: {image: caddy}}\n")
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=FakeRunner(),
+            )
+            backend.caddy_include.parent.mkdir(parents=True)
+            legacy_include = backend.caddy_include.parent / f"{manifest.app}.caddy"
+            legacy_routes = "compose-demo.example.com { reverse_proxy legacy:8080 }\n"
+            legacy_include.write_text(legacy_routes)
+            candidate = staging / "caddy" / "routes.caddy"
+
+            backend._activate_caddy(candidate)
+
+            self.assertFalse(legacy_include.exists())
+            self.assertEqual(candidate.read_bytes(), backend.caddy_include.read_bytes())
+
+            backend._deactivate_caddy()
+
+            self.assertFalse(backend.caddy_include.exists())
+            self.assertEqual(legacy_routes, legacy_include.read_text())
+
+    def test_failed_first_v2_activation_restores_displaced_legacy_site(self) -> None:
+        class FailingValidationRunner(FakeRunner):
+            def __init__(self, legacy_include: Path) -> None:
+                super().__init__()
+                self.legacy_include = legacy_include
+
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                if "validate" in argv:
+                    if self.legacy_include.exists():
+                        raise AssertionError("legacy site was not displaced before validation")
+                    raise RuntimeError("invalid combined candidate")
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            shared = runtime_root / "platform" / "shared"
+            shared.mkdir(parents=True)
+            (shared / "compose.yml").write_text("services: {caddy: {image: caddy}}\n")
+            legacy_include = (
+                runtime_root / "caddy" / "sites.d" / f"{manifest.app}.caddy"
+            )
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=FailingValidationRunner(legacy_include),
+            )
+            backend.caddy_include.parent.mkdir(parents=True)
+            legacy_routes = "compose-demo.example.com { reverse_proxy legacy:8080 }\n"
+            legacy_include.write_text(legacy_routes)
+            candidate = staging / "caddy" / "routes.caddy"
+
+            with self.assertRaisesRegex(RuntimeError, "invalid combined candidate"):
+                backend._activate_caddy(candidate)
+
+            self.assertFalse(backend.caddy_include.exists())
+            self.assertEqual(legacy_routes, legacy_include.read_text())
+
+    def test_interrupted_legacy_displacement_resumes_and_restores_exact_site(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            shared = runtime_root / "platform" / "shared"
+            shared.mkdir(parents=True)
+            (shared / "compose.yml").write_text("services: {caddy: {image: caddy}}\n")
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=FakeRunner(),
+            )
+            backend.caddy_include.parent.mkdir(parents=True)
+            legacy_include = backend.legacy_caddy_include
+            legacy_routes = "compose-demo.example.com { reverse_proxy legacy:8080 }\n"
+            legacy_include.write_text(legacy_routes)
+
+            displaced = backend._prepare_legacy_caddy_displacement()
+
+            self.assertIsNotNone(displaced)
+            self.assertFalse(legacy_include.exists())
+
+            resumed = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=FakeRunner(),
+            )
+            resumed._activate_caddy(staging / "caddy" / "routes.caddy")
+            resumed._deactivate_caddy()
+
+            self.assertFalse(resumed.caddy_include.exists())
+            self.assertEqual(legacy_routes, legacy_include.read_text())
+
     def test_failed_candidate_removal_cleans_runtime_and_never_removes_active(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
