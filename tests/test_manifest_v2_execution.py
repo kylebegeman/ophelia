@@ -12,7 +12,7 @@ from unittest import mock
 
 from ophelia.domain import Actor, ApprovedPlanRef, AuthorizationKind
 from ophelia.domain.receipts import ReceiptOutcome
-from ophelia.execution.subprocesses import ProcessResult
+from ophelia.execution.subprocesses import ProcessFailure, ProcessResult
 from ophelia.manifest_v2_execution import (
     apply_manifest_v2_plan,
     local_approval_key,
@@ -48,6 +48,24 @@ class FakeRunner:
         elif "ps" in command and "--services" in command:
             stdout = "\n".join(sorted(self.running.get(project, set()))) + "\n"
         return ProcessResult(tuple(command), 0, "success", stdout, "", False, False, 1)
+
+
+class FailingStartRunner(FakeRunner):
+    def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+        if "up" in argv:
+            raise ProcessFailure(
+                ProcessResult(
+                    tuple(argv),
+                    1,
+                    "nonzero_exit",
+                    "",
+                    "permission denied: private-value",
+                    False,
+                    False,
+                    1,
+                )
+            )
+        return super().run(argv, **kwargs)
 
 
 class ManifestV2ExecutionTests(unittest.TestCase):
@@ -185,6 +203,47 @@ routes:
         self.assertEqual(ReceiptOutcome.SUCCEEDED.value, first["receipt"]["outcome"])
         self.assertEqual(first["operation"]["operation_id"], second["operation"]["operation_id"])
         self.assertEqual(first["receipt"]["receipt_id"], second["receipt"]["receipt_id"])
+
+    def test_failed_apply_returns_safe_failure_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_root = root / "runtime"
+            manifest_path = root / "app.ophelia.yml"
+            manifest_path.write_text(
+                f"""
+version: 2
+app: failed-execution-demo
+environment: staging
+artifacts:
+  app: {{image: "{PINNED_IMAGE}"}}
+workloads:
+  worker: {{kind: worker, artifact: app}}
+routes: []
+update: {{strategy: recreate}}
+"""
+            )
+            approval_key = b"fixture-approval-key-with-enough-entropy"
+            plan = plan_manifest_v2(
+                manifest_path,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                approval_key=approval_key,
+                require_edge_runtime=False,
+            )
+
+            result = apply_manifest_v2_plan(
+                plan["plan_id"],
+                runtime_root=runtime_root,
+                approval_key=approval_key,
+                confirmation=plan["confirmation_token"],
+                runner=FailingStartRunner(),
+                require_edge_runtime=False,
+            )
+
+        self.assertEqual("failed_compensated", result["receipt"]["outcome"])
+        self.assertEqual("start_candidate", result["failure"]["phase"])
+        self.assertEqual("permission_denied", result["failure"]["code"])
+        self.assertNotIn("private-value", str(result))
 
     def test_wrong_confirmation_never_accepts_an_operation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

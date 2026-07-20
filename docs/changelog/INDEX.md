@@ -95,3 +95,4 @@
 | [0091](0091-runtime-hardening-audit.md) | 2026-07-19 | landed | Runtime hardening audit and release 0.6.1 | release, manifest-v2, daemon, agent, caddy, security, reliability, performance, tests |
 | [0092](0092-stable-data-network-aliases.md) | 2026-07-20 | landed | Stable data-network aliases, support files, and release 0.6.2 | release, manifest-v2, networking, data, compose, lumen, tests, docs |
 | [0093](0093-edge-cutover-and-nonrelocating-installs.md) | 2026-07-20 | landed | Safe edge cutover and non-relocating installs for release 0.6.3 | release, edge, caddy, daemon, installer, migration, lumen, tests |
+| [0094](0094-safe-operation-failure-diagnostics.md) | 2026-07-20 | landed | Safe operation failure diagnostics for release 0.6.4 | release, manifest-v2, execution, diagnostics, security, lumen, tests |

@@ -392,12 +392,33 @@ def submit_manifest_v2_plan(
     )
     operation = executor.submit(actor, request, approval, execution_input=execution_input)
     receipt = executor.run(operation.operation_id, owner_id=owner_id) if execute else journal.receipt(operation.operation_id)
+    failure = _operation_failure(journal, operation.operation_id)
     return {
         "schema_version": 1,
         "kind": "ophelia.manifest-v2-operation",
         "operation": operation.to_dict(),
         "receipt": None if receipt is None else receipt.to_dict(),
+        "failure": failure,
     }
+
+
+def _operation_failure(
+    journal: SQLiteOperationJournal, operation_id: str
+) -> Optional[Dict[str, Any]]:
+    for event in reversed(journal.events(operation_id)):
+        if event.event_type != "operation.failure_observed" or event.message is None:
+            continue
+        try:
+            value = json.loads(event.message)
+        except (TypeError, ValueError):
+            return None
+        if (
+            isinstance(value, dict)
+            and value.get("kind") == "ophelia.kernel.failure-diagnostic"
+        ):
+            return value
+        return None
+    return None
 
 
 def manifest_v2_executor(

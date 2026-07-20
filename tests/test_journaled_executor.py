@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -44,6 +45,7 @@ from ophelia.execution import (
     SQLiteOperationJournal,
     TrafficActivationResult,
 )
+from ophelia.execution.subprocesses import ProcessFailure, ProcessResult
 
 
 NOW = datetime(2026, 7, 11, 17, 10, tzinfo=timezone.utc).timestamp()
@@ -74,6 +76,7 @@ class _RuntimeState:
     restore_count: int = 0
     remove_count: int = 0
     verification_summary: str | None = None
+    fail_start_with_process: bool = False
 
 
 class _FakeStaticBackend:
@@ -96,6 +99,20 @@ class _FakeStaticBackend:
         )
 
     def start(self, revision: Revision) -> RuntimeHandle:
+        if self.state.fail_start_with_process:
+            secret = "postgres://operator:super-secret@example.invalid/database"
+            raise ProcessFailure(
+                ProcessResult(
+                    argv=("docker", "compose", "up"),
+                    exit_code=1,
+                    exit_reason="nonzero_exit",
+                    stdout="",
+                    stderr="failed to validate image signature " + secret,
+                    stdout_truncated=False,
+                    stderr_truncated=False,
+                    duration_ms=1,
+                )
+            )
         self.state.materialized_revision_id = revision.revision_id
         self.state.materialized_revision_digest = revision.content_digest()
         self._crash("after_start")
@@ -663,6 +680,29 @@ class JournaledExecutorTests(unittest.TestCase):
                 == f"phase.{PlanPhase.START_CANDIDATE.value}.started"
                 for event in self.journal.events(operation.operation_id)
             )
+        )
+
+    def test_process_failure_persists_safe_actionable_diagnostic(self) -> None:
+        self.runtime.fail_start_with_process = True
+        operation, _, _, _, _ = self._submit("process-failure")
+
+        receipt = self.executor.run(operation.operation_id, owner_id="worker-one")
+
+        self.assertEqual(ReceiptOutcome.FAILED_COMPENSATED, receipt.outcome)
+        events = self.journal.events(operation.operation_id)
+        failure = next(
+            event for event in events if event.event_type == "operation.failure_observed"
+        )
+        diagnostic = json.loads(failure.message or "{}")
+        self.assertEqual("start_candidate", diagnostic["phase"])
+        self.assertEqual("external_process", diagnostic["category"])
+        self.assertEqual("docker.compose.up", diagnostic["action"])
+        self.assertEqual("image_signature_validation", diagnostic["code"])
+        self.assertEqual(1, diagnostic["exit_code"])
+        self.assertNotIn("super-secret", json.dumps([event.to_dict() for event in events]))
+        self.assertLess(
+            [event.event_type for event in events].index("operation.failure_observed"),
+            [event.event_type for event in events].index("operation.compensating"),
         )
 
 

@@ -216,6 +216,16 @@ def run_apply(args: Namespace) -> int:
             "Operation %s finished: %s"
             % (report["operation"]["operation_id"], receipt.get("outcome", "accepted"))
         )
+        failure = report.get("failure")
+        if isinstance(failure, dict):
+            print(
+                "Failure: phase=%s code=%s action=%s"
+                % (
+                    failure.get("phase", "unknown"),
+                    failure.get("code", "unknown"),
+                    failure.get("action", "n/a"),
+                )
+            )
     if args.direct:
         return 0 if receipt.get("outcome") == "succeeded" else 1
     return (

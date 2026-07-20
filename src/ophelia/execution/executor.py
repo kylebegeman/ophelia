@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import math
 import time
 import uuid
-import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -47,6 +48,7 @@ from .operation_store import (
     OperationConflict,
     SQLiteOperationJournal,
 )
+from .subprocesses import ProcessFailure
 
 
 class JournaledExecutorError(RuntimeError):
@@ -372,6 +374,9 @@ class JournaledExecutor:
                 started_at,
                 cancelled=False,
                 verification=failed_verification,
+                failure_diagnostic=self._failure_diagnostic(
+                    operation.operation_id, exc
+                ),
             )
 
     def _phase_stage(
@@ -587,6 +592,7 @@ class JournaledExecutor:
         *,
         cancelled: bool,
         verification: Optional[VerificationResult],
+        failure_diagnostic: Optional[dict[str, object]] = None,
     ) -> TerminalReceipt:
         fence = self._heartbeat(fence)
         state = (
@@ -594,6 +600,18 @@ class JournaledExecutor:
             if cancelled
             else OperationState.COMPENSATING
         )
+        if failure_diagnostic is not None:
+            self._event(
+                operation,
+                "operation.failure_observed",
+                state,
+                fence,
+                message=json.dumps(
+                    failure_diagnostic,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
         self._event(
             operation,
             "operation.cancelling" if cancelled else "operation.compensating",
@@ -804,6 +822,7 @@ class JournaledExecutor:
         fence: ExecutionFence,
         *,
         evidence_digests: Tuple[str, ...] = (),
+        message: Optional[str] = None,
     ) -> OperationEvent:
         events = self.journal.events(operation.operation_id)
         existing = tuple(event for event in events if event.event_type == event_type)
@@ -826,6 +845,7 @@ class JournaledExecutor:
             app=execution_input.plan.app,
             environment=execution_input.plan.environment,
             revision_id=execution_input.revision.revision_id,
+            message=message,
             evidence_digests=tuple(sorted(set(evidence_digests))),
             previous_event_digest=previous_digest,
         )
@@ -835,6 +855,138 @@ class JournaledExecutor:
             fencing_token=fence.fencing_token,
         )
         return event
+
+    def _failure_diagnostic(
+        self, operation_id: str, exc: Exception
+    ) -> dict[str, object]:
+        phase = (
+            exc.phase.value
+            if isinstance(exc, _PhaseFailure)
+            else self._current_phase(operation_id)
+        )
+        diagnostic: dict[str, object] = {
+            "schema_version": 1,
+            "kind": "ophelia.kernel.failure-diagnostic",
+            "phase": phase,
+            "exception_type": type(exc).__name__[:128],
+        }
+        if isinstance(exc, ProcessFailure):
+            result = exc.result
+            diagnostic.update(
+                {
+                    "category": "external_process",
+                    "code": self._process_failure_code(
+                        result.stdout, result.stderr, result.exit_reason
+                    ),
+                    "action": self._process_action(result.argv),
+                    "exit_reason": result.exit_reason,
+                    "exit_code": result.exit_code,
+                    "stdout_digest": canonical_digest(
+                        {"stream": "stdout", "value": result.stdout}
+                    ),
+                    "stderr_digest": canonical_digest(
+                        {"stream": "stderr", "value": result.stderr}
+                    ),
+                    "output_truncated": bool(
+                        result.stdout_truncated or result.stderr_truncated
+                    ),
+                }
+            )
+            return diagnostic
+        if isinstance(exc, _PhaseFailure):
+            category = "verification"
+            code = "verification_failed"
+        elif isinstance(exc, _ExecutionDeadlineExpired):
+            category = "execution_control"
+            code = "deadline_expired"
+        elif isinstance(exc, BackendContractError):
+            category = "backend_contract"
+            code = "backend_contract_violation"
+        elif isinstance(exc, OSError):
+            category = "operating_system"
+            code = "os_error"
+            diagnostic["errno"] = exc.errno
+        else:
+            category = "backend"
+            code = "backend_error"
+        diagnostic.update(
+            {
+                "category": category,
+                "code": code,
+                "detail_digest": canonical_digest(
+                    {"exception_type": type(exc).__name__, "detail": str(exc)}
+                ),
+            }
+        )
+        return diagnostic
+
+    def _current_phase(self, operation_id: str) -> str:
+        for event in reversed(self.journal.events(operation_id)):
+            prefix = "phase."
+            suffix = ".started"
+            if event.event_type.startswith(prefix) and event.event_type.endswith(
+                suffix
+            ):
+                return event.event_type[len(prefix) : -len(suffix)]
+        return "unknown"
+
+    @staticmethod
+    def _process_action(argv: Tuple[str, ...]) -> str:
+        if not argv:
+            return "external"
+        executable = PurePosixPath(argv[0]).name
+        if executable != "docker":
+            return executable[:128] if executable else "external"
+        if len(argv) > 1 and argv[1] == "compose":
+            for action in (
+                "up",
+                "pull",
+                "run",
+                "exec",
+                "down",
+                "stop",
+                "ps",
+                "config",
+            ):
+                if action in argv[2:]:
+                    return "docker.compose." + action
+            return "docker.compose"
+        if len(argv) > 1 and argv[1] in {
+            "pull",
+            "run",
+            "exec",
+            "inspect",
+            "create",
+            "start",
+            "stop",
+            "rm",
+        }:
+            return "docker." + argv[1]
+        return "docker"
+
+    @staticmethod
+    def _process_failure_code(stdout: str, stderr: str, exit_reason: str) -> str:
+        detail = (stdout + "\n" + stderr).lower()
+        patterns = (
+            ("failed to validate image signature", "image_signature_validation"),
+            ("permission denied", "permission_denied"),
+            ("no such file or directory", "missing_path"),
+            ("no space left on device", "disk_full"),
+            ("port is already allocated", "port_conflict"),
+            ("address already in use", "port_conflict"),
+            ("pull access denied", "registry_access_denied"),
+            ("unauthorized", "registry_access_denied"),
+            ("unhealthy", "workload_unhealthy"),
+            ("invalid mount config", "invalid_mount"),
+        )
+        for needle, code in patterns:
+            if needle in detail:
+                return code
+        if exit_reason == "timeout":
+            return "process_timeout"
+        if exit_reason == "cancelled":
+            return "process_cancelled"
+        return "process_failed"
 
     @staticmethod
     def _validate_handle(
