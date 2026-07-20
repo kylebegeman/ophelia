@@ -12,6 +12,7 @@ import hashlib
 import re
 import stat
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -28,6 +29,8 @@ _CPU = re.compile(r"^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$")
 _CRON_FIELD = re.compile(r"^[0-9*/?,\-]+$")
 _ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _MOUNT_TARGET = re.compile(r"^/(?!.*(?:^|/)\.\.(?:/|$))[^\x00\r\n]*$")
+_HTTP_HEADER = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
 
 class ManifestV2Error(ValueError):
@@ -92,6 +95,7 @@ class WorkloadV2:
     artifact: str
     command: Tuple[str, ...] = ()
     port: Optional[int] = None
+    endpoints: Tuple[Tuple[str, int], ...] = ()
     replicas: int = 1
     schedule: Optional[str] = None
     concurrency_policy: str = "forbid"
@@ -125,11 +129,34 @@ class RouteTargetV2:
 
 
 @dataclass(frozen=True)
+class RouteTlsV2:
+    mode: str = "auto"
+
+
+@dataclass(frozen=True)
+class ClientAuthForwardV2:
+    authorization_ref: str
+    authorization_header: str = "X-Ophelia-Proxy-Authorization"
+    authorization_scheme: str = "Bearer"
+    fingerprint_header: str = "X-Ophelia-Client-Certificate-Sha256"
+
+
+@dataclass(frozen=True)
+class RouteClientAuthV2:
+    trust_pool_ref: str
+    trust_pool_encoding: str = "plain"
+    mode: str = "require_and_verify"
+    forward: Optional[ClientAuthForwardV2] = None
+
+
+@dataclass(frozen=True)
 class RouteV2:
     name: str
     domain: str
     target: RouteTargetV2
     path_prefix: Optional[str] = None
+    tls: RouteTlsV2 = field(default_factory=RouteTlsV2)
+    client_auth: Optional[RouteClientAuthV2] = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +171,16 @@ class SecretV2:
     name: str
     ref: str
     workloads: Tuple[str, ...] = ()
+    mode: str = "env"
+    target: Optional[str] = None
+    encoding: str = "plain"
+
+
+@dataclass(frozen=True)
+class ReleaseV2:
+    release_id: Optional[str] = None
+    commit_sha: Optional[str] = None
+    build_time: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +194,7 @@ class ManifestV2:
     routes: Tuple[RouteV2, ...]
     update: UpdateV2
     secrets: Tuple[SecretV2, ...] = ()
+    release: ReleaseV2 = field(default_factory=ReleaseV2)
 
     def artifact(self, name: str) -> ArtifactV2:
         for item in self.artifacts:
@@ -169,6 +207,16 @@ class ManifestV2:
             if item.name == name:
                 return item
         raise KeyError(name)
+
+    def secret_references(self) -> Tuple[str, ...]:
+        references = [item.ref for item in self.secrets]
+        for route in self.routes:
+            if route.client_auth is None:
+                continue
+            references.append(route.client_auth.trust_pool_ref)
+            if route.client_auth.forward is not None:
+                references.append(route.client_auth.forward.authorization_ref)
+        return tuple(sorted(set(references)))
 
     def to_lock_dict(self) -> Dict[str, Any]:
         return {
@@ -206,6 +254,10 @@ class ManifestV2:
                             }
                         ),
                         "path_prefix": item.path_prefix,
+                        "tls": asdict(item.tls),
+                        "client_auth": None
+                        if item.client_auth is None
+                        else _client_auth_wire(item.client_auth),
                     }
                 )
                 for item in self.routes
@@ -216,9 +268,19 @@ class ManifestV2:
                     "name": item.name,
                     "ref": item.ref,
                     "workloads": list(item.workloads),
+                    "mode": item.mode,
+                    "target": item.target,
+                    "encoding": item.encoding,
                 }
                 for item in self.secrets
             ],
+            "release": _without_none(
+                {
+                    "id": self.release.release_id,
+                    "commit_sha": self.release.commit_sha,
+                    "build_time": self.release.build_time,
+                }
+            ),
         }
 
     def canonical_digest(self) -> str:
@@ -263,11 +325,11 @@ class ManifestV2:
 
 _TOP_LEVEL = {
     "version", "app", "environment", "artifacts", "workloads", "migrations",
-    "routes", "update", "secrets",
+    "routes", "update", "secrets", "release",
 }
 _ARTIFACT_KEYS = {"image", "static_root"}
 _WORKLOAD_KEYS = {
-    "kind", "artifact", "command", "port", "replicas", "schedule",
+    "kind", "artifact", "command", "port", "endpoints", "replicas", "schedule",
     "concurrency_policy", "env", "env_files", "mounts", "networks", "startup",
     "readiness", "liveness", "resources", "security", "shutdown_grace_seconds",
     "update",
@@ -280,11 +342,18 @@ _SECURITY_KEYS = {
 }
 _WORKLOAD_UPDATE_KEYS = {"overlap"}
 _MIGRATION_KEYS = {"workload", "compatibility", "timeout_seconds", "backup_required"}
-_ROUTE_KEYS = {"name", "domain", "target", "path_prefix"}
+_ROUTE_KEYS = {"name", "domain", "target", "path_prefix", "tls", "client_auth"}
 _ROUTE_TARGET_KEYS = {"workload", "port"}
+_ROUTE_TLS_KEYS = {"mode"}
+_CLIENT_AUTH_KEYS = {"trust_pool_ref", "trust_pool_encoding", "mode", "forward"}
+_CLIENT_AUTH_FORWARD_KEYS = {
+    "authorization_ref", "authorization_header", "authorization_scheme",
+    "fingerprint_header",
+}
 _UPDATE_KEYS = {"strategy", "auto_rollback", "drain_seconds"}
-_SECRET_KEYS = {"name", "ref", "workloads"}
+_SECRET_KEYS = {"name", "ref", "workloads", "mode", "target", "encoding"}
 _MOUNT_KEYS = {"source", "target", "read_only"}
+_RELEASE_KEYS = {"id", "commit_sha", "build_time"}
 
 
 def load_manifest_v2(path: Path) -> ManifestV2:
@@ -342,14 +411,16 @@ def parse_manifest_v2(raw: Mapping[str, Any], *, source_root: Path) -> ManifestV
                 % (route.name, workload.kind.value)
             )
         if workload.kind is WorkloadKind.WEB:
-            expected_port = workload.port
-            if route.target.port is None or route.target.port != expected_port:
+            allowed_ports = {workload.port}.union(port for _, port in workload.endpoints)
+            if route.target.port is None or route.target.port not in allowed_ports:
                 raise ManifestV2Error(
-                    "routes.%s target port must match workload %s port."
+                    "routes.%s target port must match workload %s port or a named endpoint."
                     % (route.name, workload.name)
                 )
         elif route.target.port is not None:
             raise ManifestV2Error("Static route targets may not declare a port.")
+        if route.client_auth is not None and workload.kind is WorkloadKind.STATIC:
+            raise ManifestV2Error("Static routes may not forward client identity.")
         route_map[workload.name].append(route.name)
     workloads = tuple(
         replace(item, route_ids=tuple(sorted(route_map[item.name])))
@@ -408,6 +479,7 @@ def parse_manifest_v2(raw: Mapping[str, Any], *, source_root: Path) -> ManifestV
     names = [item.name for item in secrets]
     if len(names) != len(set(names)):
         raise ManifestV2Error("secrets must use unique names.")
+    release = _release(raw.get("release"))
 
     referenced_artifacts = {item.artifact for item in workloads}.union(
         item.workload.artifact for item in migrations
@@ -431,6 +503,7 @@ def parse_manifest_v2(raw: Mapping[str, Any], *, source_root: Path) -> ManifestV
         routes=routes,
         update=update,
         secrets=secrets,
+        release=release,
     )
 
 
@@ -566,6 +639,19 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         raise ManifestV2Error("Workload %s references unknown artifact %s." % (name, artifact))
     command = _command(value.get("command", []), "workloads.%s.command" % name)
     port = _optional_port(value.get("port"), "workloads.%s.port" % name)
+    endpoints_raw = _mapping(value.get("endpoints", {}), "workloads.%s.endpoints" % name)
+    endpoints = tuple(
+        (
+            _identifier(endpoint_name, "workloads.%s.endpoints name" % name),
+            _port(endpoint_port, "workloads.%s.endpoints.%s" % (name, endpoint_name)),
+        )
+        for endpoint_name, endpoint_port in sorted(endpoints_raw.items())
+    )
+    endpoint_ports = [item[1] for item in endpoints]
+    if len(endpoint_ports) != len(set(endpoint_ports)) or port in endpoint_ports:
+        raise ManifestV2Error("Workload endpoints must use unique ports distinct from port.")
+    if kind is not WorkloadKind.WEB and endpoints:
+        raise ManifestV2Error("Only web workloads may declare additional endpoints.")
     if kind in {WorkloadKind.WEB, WorkloadKind.INTERNAL} and port is None:
         raise ManifestV2Error("%s workload %s requires a port." % (kind.value, name))
     if kind in {WorkloadKind.CRON, WorkloadKind.TASK, WorkloadKind.WORKER} and port is not None:
@@ -615,6 +701,7 @@ def _workload(raw_name: Any, raw: Any, *, artifact_names: Iterable[str]) -> Work
         artifact=artifact,
         command=command,
         port=port,
+        endpoints=endpoints,
         replicas=replicas,
         schedule=schedule,
         concurrency_policy=concurrency,
@@ -677,6 +764,15 @@ def _route(raw: Any, index: int, workload_names: Iterable[str]) -> RouteV2:
     path_prefix = _optional_text(value.get("path_prefix"), field_name + ".path_prefix")
     if path_prefix is not None and (not path_prefix.startswith("/") or any(item in path_prefix for item in "\r\n{}")):
         raise ManifestV2Error("%s.path_prefix must be an injection-safe absolute HTTP path." % field_name)
+    tls = _route_tls(value.get("tls"), field_name + ".tls")
+    client_auth = _route_client_auth(
+        value.get("client_auth"), field_name + ".client_auth"
+    )
+    if client_auth is not None and tls.mode != "auto":
+        raise ManifestV2Error(
+            "%s client authentication currently requires automatic public TLS."
+            % field_name
+        )
     return RouteV2(
         name=name,
         domain=domain,
@@ -685,6 +781,8 @@ def _route(raw: Any, index: int, workload_names: Iterable[str]) -> RouteV2:
             port=_optional_port(target_raw.get("port"), field_name + ".target.port"),
         ),
         path_prefix=path_prefix,
+        tls=tls,
+        client_auth=client_auth,
     )
 
 
@@ -719,6 +817,104 @@ def _update(raw: Any, workloads: Tuple[WorkloadV2, ...]) -> UpdateV2:
     )
 
 
+def _route_tls(raw: Any, field_name: str) -> RouteTlsV2:
+    if raw is None:
+        return RouteTlsV2()
+    value = _mapping(raw, field_name)
+    _shape(value, _ROUTE_TLS_KEYS, field_name)
+    mode = _optional_text(value.get("mode"), field_name + ".mode") or "auto"
+    if mode not in {"auto", "internal"}:
+        raise ManifestV2Error("%s.mode must be auto or internal." % field_name)
+    return RouteTlsV2(mode)
+
+
+def _route_client_auth(raw: Any, field_name: str) -> Optional[RouteClientAuthV2]:
+    if raw is None:
+        return None
+    value = _mapping(raw, field_name)
+    _shape(value, _CLIENT_AUTH_KEYS, field_name)
+    trust_pool_ref = _text(value.get("trust_pool_ref"), field_name + ".trust_pool_ref")
+    if _SECRET_REF.fullmatch(trust_pool_ref) is None:
+        raise ManifestV2Error("%s.trust_pool_ref must be an opaque secret reference." % field_name)
+    encoding = (
+        _optional_text(value.get("trust_pool_encoding"), field_name + ".trust_pool_encoding")
+        or "plain"
+    )
+    if encoding not in {"plain", "base64"}:
+        raise ManifestV2Error("%s.trust_pool_encoding must be plain or base64." % field_name)
+    mode = _optional_text(value.get("mode"), field_name + ".mode") or "require_and_verify"
+    if mode not in {"verify_if_given", "require_and_verify"}:
+        raise ManifestV2Error(
+            "%s.mode must be verify_if_given or require_and_verify." % field_name
+        )
+    forward_raw = value.get("forward")
+    forward = None
+    if forward_raw is not None:
+        forward_value = _mapping(forward_raw, field_name + ".forward")
+        _shape(forward_value, _CLIENT_AUTH_FORWARD_KEYS, field_name + ".forward")
+        authorization_ref = _text(
+            forward_value.get("authorization_ref"),
+            field_name + ".forward.authorization_ref",
+        )
+        if _SECRET_REF.fullmatch(authorization_ref) is None:
+            raise ManifestV2Error(
+                "%s.forward.authorization_ref must be an opaque secret reference."
+                % field_name
+            )
+        authorization_header = _optional_text(
+            forward_value.get("authorization_header"),
+            field_name + ".forward.authorization_header",
+        ) or "X-Ophelia-Proxy-Authorization"
+        fingerprint_header = _optional_text(
+            forward_value.get("fingerprint_header"),
+            field_name + ".forward.fingerprint_header",
+        ) or "X-Ophelia-Client-Certificate-Sha256"
+        if any(
+            _HTTP_HEADER.fullmatch(header) is None
+            for header in (authorization_header, fingerprint_header)
+        ):
+            raise ManifestV2Error("%s.forward contains an invalid HTTP header name." % field_name)
+        scheme = _optional_text(
+            forward_value.get("authorization_scheme"),
+            field_name + ".forward.authorization_scheme",
+        ) or "Bearer"
+        if scheme != "Bearer":
+            raise ManifestV2Error("%s.forward authorization scheme must be Bearer." % field_name)
+        forward = ClientAuthForwardV2(
+            authorization_ref,
+            authorization_header,
+            scheme,
+            fingerprint_header,
+        )
+    return RouteClientAuthV2(trust_pool_ref, encoding, mode, forward)
+
+
+def _release(raw: Any) -> ReleaseV2:
+    if raw is None:
+        return ReleaseV2()
+    value = _mapping(raw, "release")
+    _shape(value, _RELEASE_KEYS, "release")
+    release_id = _optional_text(value.get("id"), "release.id")
+    if release_id is not None:
+        release_id = _identifier(release_id, "release.id")
+    commit_sha = _optional_text(value.get("commit_sha"), "release.commit_sha")
+    if commit_sha is not None and _COMMIT_SHA.fullmatch(commit_sha) is None:
+        raise ManifestV2Error("release.commit_sha must be a lowercase 40 or 64 character hash.")
+    raw_build_time = value.get("build_time")
+    if isinstance(raw_build_time, datetime):
+        build_time = raw_build_time.isoformat().replace("+00:00", "Z")
+    else:
+        build_time = _optional_text(raw_build_time, "release.build_time")
+    if build_time is not None:
+        try:
+            parsed = datetime.fromisoformat(build_time.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ManifestV2Error("release.build_time must be an RFC 3339 timestamp.") from exc
+        if parsed.tzinfo is None:
+            raise ManifestV2Error("release.build_time must include a timezone.")
+    return ReleaseV2(release_id, commit_sha, build_time)
+
+
 def _secret(raw: Any, index: int, workload_names: Iterable[str]) -> SecretV2:
     field_name = "secrets[%d]" % index
     value = _mapping(raw, field_name)
@@ -733,7 +929,31 @@ def _secret(raw: Any, index: int, workload_names: Iterable[str]) -> SecretV2:
     unknown = sorted(set(workloads) - set(workload_names))
     if unknown:
         raise ManifestV2Error("%s references unknown workloads: %s" % (field_name, ", ".join(unknown)))
-    return SecretV2(name, reference, tuple(sorted(workloads)))
+    mode = _optional_text(value.get("mode"), field_name + ".mode") or "env"
+    if mode not in {"env", "file"}:
+        raise ManifestV2Error("%s.mode must be env or file." % field_name)
+    target = _optional_text(value.get("target"), field_name + ".target")
+    encoding = _optional_text(value.get("encoding"), field_name + ".encoding") or "plain"
+    if encoding not in {"plain", "base64"}:
+        raise ManifestV2Error("%s.encoding must be plain or base64." % field_name)
+    if mode == "env" and (target is not None or encoding != "plain"):
+        raise ManifestV2Error(
+            "%s env secrets may not declare target or non-plain encoding." % field_name
+        )
+    if mode == "file" and (
+        target is None or _MOUNT_TARGET.fullmatch(target) is None
+    ):
+        raise ManifestV2Error(
+            "%s file secrets require a safe absolute target." % field_name
+        )
+    return SecretV2(
+        name,
+        reference,
+        tuple(sorted(workloads)),
+        mode,
+        target,
+        encoding,
+    )
 
 
 def _probe(raw: Any, field_name: str) -> Optional[ProbeV2]:
@@ -981,6 +1201,7 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
         "artifact": value.artifact,
         "command": list(value.command),
         "port": value.port,
+        "endpoints": dict(value.endpoints),
         "replicas": value.replicas,
         "schedule": value.schedule,
         "env": dict(value.env),
@@ -1003,6 +1224,17 @@ def _workload_wire(value: WorkloadV2) -> Dict[str, Any]:
     if value.kind is WorkloadKind.CRON:
         result["concurrency_policy"] = value.concurrency_policy
     return _without_none(result)
+
+
+def _client_auth_wire(value: RouteClientAuthV2) -> Dict[str, Any]:
+    return _without_none(
+        {
+            "trust_pool_ref": value.trust_pool_ref,
+            "trust_pool_encoding": value.trust_pool_encoding,
+            "mode": value.mode,
+            "forward": None if value.forward is None else asdict(value.forward),
+        }
+    )
 
 
 def _probe_wire(value: Optional[ProbeV2]) -> Optional[Dict[str, Any]]:

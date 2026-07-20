@@ -32,6 +32,7 @@ from .execution.staging import OperationStaging, tree_digest
 from .manifest_v2 import ManifestV2, RouteV2, load_manifest_v2
 from .manifest_v2_renderer import render_revision_bundle
 from .manifest_v2_sources import manifest_v2_sources_digest, stage_manifest_v2_sources
+from .runtime_secrets import manifest_secret_bindings_available
 
 
 PLAN_INDEX_RELATIVE_ROOT = Path("host-state") / "plans"
@@ -68,13 +69,24 @@ def plan_manifest_v2(
     idempotency_key: Optional[str] = None,
     operation: str = "deploy.apply",
     require_edge_runtime: bool = True,
-    secret_refs_available: bool = True,
+    secret_refs_available: Optional[bool] = None,
+    secret_resolver: Optional[Callable[[str], str]] = None,
 ) -> Dict[str, Any]:
     """Calculate and stage a plan without changing desired or active state."""
 
     _validate_approval_key(approval_key)
     runtime_root = _runtime_root(runtime_root)
     manifest = load_manifest_v2(manifest_path)
+    if secret_refs_available is None:
+        references = manifest.secret_references()
+        if not references:
+            secret_refs_available = True
+        elif secret_resolver is None:
+            secret_refs_available = False
+        else:
+            secret_refs_available = manifest_secret_bindings_available(
+                manifest, secret_resolver
+            )
     created_at = _utc_now()
     expires_at = (
         datetime.fromisoformat(created_at.replace("Z", "+00:00")) + PLAN_LIFETIME

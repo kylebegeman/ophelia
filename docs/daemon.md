@@ -122,6 +122,18 @@ Normal fleet traffic is outbound HTTPS on port 443 with mutual TLS. No public
 Ophelia listener is required. Lumen derives host identity from the client
 certificate and must reject expired or revoked identities.
 
+The host transport preserves normal system certificate authorities and adds
+the Lumen enrollment CA. This lets the public control-plane edge use an
+ordinary publicly trusted server certificate while the independent Lumen CA
+continues to authenticate host client certificates. Private deployments can
+still use a server certificate signed by the Lumen CA.
+
+Manifest v2 secrets resolve locally from private runtime env files. `opheliad`
+passes the resolver into both planning and recovered execution, so missing
+bindings block the exact plan instead of failing after approval. File-mode
+secrets are decoded and mounted only into their targeted workloads; values do
+not enter daemon state, agent payloads, plans, or receipts.
+
 Command sequence acknowledgement is also the authenticated gap-closing
 mechanism. Lumen may advance the acknowledged sequence across commands it
 withdrew or allowed to expire, but never across a command already accepted and

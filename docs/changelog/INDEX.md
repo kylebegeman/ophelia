@@ -88,3 +88,4 @@
 | [0084](0084-encrypted-host-recovery-observations.md) | 2026-07-19 | landed | Encrypted host recovery and continuous observations | backup, restore, recovery, age, observations, daemon, agent, journal, identity, systemd, cli, security, docs, tests |
 | [0085](0085-release-060.md) | 2026-07-19 | landed | Release 0.6.0 | release, manifest-v2, daemon, agent, recovery, observations, security, docs, tests |
 | [0086](0086-lumen-decision-plan-projection.md) | 2026-07-19 | landed | Lumen Decision plan projection | agent, manifest-v2, decisions, lumen, deploy, contracts, docs, tests |
+| [0087](0087-lumen-v2-runtime-contracts.md) | 2026-07-19 | landed | Lumen-ready manifest v2 runtime contracts | manifest-v2, lumen, secrets, caddy, mtls, daemon, releases, workloads, tests, docs |

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -27,7 +29,12 @@ from ..domain.revisions import (
     WorkloadKind,
 )
 from ..manifest_v2 import ManifestV2, ProbeV2, RouteV2, WorkloadV2, load_manifest_v2
-from ..manifest_v2_renderer import compose_project_name, render_revision_bundle
+from ..manifest_v2_renderer import (
+    compose_project_name,
+    render_revision_bundle,
+    route_auth_env_key,
+    route_auth_root,
+)
 from .contracts import (
     PreflightResult,
     RemoveResult,
@@ -115,6 +122,14 @@ class ComposeRevisionBackend:
             / manifest.environment
             / revision.revision_id
         )
+        self.route_auth_root = (
+            self.runtime_root
+            / "run"
+            / "route-auth"
+            / manifest.app
+            / manifest.environment
+            / revision.revision_id
+        )
         self.static_revision_root = (
             self.runtime_root
             / "static"
@@ -135,8 +150,18 @@ class ComposeRevisionBackend:
             blockers.append("candidate_bundle_mismatch")
         if self.manifest.routes and self.require_edge_runtime and not self.shared_compose.is_file():
             blockers.append("edge_runtime_missing")
-        if self.manifest.secrets and self.secret_resolver is None:
+        secret_references = self.manifest.secret_references()
+        if secret_references and self.secret_resolver is None:
             blockers.append("secret_resolver_missing")
+        elif secret_references:
+            try:
+                assert self.secret_resolver is not None
+                for reference in secret_references:
+                    value = self.secret_resolver(reference)
+                    if not isinstance(value, str) or not value or "\x00" in value:
+                        raise ValueError("invalid secret scalar")
+            except (OSError, RuntimeError, ValueError):
+                blockers.append("secret_binding_unavailable")
         if not blockers:
             try:
                 for artifact in self.manifest.artifacts:
@@ -168,7 +193,13 @@ class ComposeRevisionBackend:
                     "candidate_verified": "candidate_bundle_mismatch" not in blockers,
                     "runtime_available": "container_runtime_unavailable" not in blockers,
                     "edge_available": "edge_runtime_missing" not in blockers,
-                    "secret_bindings_available": "secret_resolver_missing" not in blockers,
+                    "secret_bindings_available": not any(
+                        item in blockers
+                        for item in (
+                            "secret_resolver_missing",
+                            "secret_binding_unavailable",
+                        )
+                    ),
                 }
             ),
             evidence_digests=tuple(sorted(set(evidence))) if not blockers else (),
@@ -184,6 +215,7 @@ class ComposeRevisionBackend:
             self._materialize_revision()
             self._materialize_static_artifacts()
             self._materialize_secrets()
+            self._materialize_route_auth()
             self._run_migrations()
             services = self._candidate_start_services()
             if services:
@@ -477,6 +509,9 @@ class ComposeRevisionBackend:
             if handle.revision_id == self.revision.revision_id and self.secret_root.exists():
                 _make_writable(self.secret_root)
                 shutil.rmtree(self.secret_root)
+            if handle.revision_id == self.revision.revision_id and self.route_auth_root.exists():
+                _make_writable(self.route_auth_root)
+                shutil.rmtree(self.route_auth_root)
             static_root = (
                 self.runtime_root
                 / "static"
@@ -608,14 +643,72 @@ class ComposeRevisionBackend:
             lines = []
             for secret in selected:
                 value = self.secret_resolver(secret.ref)
-                if not isinstance(value, str) or not value or any(character in value for character in "\x00\r\n"):
-                    raise ComposeBackendError("Secret resolver returned an invalid scalar value.")
-                lines.append(secret.name + "=" + value)
-            _atomic_bytes(
-                self.secret_root / (service_name + ".env"),
-                ("\n".join(lines) + "\n").encode("utf-8"),
-                mode=0o600,
+                if not isinstance(value, str) or not value or "\x00" in value:
+                    raise ComposeBackendError("Secret resolver returned an invalid value.")
+                if secret.mode == "env":
+                    if any(character in value for character in "\r\n"):
+                        raise ComposeBackendError(
+                            "Environment secret resolver returned a multiline value."
+                        )
+                    lines.append(secret.name + "=" + value)
+                    continue
+                encoded = _decode_secret_file(value, secret.encoding)
+                _atomic_bytes(
+                    self.secret_root
+                    / (service_name + ".files")
+                    / secret.name,
+                    encoded,
+                    mode=0o600,
+                )
+            if lines:
+                _atomic_bytes(
+                    self.secret_root / (service_name + ".env"),
+                    ("\n".join(lines) + "\n").encode("utf-8"),
+                    mode=0o600,
+                )
+
+    def _materialize_route_auth(self) -> None:
+        protected = [route for route in self.manifest.routes if route.client_auth is not None]
+        if not protected:
+            return
+        if self.secret_resolver is None:
+            raise ComposeBackendError("No secret resolver is configured.")
+        caddy_values: Dict[str, str] = {}
+        for route in protected:
+            assert route.client_auth is not None
+            trust_value = self.secret_resolver(route.client_auth.trust_pool_ref)
+            if not isinstance(trust_value, str) or not trust_value or "\x00" in trust_value:
+                raise ComposeBackendError("Route trust resolver returned an invalid value.")
+            trust_bytes = _decode_secret_file(
+                trust_value,
+                route.client_auth.trust_pool_encoding,
             )
+            if b"-----BEGIN CERTIFICATE-----" not in trust_bytes:
+                raise ComposeBackendError("Route trust pool is not a PEM certificate bundle.")
+            target_root = route_auth_root(
+                self.manifest,
+                self.revision,
+                route.name,
+                runtime_root=self.runtime_root,
+            )
+            _atomic_bytes(target_root / "client-ca.pem", trust_bytes, mode=0o600)
+            if route.client_auth.forward is None:
+                continue
+            authorization = self.secret_resolver(
+                route.client_auth.forward.authorization_ref
+            )
+            if (
+                not isinstance(authorization, str)
+                or len(authorization) < 32
+                or len(authorization) > 4096
+                or any(character in authorization for character in "\x00\r\n")
+            ):
+                raise ComposeBackendError(
+                    "Route authorization resolver returned an invalid value."
+                )
+            caddy_values[route_auth_env_key(self.manifest, route.name)] = authorization
+        if caddy_values:
+            _update_private_env(self.runtime_root / "caddy" / "env", caddy_values)
 
     def _run_migrations(self) -> None:
         marker_root = self.revision_root / ".ophelia" / "migrations"
@@ -1150,6 +1243,46 @@ def _copy_tree(source: Path, target: Path) -> None:
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     _atomic_bytes(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"), mode=0o600)
+
+
+def _decode_secret_file(value: str, encoding: str) -> bytes:
+    try:
+        if encoding == "plain":
+            decoded = value.encode("utf-8")
+        elif encoding == "base64":
+            decoded = base64.b64decode(value.encode("ascii"), validate=True)
+        else:
+            raise ValueError("unsupported secret encoding")
+    except (UnicodeError, binascii.Error, ValueError) as exc:
+        raise ComposeBackendError("File secret uses invalid encoding.") from exc
+    if not decoded or len(decoded) > 2 * 1024 * 1024 or b"\x00" in decoded:
+        raise ComposeBackendError("File secret exceeds its content boundary.")
+    return decoded
+
+
+def _update_private_env(path: Path, updates: Mapping[str, str]) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ComposeBackendError("Caddy environment path is unsafe.")
+    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    pending = dict(updates)
+    output = []
+    seen = set()
+    for line in existing:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output.append(line)
+            continue
+        name = line.split("=", 1)[0].strip()
+        if not name or name in seen:
+            raise ComposeBackendError("Caddy environment contains an invalid assignment.")
+        seen.add(name)
+        if name in pending:
+            output.append(name + "=" + json.dumps(pending.pop(name)))
+        else:
+            output.append(line)
+    for name, value in sorted(pending.items()):
+        output.append(name + "=" + json.dumps(value))
+    _atomic_bytes(path, ("\n".join(output) + "\n").encode("utf-8"), mode=0o600)
 
 
 def _atomic_bytes(path: Path, value: bytes, *, mode: int) -> None:

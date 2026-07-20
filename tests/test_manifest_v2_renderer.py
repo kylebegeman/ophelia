@@ -113,6 +113,71 @@ update: {{strategy: recreate}}
         self.assertEqual(["ophelia-migration"], compose["services"]["migration-schema"]["profiles"])
         self.assertEqual("no", compose["services"]["cleanup"]["restart"])
 
+    def test_renders_release_metadata_file_secrets_endpoints_and_client_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "lumen.ophelia.yml"
+            path.write_text(
+                f"""
+version: 2
+app: lumen-staging
+environment: staging
+release:
+  id: staging-123-abcdef
+  commit_sha: {"b" * 40}
+  build_time: 2026-07-19T20:00:00Z
+artifacts: {{server: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  core:
+    kind: web
+    artifact: server
+    port: 4773
+    endpoints: {{runner-control: 4774}}
+routes:
+  - name: product
+    domain: lumen-staging.example.com
+    target: {{workload: core, port: 4773}}
+    tls: {{mode: internal}}
+  - name: machine-control
+    domain: control-staging.example.com
+    target: {{workload: core, port: 4774}}
+    client_auth:
+      mode: verify_if_given
+      trust_pool_ref: secret://lumen-staging/staging/lumen-ca-base64
+      trust_pool_encoding: base64
+      forward:
+        authorization_ref: secret://lumen-staging/staging/lumen-proxy-token
+secrets:
+  - name: LUMEN_CA_PATH
+    ref: secret://lumen-staging/staging/lumen-ca-base64
+    mode: file
+    target: /run/lumen/ca.pem
+    encoding: base64
+"""
+            )
+            manifest = load_manifest_v2(path)
+            revision = manifest.to_revision(created_at="2026-07-19T20:00:00Z")
+            bundle = render_revision_bundle(
+                manifest,
+                revision,
+                runtime_root=root / "runtime",
+                secret_runtime_root=root / "runtime" / "run" / "secrets",
+            )
+            compose = yaml.safe_load(bundle[Path("compose.yml")])
+            caddy = bundle[Path("caddy/routes.caddy")]
+
+        service = compose["services"]["core"]
+        self.assertEqual([4773, 4774], service["expose"])
+        self.assertEqual("staging-123-abcdef", service["environment"]["OPHELIA_RELEASE_ID"])
+        self.assertEqual("b" * 40, service["environment"]["OPHELIA_COMMIT_SHA"])
+        self.assertEqual("/run/lumen/ca.pem", service["environment"]["LUMEN_CA_PATH"])
+        self.assertTrue(any(value.endswith(":/run/lumen/ca.pem:ro") for value in service["volumes"]))
+        self.assertIn("tls internal", caddy)
+        self.assertIn("mode verify_if_given", caddy)
+        self.assertIn("trust_pool file", caddy)
+        self.assertIn("header_up X-Ophelia-Proxy-Authorization", caddy)
+        self.assertIn("sha256:{tls_client_fingerprint}", caddy)
+
 
 if __name__ == "__main__":
     unittest.main()

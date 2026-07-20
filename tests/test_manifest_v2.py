@@ -190,6 +190,76 @@ routes:
         self.assertTrue(revision.workloads[0].overlap_safe)
         self.assertEqual(("public",), revision.workloads[1].route_ids)
 
+    def test_models_release_endpoints_file_secrets_and_mtls_edge(self) -> None:
+        manifest = self._load(
+            f"""
+version: 2
+app: lumen-staging
+environment: staging
+release:
+  id: staging-123-abcdef
+  commit_sha: {"a" * 40}
+  build_time: 2026-07-19T20:00:00Z
+artifacts:
+  server: {{image: "{PINNED_IMAGE}"}}
+workloads:
+  core:
+    kind: web
+    artifact: server
+    port: 4773
+    endpoints: {{runner-control: 4774}}
+routes:
+  - name: product
+    domain: lumen-staging.example.com
+    target: {{workload: core, port: 4773}}
+    tls: {{mode: internal}}
+  - name: machine-control
+    domain: control-staging.example.com
+    target: {{workload: core, port: 4774}}
+    client_auth:
+      mode: verify_if_given
+      trust_pool_ref: secret://lumen-staging/staging/lumen-ca-base64
+      trust_pool_encoding: base64
+      forward:
+        authorization_ref: secret://lumen-staging/staging/lumen-proxy-token
+secrets:
+  - name: LUMEN_CA_PATH
+    ref: secret://lumen-staging/staging/lumen-ca-base64
+    mode: file
+    target: /run/lumen/ca.pem
+    encoding: base64
+"""
+        )
+
+        self.assertEqual((("runner-control", 4774),), manifest.workload("core").endpoints)
+        self.assertEqual("staging-123-abcdef", manifest.release.release_id)
+        self.assertEqual("internal", manifest.routes[0].tls.mode)
+        self.assertEqual("verify_if_given", manifest.routes[1].client_auth.mode)
+        self.assertEqual("file", manifest.secrets[0].mode)
+        self.assertEqual(
+            (
+                "secret://lumen-staging/staging/lumen-ca-base64",
+                "secret://lumen-staging/staging/lumen-proxy-token",
+            ),
+            manifest.secret_references(),
+        )
+
+    def test_rejects_routes_to_undeclared_endpoint_ports(self) -> None:
+        value = f"""
+version: 2
+app: invalid-endpoint
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  web: {{kind: web, artifact: app, port: 8080, endpoints: {{metrics: 9090}}}}
+routes:
+  - name: invalid
+    domain: invalid.example.com
+    target: {{workload: web, port: 7070}}
+"""
+        with self.assertRaisesRegex(ManifestV2Error, "named endpoint"):
+            self._load(value)
+
     def test_migrates_v1_service_to_explicit_v2_candidate(self) -> None:
         candidate = migrate_v1_document(
             {

@@ -43,10 +43,11 @@ class HTTPSAgentTransport:
         self.config = config
         self.timeout_seconds = timeout_seconds
         self.parsed = urlparse(config.control_plane_url)
-        self.context = ssl.create_default_context(
-            purpose=ssl.Purpose.SERVER_AUTH,
-            cafile=str(config.control_plane_ca_path),
-        )
+        # The Lumen CA authenticates host client certificates. The public edge
+        # may use an ordinary publicly trusted server certificate, so preserve
+        # system roots and add the Lumen CA instead of replacing system trust.
+        self.context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+        self.context.load_verify_locations(cafile=str(config.control_plane_ca_path))
         self.context.minimum_version = ssl.TLSVersion.TLSv1_2
         self.context.load_cert_chain(
             certfile=str(config.host_certificate_path),

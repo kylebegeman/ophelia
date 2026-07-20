@@ -24,6 +24,31 @@ def compose_project_name(manifest: ManifestV2, revision: Revision) -> str:
     return _docker_name("ophelia-%s-%s-%s" % (manifest.app, manifest.environment, suffix))
 
 
+def route_auth_root(
+    manifest: ManifestV2,
+    revision: Revision,
+    route_name: str,
+    *,
+    runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+) -> Path:
+    return (
+        Path(runtime_root)
+        / "run"
+        / "route-auth"
+        / manifest.app
+        / manifest.environment
+        / revision.revision_id
+        / route_name
+    )
+
+
+def route_auth_env_key(manifest: ManifestV2, route_name: str) -> str:
+    import hashlib
+
+    identity = "%s\0%s\0%s" % (manifest.app, manifest.environment, route_name)
+    return "OPHELIA_ROUTE_AUTH_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24].upper()
+
+
 def render_revision_bundle(
     manifest: ManifestV2,
     revision: Revision,
@@ -98,8 +123,38 @@ def render_revision_bundle(
                 "name": secret.name,
                 "ref": secret.ref,
                 "workloads": list(secret.workloads),
+                "mode": secret.mode,
+                "target": secret.target,
+                "encoding": secret.encoding,
             }
             for secret in manifest.secrets
+        ]
+        + [
+            {
+                "name": "route:%s:trust-pool" % route.name,
+                "ref": route.client_auth.trust_pool_ref,
+                "workloads": [route.target.workload],
+                "mode": "route-trust-pool",
+                "target": str(
+                    route_auth_root(manifest, revision, route.name, runtime_root=runtime_root)
+                    / "client-ca.pem"
+                ),
+                "encoding": route.client_auth.trust_pool_encoding,
+            }
+            for route in manifest.routes
+            if route.client_auth is not None
+        ]
+        + [
+            {
+                "name": "route:%s:forward-authorization" % route.name,
+                "ref": route.client_auth.forward.authorization_ref,
+                "workloads": [route.target.workload],
+                "mode": "caddy-env",
+                "target": route_auth_env_key(manifest, route.name),
+                "encoding": "plain",
+            }
+            for route in manifest.routes
+            if route.client_auth is not None and route.client_auth.forward is not None
         ],
     }
     return {
@@ -223,8 +278,17 @@ def _compose_service(
             "OPHELIA_REVISION_ID": revision.revision_id,
             "OPHELIA_REVISION_DIGEST": revision.content_digest(),
             "OPHELIA_WORKLOAD": workload.name,
+            "OPHELIA_SERVICE": workload.name,
+            "OPHELIA_RELEASE_ID": manifest.release.release_id or revision.revision_id,
+            "OPHELIA_IMAGE_REF": artifact.image,
+            "OPHELIA_IMAGE_DIGEST": artifact.digest,
+            "OPHELIA_MANIFEST_HASH": manifest.canonical_digest(),
         }
     )
+    if manifest.release.commit_sha is not None:
+        environment["OPHELIA_COMMIT_SHA"] = manifest.release.commit_sha
+    if manifest.release.build_time is not None:
+        environment["OPHELIA_BUILD_TIME"] = manifest.release.build_time
     networks: Dict[str, Any] = {
         "ophelia-app": {
             "aliases": [
@@ -264,8 +328,15 @@ def _compose_service(
     }
     if workload.command:
         service["command"] = list(workload.command)
-    if workload.port is not None:
-        service["expose"] = [workload.port]
+    exposed_ports = sorted(
+        {
+            port
+            for port in [workload.port, *(item[1] for item in workload.endpoints)]
+            if port is not None
+        }
+    )
+    if exposed_ports:
+        service["expose"] = exposed_ports
     if one_shot_profile:
         service["profiles"] = [one_shot_profile]
     env_files = [
@@ -284,7 +355,9 @@ def _compose_service(
         or workload.name in item.workloads
         or service_name in item.workloads
     ]
-    if targeted_secrets:
+    env_secrets = [item for item in targeted_secrets if item.mode == "env"]
+    file_secrets = [item for item in targeted_secrets if item.mode == "file"]
+    if env_secrets:
         env_files.append(
             str(
                 Path(secret_runtime_root)
@@ -296,16 +369,32 @@ def _compose_service(
         )
     if env_files:
         service["env_file"] = env_files
-    if workload.mounts:
-        service["volumes"] = [
-            "%s:%s%s"
+    volume_mounts = [
+        "%s:%s%s"
+        % (
+            _volume_name(manifest, mount.source),
+            mount.target,
+            ":ro" if mount.read_only else "",
+        )
+        for mount in workload.mounts
+    ]
+    for secret in file_secrets:
+        assert secret.target is not None
+        environment[secret.name] = secret.target
+        volume_mounts.append(
+            "%s:%s:ro"
             % (
-                _volume_name(manifest, mount.source),
-                mount.target,
-                ":ro" if mount.read_only else "",
+                Path(secret_runtime_root)
+                / manifest.app
+                / manifest.environment
+                / revision.revision_id
+                / (service_name + ".files")
+                / secret.name,
+                secret.target,
             )
-            for mount in workload.mounts
-        ]
+        )
+    if volume_mounts:
+        service["volumes"] = volume_mounts
     health = workload.readiness or workload.startup
     healthcheck = _compose_healthcheck(health)
     if healthcheck is not None:
@@ -332,6 +421,28 @@ def _render_caddy(manifest: ManifestV2, revision: Revision, *, runtime_root: Pat
     for route in manifest.routes:
         workload = manifest.workload(route.target.workload)
         lines = [route.domain + " {"]
+        if route.client_auth is not None:
+            trust_pool = (
+                route_auth_root(
+                    manifest,
+                    revision,
+                    route.name,
+                    runtime_root=runtime_root,
+                )
+                / "client-ca.pem"
+            )
+            lines.extend(
+                [
+                    "  tls {",
+                    "    client_auth {",
+                    "      mode %s" % route.client_auth.mode,
+                    "      trust_pool file %s" % trust_pool,
+                    "    }",
+                    "  }",
+                ]
+            )
+        elif route.tls.mode == "internal":
+            lines.append("  tls internal")
         if workload.kind is WorkloadKind.STATIC:
             artifact = manifest.artifact(workload.artifact)
             root = (
@@ -346,11 +457,28 @@ def _render_caddy(manifest: ManifestV2, revision: Revision, *, runtime_root: Pat
             lines.extend(["  root * %s" % root, "  file_server"])
         else:
             alias = _docker_name("%s-%s-%s" % (manifest.app, workload.name, revision_suffix))
-            handler = "reverse_proxy %s:%d" % (alias, route.target.port)
+            proxy_lines = ["reverse_proxy %s:%d {" % (alias, route.target.port)]
+            if route.client_auth is not None and route.client_auth.forward is not None:
+                forward = route.client_auth.forward
+                proxy_lines.extend(
+                    [
+                        "  header_up %s \"%s {$%s}\""
+                        % (
+                            forward.authorization_header,
+                            forward.authorization_scheme,
+                            route_auth_env_key(manifest, route.name),
+                        ),
+                        "  header_up %s \"sha256:{tls_client_fingerprint}\""
+                        % forward.fingerprint_header,
+                    ]
+                )
+            proxy_lines.append("}")
             if route.path_prefix:
-                lines.extend(["  handle_path %s* {" % route.path_prefix, "    " + handler, "  }"])
+                lines.append("  handle %s* {" % route.path_prefix)
+                lines.extend("    " + item for item in proxy_lines)
+                lines.append("  }")
             else:
-                lines.append("  " + handler)
+                lines.extend("  " + item for item in proxy_lines)
         lines.append("}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + ("\n" if blocks else "")

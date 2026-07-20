@@ -100,6 +100,88 @@ secrets:
     ref: secret://demo-service/production/database-url
 ```
 
+### Runtime identity, endpoints, and secrets
+
+Manifest v2 can bind app-owned release identity into the exact plan:
+
+```yaml
+release:
+  id: production-1842-a1b2c3d4e5f6
+  commit_sha: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+  build_time: 2026-07-19T20:00:00Z
+```
+
+Ophelia injects `OPHELIA_RELEASE_ID`, `OPHELIA_COMMIT_SHA`,
+`OPHELIA_BUILD_TIME`, `OPHELIA_IMAGE_REF`, `OPHELIA_IMAGE_DIGEST`,
+`OPHELIA_MANIFEST_HASH`, `OPHELIA_SERVICE`, and revision identity into each
+container. If `release.id` is omitted, the immutable revision id is used.
+
+A web workload can expose additional named ports when one process owns more
+than one protocol endpoint. Routes may target only its primary `port` or one
+declared endpoint:
+
+```yaml
+workloads:
+  core:
+    kind: web
+    artifact: app-image
+    port: 4773
+    endpoints: {runner-control: 4774}
+```
+
+Opaque secret references resolve from a private host runtime env file. For
+`secret://demo-service/production/database-url`, the resolver looks for
+`DATABASE_URL` in a mode-0600 provider file beneath the runtime root. Values
+are never copied into the manifest, plan, operation journal, receipt, or
+Compose document. The default candidates are:
+
+- `apps/<app>/environments/<environment>/env`
+- `apps/<app>/env` for v1-compatible runtime state
+- `secrets/<app>.<environment>.env`
+
+Environment secrets remain the default. File secrets are materialized into a
+revision-private directory and mounted read-only, which supports private keys,
+CA bundles, and other multiline credentials without exposing their contents as
+environment values:
+
+```yaml
+secrets:
+  - name: APP_CA_PATH
+    ref: secret://demo-service/production/app-ca-base64
+    mode: file
+    target: /run/demo-service/app-ca.pem
+    encoding: base64
+```
+
+### TLS and authenticated machine routes
+
+Routes default to automatic public TLS. Set `tls.mode: internal` for a private
+edge such as a Cloudflare Tunnel origin. A direct machine-control hostname can
+verify client certificates and forward only edge-derived identity:
+
+```yaml
+routes:
+  - name: machine-control
+    domain: control.example.com
+    target: {workload: core, port: 4773}
+    client_auth:
+      # Enrollment may connect without a certificate; enrolled exchanges still
+      # fail in the application unless Caddy forwards a verified fingerprint.
+      mode: verify_if_given
+      trust_pool_ref: secret://demo-service/production/client-ca-base64
+      trust_pool_encoding: base64
+      forward:
+        authorization_ref: secret://demo-service/production/proxy-token
+        authorization_header: X-Ophelia-Proxy-Authorization
+        fingerprint_header: X-Ophelia-Client-Certificate-Sha256
+```
+
+Ophelia materializes the trust pool privately, synchronizes the proxy secret
+into the shared Caddy env file, overwrites the protected upstream headers, and
+forwards Caddy's verified SHA-256 client-certificate fingerprint. Use a direct
+DNS record for this hostname. A TLS-terminating CDN cannot preserve the client
+certificate boundary.
+
 The remaining sections document manifest v1 compatibility behavior.
 
 ## Top-level Fields

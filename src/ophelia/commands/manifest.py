@@ -17,6 +17,7 @@ from ..manifest_v2_execution import (
     local_approval_key,
     plan_manifest_v2,
 )
+from ..runtime_secrets import RuntimeSecretResolver
 from ._output import print_error, print_json
 
 
@@ -156,6 +157,7 @@ def run_plan(args: Namespace) -> int:
                 host_id=args.host_id,
                 idempotency_key=args.idempotency_key,
                 require_edge_runtime=not args.allow_missing_edge,
+                secret_resolver=RuntimeSecretResolver(runtime_root),
             )
         else:
             if args.runtime_root or args.host_id or args.allow_missing_edge:
@@ -191,6 +193,7 @@ def run_apply(args: Namespace) -> int:
                 approval_key=key,
                 confirmation=args.confirm,
                 require_edge_runtime=not args.allow_missing_edge,
+                secret_resolver=RuntimeSecretResolver(runtime_root),
             )
         else:
             if args.runtime_root or args.allow_missing_edge:

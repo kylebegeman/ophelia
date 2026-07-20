@@ -29,6 +29,7 @@ from ..manifest_v2_execution import (
 )
 from ..manifest_v2 import load_manifest_v2
 from ..manifest_v2_sources import manifest_v2_request_digest
+from ..runtime_secrets import RuntimeSecretResolver
 from ..version import package_version
 from ..validation import CanonicalValidationError, parse_environment, parse_identifier
 from .config import DaemonConfig, PROTOCOL_VERSION
@@ -49,10 +50,12 @@ class OpheliaDaemon:
         os.chmod(self.config.runtime_root, 0o700)
         self.journal = SQLiteOperationJournal.beneath_runtime_root(config.runtime_root)
         self.store = DaemonStore(self.journal)
+        self.secret_resolver = RuntimeSecretResolver(config.runtime_root)
         self.executor = manifest_v2_executor(
             runtime_root=config.runtime_root,
             journal=self.journal,
             runner=runner,
+            secret_resolver=self.secret_resolver,
             require_edge_runtime=config.require_edge_runtime,
         )
         self.workloads = WorkloadRunManager(
@@ -117,6 +120,7 @@ class OpheliaDaemon:
                     and shutil.which("age") is not None
                 ),
                 "continuous_host_observations": True,
+                "runtime_secret_references": True,
             },
             "runtime": {
                 "os": platform.system().lower(),
@@ -255,6 +259,7 @@ class OpheliaDaemon:
             host_id=self.config.host_id,
             idempotency_key=idempotency_key,
             require_edge_runtime=self.config.require_edge_runtime,
+            secret_resolver=self.secret_resolver,
         )
         selected = self.store.record_plan_request(
             actor_id=actor.actor_id,
@@ -286,6 +291,7 @@ class OpheliaDaemon:
             runtime_root=self.config.runtime_root,
             require_edge_runtime=self.config.require_edge_runtime,
             owner_id=self.owner_id,
+            secret_resolver=self.secret_resolver,
             execute=False,
         )
 
@@ -307,6 +313,7 @@ class OpheliaDaemon:
             approval_key=local_approval_key(self.config.runtime_root, create=False),
             confirmation=confirmation,
             require_edge_runtime=self.config.require_edge_runtime,
+            secret_resolver=self.secret_resolver,
             owner_id=self.owner_id,
             execute=False,
             actor=actor,

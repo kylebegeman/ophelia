@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,9 +110,18 @@ app: rejected-demo
 environment: staging
 artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
 workloads:
-  worker: {{kind: worker, artifact: app}}
-routes: []
-update: {{strategy: recreate}}
+  web: {{kind: web, artifact: app, port: 8080}}
+routes:
+  - name: machine
+    domain: secret-demo.example.com
+    target: {{workload: web, port: 8080}}
+    client_auth:
+      mode: verify_if_given
+      trust_pool_ref: secret://secret-demo/staging/trust-pem-base64
+      trust_pool_encoding: base64
+      forward:
+        authorization_ref: secret://secret-demo/staging/proxy-token
+update: {{strategy: blue_green}}
 """
             )
             key = b"fixture-approval-key-with-enough-entropy"
@@ -235,6 +245,105 @@ update: {strategy: static_atomic}
             )
             self.assertEqual(ReceiptOutcome.SUCCEEDED.value, result["receipt"]["outcome"])
             self.assertEqual("<h1>Ophelia V2</h1>\n", published.read_text())
+
+    def test_secret_references_block_without_a_resolver_and_materialize_with_one(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_root = root / "runtime"
+            path = root / "app.ophelia.yml"
+            path.write_text(
+                f"""
+version: 2
+app: secret-demo
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  web: {{kind: web, artifact: app, port: 8080}}
+routes:
+  - name: machine
+    domain: secret-demo.example.com
+    target: {{workload: web, port: 8080}}
+    client_auth:
+      mode: verify_if_given
+      trust_pool_ref: secret://secret-demo/staging/trust-pem-base64
+      trust_pool_encoding: base64
+      forward:
+        authorization_ref: secret://secret-demo/staging/proxy-token
+update: {{strategy: blue_green}}
+secrets:
+  - name: API_TOKEN
+    ref: secret://secret-demo/staging/api-token
+  - name: TRUST_PATH
+    ref: secret://secret-demo/staging/trust-pem-base64
+    mode: file
+    target: /run/secret-demo/trust.pem
+    encoding: base64
+"""
+            )
+            key = b"fixture-approval-key-with-enough-entropy"
+            blocked = plan_manifest_v2(
+                path,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                approval_key=key,
+                require_edge_runtime=False,
+            )
+            self.assertFalse(blocked["can_apply"])
+            self.assertIn("secret_bindings_unavailable", blocked["blockers"])
+
+            values = {
+                "secret://secret-demo/staging/api-token": "token-value",
+                "secret://secret-demo/staging/proxy-token": "p" * 64,
+                "secret://secret-demo/staging/trust-pem-base64": base64.b64encode(
+                    b"-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n"
+                ).decode("ascii"),
+            }
+            resolver = values.__getitem__
+            plan = plan_manifest_v2(
+                path,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                approval_key=key,
+                require_edge_runtime=False,
+                secret_resolver=resolver,
+            )
+            result = apply_manifest_v2_plan(
+                plan["plan_id"],
+                runtime_root=runtime_root,
+                approval_key=key,
+                confirmation=plan["confirmation_token"],
+                runner=FakeRunner(),
+                require_edge_runtime=False,
+                secret_resolver=resolver,
+                external_verifier=lambda _: True,
+            )
+
+            secret_root = (
+                runtime_root
+                / "run"
+                / "secrets"
+                / "secret-demo"
+                / "staging"
+                / plan["revision_id"]
+            )
+            self.assertEqual(ReceiptOutcome.SUCCEEDED.value, result["receipt"]["outcome"])
+            self.assertEqual("API_TOKEN=token-value\n", (secret_root / "web.env").read_text())
+            self.assertIn(
+                "-----BEGIN CERTIFICATE-----",
+                (secret_root / "web.files" / "TRUST_PATH").read_text(),
+            )
+            route_ca = (
+                runtime_root
+                / "run"
+                / "route-auth"
+                / "secret-demo"
+                / "staging"
+                / plan["revision_id"]
+                / "machine"
+                / "client-ca.pem"
+            )
+            self.assertIn("BEGIN CERTIFICATE", route_ca.read_text())
+            self.assertIn("OPHELIA_ROUTE_AUTH_", (runtime_root / "caddy" / "env").read_text())
 
 
 def _option(command: Sequence[str], name: str) -> str:
