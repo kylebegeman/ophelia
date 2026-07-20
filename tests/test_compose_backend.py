@@ -5,10 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
-from unittest.mock import Mock, patch
 
 from ophelia.domain.receipts import VerificationStatus
-from ophelia.execution.compose_backend import ComposeRevisionBackend
+from ophelia.execution.compose_backend import ComposeRevisionBackend, _HTTP_PROBE_IMAGE
 from ophelia.execution.contracts import ExecutionFence
 from ophelia.execution.subprocesses import ProcessResult
 from ophelia.manifest_v2 import HttpProbeV2, ProbeV2, load_manifest_v2
@@ -197,30 +196,22 @@ class ComposeRevisionBackendTests(unittest.TestCase):
 
             self.assertEqual([("/bin/ready",), ("/bin/live",)], observed)
 
-    def test_http_probe_uses_a_parsed_address_from_a_multi_network_container(self) -> None:
-        class MultiNetworkRunner(FakeRunner):
+    def test_command_probe_retries_until_the_workload_is_ready(self) -> None:
+        class EventuallyReadyRunner(FakeRunner):
+            attempts = 0
+
             def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
                 command = list(argv)
                 if "ps" in command and "-q" in command:
                     return ProcessResult(
                         tuple(command), 0, "success", "container-1\n", "", False, False, 1
                     )
-                if command[:2] == ["docker", "inspect"]:
-                    networks = {
-                        "ophelia-data": {"IPAddress": "172.18.0.2"},
-                        "ophelia-compose-demo-production-app": {
-                            "IPAddress": "172.19.0.2"
-                        },
-                    }
+                if command[:2] == ["docker", "exec"]:
+                    self.attempts += 1
+                    outcome = "success" if self.attempts == 2 else "nonzero_exit"
+                    exit_code = 0 if outcome == "success" else 1
                     return ProcessResult(
-                        tuple(command),
-                        0,
-                        "success",
-                        json.dumps(networks) + "\n",
-                        "",
-                        False,
-                        False,
-                        1,
+                        tuple(command), exit_code, outcome, "", "", False, False, 1
                     )
                 return super().run(argv, **kwargs)
 
@@ -228,7 +219,17 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             base = Path(directory)
             runtime_root = base / "runtime"
             staging = base / "staging"
-            manifest, revision = _stage_manifest(staging, runtime_root)
+            manifest, revision = _stage_manifest(
+                staging,
+                runtime_root,
+                probes="""
+    readiness:
+      command: ["/bin/ready"]
+      interval_seconds: 0.001
+      timeout_seconds: 1
+""",
+            )
+            runner = EventuallyReadyRunner()
             backend = ComposeRevisionBackend(
                 manifest=manifest,
                 revision=revision,
@@ -238,27 +239,109 @@ class ComposeRevisionBackendTests(unittest.TestCase):
                 operation_id="operation_fixture-1",
                 owner_id="worker-1",
                 fencing_token=1,
-                runner=MultiNetworkRunner(),
+                runner=runner,
+                require_edge_runtime=False,
+            )
+
+            self.assertTrue(backend._probe(manifest.workload("web"), candidate=True))
+            self.assertEqual(2, runner.attempts)
+
+    def test_http_probe_runs_in_each_container_network_namespace(self) -> None:
+        class ProbeRunner(FakeRunner):
+            status = "503"
+
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                command = list(argv)
+                if "ps" in command and "-q" in command:
+                    return ProcessResult(
+                        tuple(command), 0, "success", "container-1\n", "", False, False, 1
+                    )
+                if command[:2] == ["docker", "run"]:
+                    self.commands.append(command)
+                    return ProcessResult(
+                        tuple(command), 0, "success", self.status, "", False, False, 1
+                    )
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            runner = ProbeRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
                 require_edge_runtime=False,
             )
             probe = ProbeV2(
                 http=HttpProbeV2("/health", 8080, expect_status=503),
                 timeout_seconds=12,
             )
-            response = Mock(status=503)
-            connection = Mock()
-            connection.getresponse.return_value = response
 
-            with patch(
-                "ophelia.execution.compose_backend.http.client.HTTPConnection",
-                return_value=connection,
-            ) as http_connection:
-                self.assertTrue(backend._probe_http(manifest.workload("web"), probe))
+            self.assertTrue(backend._probe_http(manifest.workload("web"), probe))
 
-            http_connection.assert_called_once_with("172.19.0.2", 8080, timeout=10.0)
-            connection.request.assert_called_once_with("GET", "/health")
-            response.close.assert_called_once_with()
-            connection.close.assert_called_once_with()
+            command = next(item for item in runner.commands if item[:2] == ["docker", "run"])
+            self.assertEqual("container:container-1", command[command.index("--network") + 1])
+            self.assertIn(_HTTP_PROBE_IMAGE, command)
+            self.assertIn("--read-only", command)
+            self.assertEqual("ALL", command[command.index("--cap-drop") + 1])
+            self.assertEqual("10", command[command.index("--max-time") + 1])
+            self.assertEqual("GET", command[command.index("--request") + 1])
+            self.assertEqual("http://127.0.0.1:8080/health", command[-1])
+
+            runner.status = "200"
+            self.assertFalse(backend._probe_http(manifest.workload("web"), probe))
+
+    def test_preflight_pulls_the_pinned_http_probe_image_when_needed(self) -> None:
+        class MissingProbeImageRunner(FakeRunner):
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                command = list(argv)
+                if command[:4] == ["docker", "image", "inspect", _HTTP_PROBE_IMAGE]:
+                    self.commands.append(command)
+                    return ProcessResult(
+                        tuple(command), 1, "nonzero_exit", "", "missing", False, False, 1
+                    )
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(
+                staging,
+                runtime_root,
+                probes="""
+    readiness:
+      http: {path: /health, port: 8080}
+""",
+            )
+            runner = MissingProbeImageRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                require_edge_runtime=False,
+            )
+
+            result = backend.preflight(revision)
+
+            self.assertTrue(result.ok)
+            self.assertIn(_HTTP_PROBE_IMAGE.split("@", 1)[1], result.evidence_digests)
+            self.assertIn(["docker", "pull", _HTTP_PROBE_IMAGE], runner.commands)
 
     def test_caddy_activation_prunes_unreferenced_managed_route_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

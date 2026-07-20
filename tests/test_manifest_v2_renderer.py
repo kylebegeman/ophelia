@@ -96,6 +96,7 @@ update:
         self.assertTrue(compose["services"]["web"]["read_only"])
         self.assertEqual(536870912, compose["services"]["web"]["mem_limit"])
         self.assertEqual(["ALL"], compose["services"]["web"]["cap_drop"])
+        self.assertEqual({"disable": True}, compose["services"]["web"]["healthcheck"])
         self.assertEqual(["no-new-privileges:true"], compose["services"]["web"]["security_opt"])
         self.assertEqual(
             ["seccomp=unconfined", "apparmor=unconfined"],

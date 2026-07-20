@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import concurrent.futures
+import stat
 import tempfile
 import threading
 import unittest
@@ -69,6 +70,74 @@ class FailingStartRunner(FakeRunner):
 
 
 class ManifestV2ExecutionTests(unittest.TestCase):
+    def test_read_only_support_mount_is_container_readable_after_materialization(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_root = root / "runtime"
+            (root / "config").mkdir()
+            (root / "config" / "worker.env").write_text("QUEUE=primary\n")
+            (root / "config" / "policy.json").write_text('{"Version":"1"}\n')
+            path = root / "app.ophelia.yml"
+            path.write_text(
+                f"""
+version: 2
+app: support-mode-demo
+environment: staging
+artifacts: {{app: {{image: "{PINNED_IMAGE}"}}}}
+workloads:
+  worker:
+    kind: worker
+    artifact: app
+    env_files: [config/worker.env]
+    file_mounts:
+      - source: config/policy.json
+        target: /opt/app/policy.json
+routes: []
+update: {{strategy: recreate}}
+"""
+            )
+            key = b"fixture-approval-key-with-enough-entropy"
+            plan = plan_manifest_v2(
+                path,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                approval_key=key,
+                require_edge_runtime=False,
+            )
+
+            result = apply_manifest_v2_plan(
+                plan["plan_id"],
+                runtime_root=runtime_root,
+                approval_key=key,
+                confirmation=plan["confirmation_token"],
+                runner=FakeRunner(),
+                require_edge_runtime=False,
+                external_verifier=lambda _: True,
+            )
+
+            revision = (
+                runtime_root
+                / "apps"
+                / "support-mode-demo"
+                / "environments"
+                / "staging"
+                / "revisions"
+                / plan["revision_id"]
+                / "support"
+                / "worker"
+            )
+            self.assertEqual(ReceiptOutcome.SUCCEEDED.value, result["receipt"]["outcome"])
+            self.assertEqual(
+                0o444,
+                stat.S_IMODE((revision / "files" / "00-policy.json").stat().st_mode),
+            )
+            self.assertEqual(
+                0o600,
+                stat.S_IMODE((revision / "00-worker.env").stat().st_mode),
+            )
+
     def test_remote_approval_uses_the_shorter_decision_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -487,9 +556,19 @@ secrets:
             )
             self.assertEqual(ReceiptOutcome.SUCCEEDED.value, result["receipt"]["outcome"])
             self.assertEqual("API_TOKEN=token-value\n", (secret_root / "web.env").read_text())
+            self.assertEqual(
+                0o600,
+                stat.S_IMODE((secret_root / "web.env").stat().st_mode),
+            )
             self.assertIn(
                 "-----BEGIN CERTIFICATE-----",
                 (secret_root / "web.files" / "TRUST_PATH").read_text(),
+            )
+            self.assertEqual(
+                0o444,
+                stat.S_IMODE(
+                    (secret_root / "web.files" / "TRUST_PATH").stat().st_mode
+                ),
             )
             route_ca = (
                 runtime_root
@@ -502,6 +581,7 @@ secrets:
                 / "client-ca.pem"
             )
             self.assertIn("BEGIN CERTIFICATE", route_ca.read_text())
+            self.assertEqual(0o600, stat.S_IMODE(route_ca.stat().st_mode))
             self.assertIn("OPHELIA_ROUTE_AUTH_", (runtime_root / "caddy" / "env").read_text())
 
 

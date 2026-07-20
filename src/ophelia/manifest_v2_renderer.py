@@ -436,10 +436,13 @@ def _compose_service(
 
 
 def _compose_healthcheck(probe: ProbeV2 | None) -> Dict[str, Any] | None:
-    if probe is None or not probe.command:
-        # HTTP probes are executed by the backend against the isolated
-        # candidate. Avoid assuming curl, wget, or Python exists in the image.
+    if probe is None:
         return None
+    if not probe.command:
+        # HTTP probes are executed by the backend against the isolated
+        # candidate. Explicitly disable any image-defined healthcheck so a
+        # product-specific default cannot contradict the declared probe.
+        return {"disable": True}
     return {
         "test": ["CMD", *probe.command],
         "interval": "%ss" % _number(probe.interval_seconds),

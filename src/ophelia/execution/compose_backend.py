@@ -5,8 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import http.client
-import ipaddress
 import json
 import os
 import re
@@ -41,6 +39,7 @@ from ..manifest_v2_renderer import (
     route_auth_env_key,
     route_auth_root,
 )
+from ..manifest_v2_sources import mounted_file_target
 from .contracts import (
     PreflightResult,
     RemoveResult,
@@ -62,6 +61,10 @@ class ComposeBackendError(RuntimeError):
 
 
 _ROUTE_AUTH_ENV = re.compile(r"\{\$(OPHELIA_ROUTE_AUTH_[A-F0-9]{24})\}")
+_HTTP_PROBE_IMAGE_DIGEST = (
+    "sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
+)
+_HTTP_PROBE_IMAGE = "curlimages/curl@" + _HTTP_PROBE_IMAGE_DIGEST
 
 
 class ComposeRevisionBackend:
@@ -197,6 +200,18 @@ class ComposeRevisionBackend:
                             timeout_seconds=self.command_timeout_seconds,
                         )
                     evidence.append(artifact.digest)
+                if self._requires_http_probe_image():
+                    result = self.runner.run(
+                        ["docker", "image", "inspect", _HTTP_PROBE_IMAGE],
+                        timeout_seconds=min(self.command_timeout_seconds, 60.0),
+                        check=False,
+                    )
+                    if result.exit_reason != "success":
+                        self.runner.run(
+                            ["docker", "pull", _HTTP_PROBE_IMAGE],
+                            timeout_seconds=self.command_timeout_seconds,
+                        )
+                    evidence.append(_HTTP_PROBE_IMAGE_DIGEST)
                 for _service_name, workload in self._runtime_workloads():
                     if (
                         workload.security.run_as_non_root
@@ -608,9 +623,27 @@ class ComposeRevisionBackend:
             _make_writable(temporary)
             shutil.rmtree(temporary)
         _copy_tree(self.candidate_root, temporary)
+        self._prepare_support_file_modes(temporary)
         os.replace(temporary, self.revision_root)
         _sync_directory(self.revisions_root)
         self._verify_materialized_revision()
+
+    def _prepare_support_file_modes(self, root: Path) -> None:
+        """Make declared read-only mounts readable inside confined containers."""
+
+        for service_name, workload in self._runtime_workloads():
+            for index, mount in enumerate(workload.file_mounts):
+                target = root / mounted_file_target(
+                    workload,
+                    index,
+                    mount.source,
+                    service_name=service_name,
+                )
+                if target.is_symlink() or not target.is_file():
+                    raise ComposeBackendError(
+                        "Materialized support file is missing or unsafe."
+                    )
+                os.chmod(target, 0o444)
 
     def _verify_materialized_revision(self) -> None:
         if self.revision_root.is_symlink() or not self.revision_root.is_dir():
@@ -694,7 +727,10 @@ class ComposeRevisionBackend:
                     / (service_name + ".files")
                     / secret.name,
                     encoded,
-                    mode=0o600,
+                    # The parent tree remains owner-only on the host. The
+                    # declared bind target must be readable by an arbitrary
+                    # non-root UID inside the confined workload container.
+                    mode=0o444,
                 )
             if lines:
                 _atomic_bytes(
@@ -1036,106 +1072,116 @@ class ComposeRevisionBackend:
         )
         if probe is None:
             return True
+        deadline = time.monotonic() + probe.timeout_seconds
+        while True:
+            if self._probe_once(workload, probe, deadline=deadline):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(probe.interval_seconds, max(0.0, deadline - time.monotonic())))
+
+    def _probe_once(
+        self,
+        workload: WorkloadV2,
+        probe: ProbeV2,
+        *,
+        deadline: Optional[float] = None,
+    ) -> bool:
         if self.probe_checker is not None:
             return bool(self.probe_checker(workload, probe))
         if probe.command:
             containers = self._service_containers(workload.name)
             if len(containers) != workload.replicas:
                 return False
-            return all(
-                self.runner.run(
+            for container in containers:
+                remaining = (
+                    probe.timeout_seconds
+                    if deadline is None
+                    else deadline - time.monotonic()
+                )
+                if remaining <= 0:
+                    return False
+                result = self.runner.run(
                     ["docker", "exec", container, *probe.command],
                     check=False,
-                    timeout_seconds=probe.timeout_seconds,
-                ).exit_reason == "success"
-                for container in containers
-            )
-        if probe.http is None:
-            return False
-        deadline = time.monotonic() + probe.timeout_seconds
-        while True:
-            if self._probe_http(workload, probe):
-                return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(min(probe.interval_seconds, max(0.0, deadline - time.monotonic())))
+                    timeout_seconds=min(remaining, 30.0),
+                )
+                if result.exit_reason != "success":
+                    return False
+            return True
+        if probe.http is not None:
+            return self._probe_http(workload, probe, deadline=deadline)
+        return False
 
-    def _probe_http(self, workload: WorkloadV2, probe: ProbeV2) -> bool:
+    def _probe_http(
+        self,
+        workload: WorkloadV2,
+        probe: ProbeV2,
+        *,
+        deadline: Optional[float] = None,
+    ) -> bool:
         assert probe.http is not None
         containers = self._service_containers(workload.name)
         if len(containers) != workload.replicas:
             return False
         for container in containers:
-            addresses = self._container_probe_addresses(container)
-            if not addresses:
+            remaining = (
+                probe.timeout_seconds
+                if deadline is None
+                else deadline - time.monotonic()
+            )
+            if remaining <= 0:
                 return False
-            if not any(self._probe_http_address(address, probe) for address in addresses):
+            maximum_seconds = min(remaining, 10.0)
+            result = self.runner.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--network",
+                    "container:" + container,
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges:true",
+                    "--pids-limit",
+                    "32",
+                    "--memory",
+                    "32m",
+                    "--cpus",
+                    "0.25",
+                    "--tmpfs",
+                    "/tmp:rw,noexec,nosuid,size=1m",
+                    _HTTP_PROBE_IMAGE,
+                    "--silent",
+                    "--show-error",
+                    "--output",
+                    "/dev/null",
+                    "--write-out",
+                    "%{http_code}",
+                    "--max-time",
+                    _format_seconds(maximum_seconds),
+                    "--request",
+                    probe.http.method,
+                    "http://127.0.0.1:%d%s" % (probe.http.port, probe.http.path),
+                ],
+                timeout_seconds=maximum_seconds + 2.0,
+                check=False,
+            )
+            if (
+                result.exit_reason != "success"
+                or result.stdout.strip() != str(probe.http.expect_status)
+            ):
                 return False
         return True
 
-    def _container_probe_addresses(self, container: str) -> Tuple[str, ...]:
-        inspected = self.runner.run(
-            [
-                "docker",
-                "inspect",
-                container,
-                "--format",
-                "{{json .NetworkSettings.Networks}}",
-            ],
-            timeout_seconds=30,
-            check=False,
+    def _requires_http_probe_image(self) -> bool:
+        return any(
+            probe is not None and probe.http is not None
+            for workload in self.manifest.workloads
+            for probe in (workload.startup, workload.readiness, workload.liveness)
         )
-        if inspected.exit_reason != "success":
-            return ()
-        try:
-            networks = json.loads(inspected.stdout)
-        except (json.JSONDecodeError, TypeError):
-            return ()
-        if not isinstance(networks, dict):
-            return ()
-
-        application_network = _docker_name(
-            "ophelia-%s-%s-app" % (self.manifest.app, self.manifest.environment)
-        )
-        names = sorted(
-            networks,
-            key=lambda name: (name != application_network, name),
-        )
-        addresses = []
-        for name in names:
-            network = networks.get(name)
-            if not isinstance(network, dict):
-                continue
-            address = network.get("IPAddress")
-            if not isinstance(address, str):
-                continue
-            try:
-                normalized = str(ipaddress.ip_address(address.strip()))
-            except ValueError:
-                continue
-            if normalized not in addresses:
-                addresses.append(normalized)
-        return tuple(addresses)
-
-    @staticmethod
-    def _probe_http_address(address: str, probe: ProbeV2) -> bool:
-        assert probe.http is not None
-        connection = http.client.HTTPConnection(
-            address,
-            probe.http.port,
-            timeout=min(probe.timeout_seconds, 10.0),
-        )
-        try:
-            connection.request(probe.http.method, probe.http.path)
-            response = connection.getresponse()
-            try:
-                return response.status == probe.http.expect_status
-            finally:
-                response.close()
-        except (OSError, http.client.HTTPException):
-            return False
-        finally:
-            connection.close()
 
     def _service_containers(self, workload_name: str) -> Tuple[str, ...]:
         result = self._compose(
@@ -1474,6 +1520,10 @@ def _copy_tree(source: Path, target: Path) -> None:
             os.chmod(destination, 0o600)
         else:
             raise ComposeBackendError("Candidate source tree contains an unsupported file type.")
+
+
+def _format_seconds(value: float) -> str:
+    return ("%.3f" % value).rstrip("0").rstrip(".")
 
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
