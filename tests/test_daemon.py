@@ -24,7 +24,7 @@ from ophelia.daemon.agent import OutboundHostAgent
 from ophelia.daemon.agent_store import AgentStore
 from ophelia.daemon.service import OpheliaDaemon
 from ophelia.daemon.store import DaemonStore
-from ophelia.daemon.install import daemon_install_plan
+from ophelia.daemon.install import _install_release, daemon_install_plan
 from ophelia.daemon.enrollment import (
     EnrollmentError,
     _enable_agent_config,
@@ -96,8 +96,12 @@ class FakeAgentTransport:
 
 
 class FakeUpgradeRunner:
+    def __init__(self) -> None:
+        self.commands: List[List[str]] = []
+
     def run(self, argv: Sequence[str], **_: object) -> ProcessResult:
         command = list(argv)
+        self.commands.append(command)
         if command[:3] == ["python3", "-m", "venv"]:
             release = Path(command[3])
             executable = release / "bin" / "opheliad"
@@ -257,13 +261,19 @@ class DaemonInstallTests(unittest.TestCase):
             source.mkdir()
             (source / "pyproject.toml").write_text("[project]\nname='fixture'\n")
             install_root = root / "install"
-            release = install_root / "releases" / package_version()
-            release.mkdir(parents=True)
             config = root / "agent.toml"
             unit = root / "opheliad.service"
             with mock.patch(
                 "ophelia.daemon.install.shutil.which", return_value="/usr/bin/tool"
             ):
+                initial = daemon_install_plan(
+                    source_root=source,
+                    install_root=install_root,
+                    config_path=config,
+                    unit_path=unit,
+                )
+                release = Path(initial["release_root"])
+                release.mkdir(parents=True)
                 incomplete = daemon_install_plan(
                     source_root=source,
                     install_root=install_root,
@@ -305,6 +315,27 @@ class DaemonInstallTests(unittest.TestCase):
         self.assertIn(
             "enable-service-with-start-deferred-for-recovery", deferred["steps"]
         )
+
+    def test_installer_creates_virtualenv_at_final_release_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "releases" / "0.6.3-fixture"
+            source = root / "source"
+            source.mkdir()
+            runner = FakeUpgradeRunner()
+
+            _install_release(
+                runner,
+                release,
+                source,
+                source_digest="sha256:" + "a" * 64,
+            )
+
+        self.assertEqual(
+            ["python3", "-m", "venv", str(release)],
+            runner.commands[0],
+        )
+        self.assertFalse(any(".install-" in part for command in runner.commands for part in command))
 
     def test_enrollment_plan_binds_token_digest_without_exposing_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -94,3 +94,4 @@
 | [0090](0090-explicit-sandbox-security-profiles.md) | 2026-07-19 | landed | Explicit sandbox security profiles | manifest-v2, security, compose, sandbox, runner, tests |
 | [0091](0091-runtime-hardening-audit.md) | 2026-07-19 | landed | Runtime hardening audit and release 0.6.1 | release, manifest-v2, daemon, agent, caddy, security, reliability, performance, tests |
 | [0092](0092-stable-data-network-aliases.md) | 2026-07-20 | landed | Stable data-network aliases, support files, and release 0.6.2 | release, manifest-v2, networking, data, compose, lumen, tests, docs |
+| [0093](0093-edge-cutover-and-nonrelocating-installs.md) | 2026-07-20 | landed | Safe edge cutover and non-relocating installs for release 0.6.3 | release, edge, caddy, daemon, installer, migration, lumen, tests |

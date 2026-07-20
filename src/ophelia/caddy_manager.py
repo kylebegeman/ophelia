@@ -48,7 +48,10 @@ def validate_caddy(
     runtime_root = runtime_root.expanduser()
     ophelia_root = ophelia_root.expanduser()
     ophelia_root = _edge_source_root(runtime_root, ophelia_root)
-    static_root = (static_root or Path(os.environ.get("OPHELIA_STATIC_ROOT", str(runtime_root / "static")))).expanduser()
+    try:
+        static_root = _configured_static_root(runtime_root, static_root)
+    except ValueError as exc:
+        return {"returncode": 1, "stdout": "", "stderr": str(exc), "command": []}
     caddyfile = ophelia_root / "platform" / "shared" / "caddy" / "Caddyfile"
     env_file = runtime_root / "caddy" / "env"
     global_dir = runtime_root / "caddy" / "global.d"
@@ -314,6 +317,40 @@ def _edge_source_root(runtime_root: Path, configured_root: Path) -> Path:
     if runtime_caddyfile.is_file() and not runtime_caddyfile.is_symlink():
         return runtime_root
     return configured_root
+
+
+def _configured_static_root(runtime_root: Path, configured: Optional[Path]) -> Path:
+    candidate = configured
+    if candidate is None:
+        environment_value = os.environ.get("OPHELIA_STATIC_ROOT")
+        if environment_value:
+            candidate = Path(environment_value)
+    if candidate is None:
+        edge_environment = runtime_root / "platform" / "shared" / ".env"
+        if edge_environment.exists() or edge_environment.is_symlink():
+            if (
+                edge_environment.is_symlink()
+                or not edge_environment.is_file()
+            ):
+                raise ValueError("Packaged edge environment must be a real file.")
+            values = []
+            for line in edge_environment.read_text(encoding="utf-8").splitlines():
+                if line.startswith("OPHELIA_STATIC_ROOT="):
+                    values.append(line.split("=", 1)[1])
+            if len(values) > 1:
+                raise ValueError("Packaged edge environment defines static root more than once.")
+            if values:
+                if not values[0]:
+                    raise ValueError("Packaged edge environment defines an empty static root.")
+                candidate = Path(values[0])
+    candidate = (candidate or runtime_root / "static").expanduser()
+    if not candidate.is_absolute() or candidate == Path(candidate.anchor):
+        raise ValueError("Caddy static root must be a non-root absolute path.")
+    if candidate.is_symlink():
+        raise ValueError("Caddy static root must be a real directory path.")
+    if candidate.exists() and not candidate.is_dir():
+        raise ValueError("Caddy static root must be a directory.")
+    return candidate
 
 
 def _process_summary(report: Dict[str, object]) -> Dict[str, object]:

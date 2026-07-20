@@ -34,8 +34,12 @@ def daemon_install_plan(
     source_root = Path(source_root).expanduser().resolve(strict=True)
     if not (source_root / "pyproject.toml").is_file():
         raise DaemonInstallError("Ophelia source root does not contain pyproject.toml.")
-    release_root = Path(install_root) / "releases" / package_version()
     source_digest = _source_digest(source_root)
+    release_root = (
+        Path(install_root)
+        / "releases"
+        / (package_version() + "-" + source_digest[7:19])
+    )
     release_present = release_root.is_dir() and not release_root.is_symlink()
     observations = {
         "source_digest": source_digest,
@@ -193,13 +197,13 @@ def _install_release(
         )
         os.replace(release_root, quarantine)
         _sync_directory(release_root.parent)
-    staging = release_root.parent / (
-        ".install-%s-%s" % (release_root.name, os.urandom(6).hex())
-    )
-    runner.run(["python3", "-m", "venv", str(staging)], timeout_seconds=120)
+    # Python console-script shebangs embed the virtual environment's absolute
+    # creation path. Build directly at the immutable digest-addressed release
+    # path; moving a staged venv would make opheliad non-executable.
+    runner.run(["python3", "-m", "venv", str(release_root)], timeout_seconds=120)
     runner.run(
         [
-            str(staging / "bin" / "python"),
+            str(release_root / "bin" / "python"),
             "-m",
             "pip",
             "install",
@@ -208,7 +212,7 @@ def _install_release(
         timeout_seconds=600,
     )
     _secure_write(
-        staging / "ophelia-install.json",
+        release_root / "ophelia-install.json",
         (
             json.dumps(
                 {
@@ -224,9 +228,8 @@ def _install_release(
         ).encode("utf-8"),
         mode=0o644,
     )
-    if not _release_valid(staging, source_digest=source_digest):
+    if not _release_valid(release_root, source_digest=source_digest):
         raise DaemonInstallError("Installed daemon release failed executable validation.")
-    os.replace(staging, release_root)
     _sync_directory(release_root.parent)
 
 

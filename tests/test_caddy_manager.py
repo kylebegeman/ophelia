@@ -38,6 +38,45 @@ class CaddyManagerTests(unittest.TestCase):
         self.assertNotIn(old_private_mount, command)
         self.assertTrue(static_root_exists)
 
+    def test_validate_caddy_reuses_bootstrapped_static_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            caddy_dir = runtime_root / "platform" / "shared" / "caddy"
+            caddy_dir.mkdir(parents=True)
+            (caddy_dir / "Caddyfile").write_text("{}\n")
+            static_root = root / "legacy-static"
+            static_root.mkdir()
+            (runtime_root / "platform" / "shared" / ".env").write_text(
+                f"OPHELIA_RUNTIME_ROOT={runtime_root}\n"
+                f"OPHELIA_STATIC_ROOT={static_root}\n"
+                "OPHELIA_HTTP_PORT=80\n"
+                "OPHELIA_HTTPS_PORT=443\n"
+            )
+
+            with mock.patch("ophelia.caddy_manager.subprocess.run") as run:
+                run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                report = validate_caddy(runtime_root=runtime_root)
+
+        self.assertEqual(0, report["returncode"])
+        self.assertIn(f"{static_root}:{static_root}:ro", report["command"])
+
+    def test_validate_caddy_rejects_unsafe_persisted_static_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            caddy_dir = runtime_root / "platform" / "shared" / "caddy"
+            caddy_dir.mkdir(parents=True)
+            (caddy_dir / "Caddyfile").write_text("{}\n")
+            (runtime_root / "platform" / "shared" / ".env").write_text(
+                "OPHELIA_STATIC_ROOT=relative-static\n"
+            )
+
+            report = validate_caddy(runtime_root=runtime_root)
+
+        self.assertEqual(1, report["returncode"])
+        self.assertIn("non-root absolute path", report["stderr"])
+
     def test_reload_caddy_discovers_shared_container_and_returns_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

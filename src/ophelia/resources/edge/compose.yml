@@ -22,6 +22,7 @@ services:
       - ${OPHELIA_RUNTIME_ROOT}/caddy/global.d:/etc/caddy/global.d:ro
       - ${OPHELIA_RUNTIME_ROOT}/caddy/sites.d:/etc/caddy/sites.d:ro
       - ${OPHELIA_RUNTIME_ROOT}:${OPHELIA_RUNTIME_ROOT}:ro
+      - ${OPHELIA_STATIC_ROOT}:${OPHELIA_STATIC_ROOT}:ro
       - ophelia-caddy-data:/data
       - ophelia-caddy-config:/config
     networks: [ophelia-edge]

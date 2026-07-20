@@ -27,6 +27,7 @@ def register(subparsers: _SubParsersAction) -> None:
     bootstrap.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     bootstrap.add_argument("--http-port", type=int, default=80)
     bootstrap.add_argument("--https-port", type=int, default=443)
+    bootstrap.add_argument("--static-root", type=Path)
     bootstrap.add_argument("--start", action="store_true")
     bootstrap.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     bootstrap.set_defaults(handler=run_bootstrap)
@@ -48,6 +49,7 @@ def run_bootstrap(args: Namespace) -> int:
             args.runtime_root,
             http_port=args.http_port,
             https_port=args.https_port,
+            static_root=args.static_root,
             start=args.start,
         )
     except (OSError, RuntimeError, ValueError) as exc:

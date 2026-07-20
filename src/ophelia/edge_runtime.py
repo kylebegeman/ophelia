@@ -20,6 +20,7 @@ def bootstrap_edge_runtime(
     *,
     http_port: int = 80,
     https_port: int = 443,
+    static_root: Path | None = None,
     start: bool = False,
     runner: CommandRunner | None = None,
 ) -> Dict[str, Any]:
@@ -30,6 +31,7 @@ def bootstrap_edge_runtime(
     _port(https_port, "https_port")
     if http_port == https_port:
         raise ValueError("HTTP and HTTPS ports must be distinct.")
+    resolved_static_root = _safe_static_root(static_root or root / "static")
 
     shared = root / "platform" / "shared"
     caddy_runtime = root / "caddy"
@@ -47,6 +49,7 @@ def bootstrap_edge_runtime(
     env_text = (
         "# Managed by `ship caddy bootstrap`.\n"
         f"OPHELIA_RUNTIME_ROOT={root}\n"
+        f"OPHELIA_STATIC_ROOT={resolved_static_root}\n"
         f"OPHELIA_HTTP_PORT={http_port}\n"
         f"OPHELIA_HTTPS_PORT={https_port}\n"
     )
@@ -93,7 +96,11 @@ def bootstrap_edge_runtime(
         result = execute(up)
         commands.append(up)
         if result.returncode != 0:
-            raise RuntimeError("Could not start the shared Ophelia Caddy runtime.")
+            detail = _command_failure_detail(result)
+            raise RuntimeError(
+                "Could not start the shared Ophelia Caddy runtime"
+                + (f": {detail}" if detail else ".")
+            )
         started = True
 
     return {
@@ -101,6 +108,7 @@ def bootstrap_edge_runtime(
         "schema_version": 1,
         "kind": "ophelia.edge-bootstrap",
         "runtime_root": str(root),
+        "static_root": str(resolved_static_root),
         "shared_compose": str(shared / "compose.yml"),
         "changed": changed,
         "started": started,
@@ -109,17 +117,41 @@ def bootstrap_edge_runtime(
 
 
 def _safe_runtime_root(value: Path) -> Path:
-    root = Path(value).expanduser().resolve(strict=False)
-    if not root.is_absolute() or root == Path(root.anchor):
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute() or candidate == Path(candidate.anchor):
         raise ValueError("Runtime root must be a non-root absolute path.")
-    if root.exists() and (root.is_symlink() or not root.is_dir()):
+    if candidate.is_symlink():
         raise ValueError("Runtime root must be a real directory.")
-    return root
+    if candidate.exists() and not candidate.is_dir():
+        raise ValueError("Runtime root must be a real directory.")
+    return candidate
 
 
 def _port(value: int, field: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
         raise ValueError(f"{field} must be an integer TCP port.")
+
+
+def _safe_static_root(value: Path) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("Static root must be a non-root absolute path.")
+    if candidate.is_symlink():
+        raise ValueError("Static root must be a real directory.")
+    root = candidate.resolve(strict=False)
+    if root == Path(root.anchor):
+        raise ValueError("Static root must be a non-root absolute path.")
+    if root.exists():
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError("Static root must be a real directory.")
+    else:
+        root.mkdir(mode=0o755, parents=True)
+    return root
+
+
+def _command_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
+    value = (result.stderr or result.stdout or "").strip().replace("\n", " ")
+    return value if len(value) <= 500 else value[:485] + "...<truncated>"
 
 
 def _safe_directory(path: Path) -> None:
