@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 import re
@@ -1064,28 +1066,76 @@ class ComposeRevisionBackend:
         if len(containers) != workload.replicas:
             return False
         for container in containers:
-            inspected = self.runner.run(
-                [
-                    "docker", "inspect", container, "--format",
-                    "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-                ],
-                timeout_seconds=30,
-                check=False,
-            )
-            host = inspected.stdout.strip()
-            if inspected.exit_reason != "success" or not host:
+            addresses = self._container_probe_addresses(container)
+            if not addresses:
                 return False
-            request = urllib.request.Request(
-                "http://%s:%d%s" % (host, probe.http.port, probe.http.path),
-                method=probe.http.method,
-            )
-            try:
-                with urllib.request.urlopen(request, timeout=min(probe.timeout_seconds, 10.0)) as response:
-                    if response.status != probe.http.expect_status:
-                        return False
-            except (OSError, urllib.error.URLError):
+            if not any(self._probe_http_address(address, probe) for address in addresses):
                 return False
         return True
+
+    def _container_probe_addresses(self, container: str) -> Tuple[str, ...]:
+        inspected = self.runner.run(
+            [
+                "docker",
+                "inspect",
+                container,
+                "--format",
+                "{{json .NetworkSettings.Networks}}",
+            ],
+            timeout_seconds=30,
+            check=False,
+        )
+        if inspected.exit_reason != "success":
+            return ()
+        try:
+            networks = json.loads(inspected.stdout)
+        except (json.JSONDecodeError, TypeError):
+            return ()
+        if not isinstance(networks, dict):
+            return ()
+
+        application_network = _docker_name(
+            "ophelia-%s-%s-app" % (self.manifest.app, self.manifest.environment)
+        )
+        names = sorted(
+            networks,
+            key=lambda name: (name != application_network, name),
+        )
+        addresses = []
+        for name in names:
+            network = networks.get(name)
+            if not isinstance(network, dict):
+                continue
+            address = network.get("IPAddress")
+            if not isinstance(address, str):
+                continue
+            try:
+                normalized = str(ipaddress.ip_address(address.strip()))
+            except ValueError:
+                continue
+            if normalized not in addresses:
+                addresses.append(normalized)
+        return tuple(addresses)
+
+    @staticmethod
+    def _probe_http_address(address: str, probe: ProbeV2) -> bool:
+        assert probe.http is not None
+        connection = http.client.HTTPConnection(
+            address,
+            probe.http.port,
+            timeout=min(probe.timeout_seconds, 10.0),
+        )
+        try:
+            connection.request(probe.http.method, probe.http.path)
+            response = connection.getresponse()
+            try:
+                return response.status == probe.http.expect_status
+            finally:
+                response.close()
+        except (OSError, http.client.HTTPException):
+            return False
+        finally:
+            connection.close()
 
     def _service_containers(self, workload_name: str) -> Tuple[str, ...]:
         result = self._compose(

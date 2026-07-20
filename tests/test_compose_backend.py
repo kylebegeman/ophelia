@@ -5,12 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
+from unittest.mock import Mock, patch
 
 from ophelia.domain.receipts import VerificationStatus
 from ophelia.execution.compose_backend import ComposeRevisionBackend
 from ophelia.execution.contracts import ExecutionFence
 from ophelia.execution.subprocesses import ProcessResult
-from ophelia.manifest_v2 import load_manifest_v2
+from ophelia.manifest_v2 import HttpProbeV2, ProbeV2, load_manifest_v2
 from ophelia.manifest_v2_renderer import render_revision_bundle
 
 
@@ -195,6 +196,69 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             self.assertTrue(backend._probe(workload, candidate=False))
 
             self.assertEqual([("/bin/ready",), ("/bin/live",)], observed)
+
+    def test_http_probe_uses_a_parsed_address_from_a_multi_network_container(self) -> None:
+        class MultiNetworkRunner(FakeRunner):
+            def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:
+                command = list(argv)
+                if "ps" in command and "-q" in command:
+                    return ProcessResult(
+                        tuple(command), 0, "success", "container-1\n", "", False, False, 1
+                    )
+                if command[:2] == ["docker", "inspect"]:
+                    networks = {
+                        "ophelia-data": {"IPAddress": "172.18.0.2"},
+                        "ophelia-compose-demo-production-app": {
+                            "IPAddress": "172.19.0.2"
+                        },
+                    }
+                    return ProcessResult(
+                        tuple(command),
+                        0,
+                        "success",
+                        json.dumps(networks) + "\n",
+                        "",
+                        False,
+                        False,
+                        1,
+                    )
+                return super().run(argv, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(staging, runtime_root)
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=MultiNetworkRunner(),
+                require_edge_runtime=False,
+            )
+            probe = ProbeV2(
+                http=HttpProbeV2("/health", 8080, expect_status=503),
+                timeout_seconds=12,
+            )
+            response = Mock(status=503)
+            connection = Mock()
+            connection.getresponse.return_value = response
+
+            with patch(
+                "ophelia.execution.compose_backend.http.client.HTTPConnection",
+                return_value=connection,
+            ) as http_connection:
+                self.assertTrue(backend._probe_http(manifest.workload("web"), probe))
+
+            http_connection.assert_called_once_with("172.19.0.2", 8080, timeout=10.0)
+            connection.request.assert_called_once_with("GET", "/health")
+            response.close.assert_called_once_with()
+            connection.close.assert_called_once_with()
 
     def test_caddy_activation_prunes_unreferenced_managed_route_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
