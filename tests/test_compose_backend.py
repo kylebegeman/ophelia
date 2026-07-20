@@ -186,6 +186,37 @@ class ComposeRevisionBackendTests(unittest.TestCase):
             up = next(command for command in runner.commands if "up" in command)
             self.assertIn("web=2", up)
 
+    def test_recreate_starts_candidate_before_readiness_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            runtime_root = base / "runtime"
+            staging = base / "staging"
+            manifest, revision = _stage_manifest(
+                staging,
+                runtime_root,
+                strategy="recreate",
+            )
+            runner = FakeRunner()
+            backend = ComposeRevisionBackend(
+                manifest=manifest,
+                revision=revision,
+                candidate_root=staging,
+                runtime_root=runtime_root,
+                host_id="host_fixture-1",
+                operation_id="operation_fixture-1",
+                owner_id="worker-1",
+                fencing_token=1,
+                runner=runner,
+                require_edge_runtime=False,
+                external_verifier=lambda _: True,
+            )
+
+            handle = backend.start(revision)
+            observed = backend.inspect(handle)
+
+            self.assertEqual({"jobs", "web"}, runner.running[backend.project])
+            self.assertEqual(VerificationStatus.PASSED, backend.verify(revision, observed).status)
+
     def test_cron_is_registered_but_never_started_as_a_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -240,7 +271,13 @@ update: {{strategy: recreate}}
             self.assertEqual("cleanup", registry["schedules"][0]["name"])
 
 
-def _stage_manifest(staging: Path, runtime_root: Path, *, web_replicas: int = 1):
+def _stage_manifest(
+    staging: Path,
+    runtime_root: Path,
+    *,
+    web_replicas: int = 1,
+    strategy: str = "blue_green",
+):
     staging.mkdir(parents=True)
     source = staging.parent / "app.ophelia.yml"
     source.write_text(
@@ -265,7 +302,7 @@ routes:
   - name: public
     domain: compose-demo.example.com
     target: {{workload: web, port: 8080}}
-update: {{strategy: blue_green}}
+update: {{strategy: {strategy}}}
 """
     )
     manifest = load_manifest_v2(source)

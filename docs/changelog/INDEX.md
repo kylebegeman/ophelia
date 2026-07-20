@@ -89,3 +89,4 @@
 | [0085](0085-release-060.md) | 2026-07-19 | landed | Release 0.6.0 | release, manifest-v2, daemon, agent, recovery, observations, security, docs, tests |
 | [0086](0086-lumen-decision-plan-projection.md) | 2026-07-19 | landed | Lumen Decision plan projection | agent, manifest-v2, decisions, lumen, deploy, contracts, docs, tests |
 | [0087](0087-lumen-v2-runtime-contracts.md) | 2026-07-19 | landed | Lumen-ready manifest v2 runtime contracts | manifest-v2, lumen, secrets, caddy, mtls, daemon, releases, workloads, tests, docs |
+| [0088](0088-recreate-readiness-order.md) | 2026-07-19 | landed | Recreate deployment readiness ordering | manifest-v2, execution, recreate, readiness, rollback, tests |

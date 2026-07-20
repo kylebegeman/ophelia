@@ -217,6 +217,14 @@ class ComposeRevisionBackend:
             self._materialize_secrets()
             self._materialize_route_auth()
             self._run_migrations()
+            if self.manifest.update.strategy == "recreate":
+                previous = self._previous_runtime(self._read_active(required=False))
+                if previous is not None:
+                    self._stop_services(
+                        previous["project"],
+                        previous["root"],
+                        previous["long_running"],
+                    )
             services = self._candidate_start_services()
             if services:
                 self._start_services(self.project, self.revision_root, services)
@@ -757,7 +765,7 @@ class ComposeRevisionBackend:
 
     def _candidate_start_services(self) -> Tuple[str, ...]:
         if self.manifest.update.strategy == "recreate":
-            return ()
+            return self._all_long_running()
         return tuple(
             item.name
             for item in self.manifest.workloads
