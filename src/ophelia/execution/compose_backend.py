@@ -521,7 +521,25 @@ class ComposeRevisionBackend:
                 },
             )
         running = self._running_services(previous_runtime["project"], previous_runtime["root"])
-        if not set(previous_runtime["long_running"]).issubset(running):
+        restored = set(previous_runtime["long_running"]).issubset(running)
+        for workload in previous_runtime["manifest"].workloads:
+            if workload.name not in previous_runtime["long_running"]:
+                continue
+            restored = (
+                restored
+                and self._replicas_ready(
+                    workload,
+                    previous_runtime["project"],
+                    previous_runtime["root"],
+                )
+                and self._probe(
+                    workload,
+                    candidate=False,
+                    project=previous_runtime["project"],
+                    root=previous_runtime["root"],
+                )
+            )
+        if not restored:
             raise ComposeBackendError("Restored predecessor did not return to running state.")
         return self._activation_result(failed_candidate.revision_digest, previous.revision_digest)
 
@@ -1085,7 +1103,14 @@ class ComposeRevisionBackend:
         identity = user.split(":", 1)[0]
         return not identity.isdigit() or int(identity) != 0
 
-    def _probe(self, workload: WorkloadV2, *, candidate: bool) -> bool:
+    def _probe(
+        self,
+        workload: WorkloadV2,
+        *,
+        candidate: bool,
+        project: Optional[str] = None,
+        root: Optional[Path] = None,
+    ) -> bool:
         probe = (
             workload.readiness or workload.startup
             if candidate
@@ -1095,7 +1120,13 @@ class ComposeRevisionBackend:
             return True
         deadline = time.monotonic() + probe.timeout_seconds
         while True:
-            if self._probe_once(workload, probe, deadline=deadline):
+            if self._probe_once(
+                workload,
+                probe,
+                deadline=deadline,
+                project=project,
+                root=root,
+            ):
                 return True
             if time.monotonic() >= deadline:
                 return False
@@ -1107,11 +1138,17 @@ class ComposeRevisionBackend:
         probe: ProbeV2,
         *,
         deadline: Optional[float] = None,
+        project: Optional[str] = None,
+        root: Optional[Path] = None,
     ) -> bool:
         if self.probe_checker is not None:
             return bool(self.probe_checker(workload, probe))
         if probe.command:
-            containers = self._service_containers(workload.name)
+            containers = self._service_containers(
+                workload.name,
+                project=project,
+                root=root,
+            )
             if len(containers) != workload.replicas:
                 return False
             for container in containers:
@@ -1131,7 +1168,13 @@ class ComposeRevisionBackend:
                     return False
             return True
         if probe.http is not None:
-            return self._probe_http(workload, probe, deadline=deadline)
+            return self._probe_http(
+                workload,
+                probe,
+                deadline=deadline,
+                project=project,
+                root=root,
+            )
         return False
 
     def _probe_http(
@@ -1140,9 +1183,15 @@ class ComposeRevisionBackend:
         probe: ProbeV2,
         *,
         deadline: Optional[float] = None,
+        project: Optional[str] = None,
+        root: Optional[Path] = None,
     ) -> bool:
         assert probe.http is not None
-        containers = self._service_containers(workload.name)
+        containers = self._service_containers(
+            workload.name,
+            project=project,
+            root=root,
+        )
         if len(containers) != workload.replicas:
             return False
         for container in containers:
@@ -1204,10 +1253,16 @@ class ComposeRevisionBackend:
             for probe in (workload.startup, workload.readiness, workload.liveness)
         )
 
-    def _service_containers(self, workload_name: str) -> Tuple[str, ...]:
+    def _service_containers(
+        self,
+        workload_name: str,
+        *,
+        project: Optional[str] = None,
+        root: Optional[Path] = None,
+    ) -> Tuple[str, ...]:
         result = self._compose(
-            self.project,
-            self.revision_root,
+            project or self.project,
+            root or self.revision_root,
             "ps", "-q", workload_name,
             check=False,
             timeout_seconds=30,
@@ -1559,6 +1614,7 @@ class ComposeRevisionBackend:
                 return {
                     "root": root,
                     "project": self.project,
+                    "manifest": self.manifest,
                     "long_running": self._all_long_running(),
                     "background": tuple(
                         item.name
@@ -1632,6 +1688,7 @@ class ComposeRevisionBackend:
         return {
             "root": root,
             "project": document["compose_project"],
+            "manifest": previous_manifest,
             "long_running": long_running,
             "background": background,
             "cron": cron,

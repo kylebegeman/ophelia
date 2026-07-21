@@ -632,20 +632,21 @@ class JournaledExecutor:
         compensation: CompensationResult
         try:
             evidence_digests = []
-            if switch_started:
+            if previous is not None and candidate_started:
+                result = backend.restore(
+                    self._previous_handle(backend, previous), candidate
+                )
+                if result.active_revision_digest != previous.revision_digest:
+                    raise BackendContractError(
+                        "Compensation did not restore the exact predecessor."
+                    )
+                evidence_digests.extend(result.evidence_digests)
+            elif switch_started:
                 if previous is None:
                     result = backend.deactivate(candidate)
                     if result.active_revision_digest is not None:
                         raise BackendContractError(
                             "Compensation did not verify an empty active state."
-                        )
-                else:
-                    result = backend.restore(
-                        self._previous_handle(backend, previous), candidate
-                    )
-                    if result.active_revision_digest != previous.revision_digest:
-                        raise BackendContractError(
-                            "Compensation did not restore the exact predecessor."
                         )
                 evidence_digests.extend(result.evidence_digests)
 

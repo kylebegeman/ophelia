@@ -77,6 +77,8 @@ class _RuntimeState:
     remove_count: int = 0
     verification_summary: str | None = None
     fail_start_with_process: bool = False
+    fail_candidate_verification_once: bool = False
+    stop_predecessor_on_start: bool = False
 
 
 class _FakeStaticBackend:
@@ -99,6 +101,11 @@ class _FakeStaticBackend:
         )
 
     def start(self, revision: Revision) -> RuntimeHandle:
+        if self.state.stop_predecessor_on_start:
+            self.state.predecessor_revision_id = self.state.active_revision_id
+            self.state.predecessor_revision_digest = self.state.active_revision_digest
+            self.state.active_revision_id = None
+            self.state.active_revision_digest = None
         if self.state.fail_start_with_process:
             secret = "postgres://operator:super-secret@example.invalid/database"
             raise ProcessFailure(
@@ -154,6 +161,11 @@ class _FakeStaticBackend:
     def verify(
         self, revision: Revision, observed: ObservedRevision
     ) -> VerificationResult:
+        if self.state.fail_candidate_verification_once:
+            self.state.fail_candidate_verification_once = False
+            return _verification(
+                revision, False, "candidate", self.state.verification_summary
+            )
         passed = (
             observed.state is RevisionState.READY
             and observed.revision_digest == revision.content_digest()
@@ -535,6 +547,22 @@ class JournaledExecutorTests(unittest.TestCase):
         )
         self.assertEqual(first_request.revision_id, active.revision_id)
         self.assertEqual(1, self.runtime.restore_count)
+        self.journal.integrity_check()
+
+    def test_failed_recreate_candidate_restores_predecessor_stopped_during_start(self) -> None:
+        first, _, first_request, _, _ = self._submit("recreate-first")
+        self.executor.run(first.operation_id, owner_id="worker-one")
+
+        second, _, _, _, _ = self._submit("recreate-second")
+        self.runtime.stop_predecessor_on_start = True
+        self.runtime.fail_candidate_verification_once = True
+        receipt = self.executor.run(second.operation_id, owner_id="worker-two")
+
+        self.assertEqual(ReceiptOutcome.FAILED_COMPENSATED, receipt.outcome)
+        self.assertEqual(first_request.revision_id, receipt.active_revision_id)
+        self.assertEqual(first_request.revision_id, self.runtime.active_revision_id)
+        self.assertEqual(1, self.runtime.restore_count)
+        self.assertEqual(1, self.runtime.remove_count)
         self.journal.integrity_check()
 
     def test_cancellation_and_expired_deadline_finish_without_live_activation(self) -> None:
