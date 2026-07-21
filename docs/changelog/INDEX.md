@@ -103,3 +103,4 @@
 | [0099](0099-grouped-caddy-site-routes.md) | 2026-07-20 | landed | Grouped same-host Caddy routes for release 0.6.9 | release, manifest-v2, caddy, routing, lumen, tests |
 | [0100](0100-legacy-route-v2-cutover.md) | 2026-07-20 | landed | Compensatable legacy route takeover for release 0.6.10 | release, manifest-v2, caddy, migration, recovery, lumen, tests |
 | [0101](0101-origin-route-verification.md) | 2026-07-20 | landed | Local origin route verification for release 0.6.11 | release, manifest-v2, caddy, verification, cloudflare, lumen, tests |
+| [0102](0102-recreate-candidate-compensation.md) | 2026-07-21 | landed | Recreate candidate compensation for release 0.6.12 | release, manifest-v2, execution, recreate, compensation, health, lumen, tests |
