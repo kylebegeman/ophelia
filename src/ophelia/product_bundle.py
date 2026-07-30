@@ -610,6 +610,14 @@ def _validate_cross_document(bundle, runtime, release, recovery) -> None:
             raise ProductBundleError(
                 "Runtime and recovery dataset bindings differ."
             )
+        if any(
+            item["kind"] != recovery_item["kind"]
+            or item["quiescence"] != recovery_item["quiescence"]
+            for item in runtime_items
+        ):
+            raise ProductBundleError(
+                "Runtime and recovery dataset kinds or quiescence policies differ."
+            )
         if recovery_item["binding"] == "stack-owned" and any(
             item.get("path") != recovery_item.get("path")
             for item in runtime_items
@@ -711,7 +719,11 @@ def _safe_path(value: Any, owner: str) -> None:
     if not isinstance(value, str) or not value or len(value) > 2048 or "\\" in value:
         raise ProductBundleError(f"{owner.capitalize()} is unsafe.")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if (
+        path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
         raise ProductBundleError(f"{owner.capitalize()} is unsafe.")
 
 

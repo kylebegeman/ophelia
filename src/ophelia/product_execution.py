@@ -30,6 +30,7 @@ from .execution import ExecutionInput, JournaledExecutor, RevisionArtifactRef, S
 from .execution.legacy_adapter import local_host_id
 from .execution.process_backend import ProductProcessBackend, load_staged_product_backend
 from .execution.staging import OperationStaging, StagingError
+from .manifest_v2_execution import local_approval_key
 from .product_bundle import (
     ProductBundleError,
     ProductOperationsBundle,
@@ -52,6 +53,8 @@ def product_release_plan(
     operation: str = "deploy.apply",
     precondition_evidence: Optional[Mapping[str, Path]] = None,
 ) -> Dict[str, Any]:
+    if operation not in {"deploy.apply", "rollback.apply"}:
+        raise ProductExecutionError("Product release operation is unsupported.")
     bundle = load_product_operations_bundle(bundle_root)
     artifact_id = str(bundle.runtime["processes"][0]["artifact_id"])
     blockers = []
@@ -150,14 +153,21 @@ def product_release_plan(
                     "precondition": precondition,
                 }
             )
-    rollback_policy = bundle.release["rollout"]["rollback"]
-    if operation == "rollback.apply" and rollback_policy != "artifact-only":
-        blockers.append(
-            {
-                "code": "product_rollback_policy_unsupported",
-                "message": "This rollback requires coordinated data restore or is not supported.",
-            }
-        )
+    if operation == "rollback.apply":
+        if predecessor_bundle is None:
+            blockers.append(
+                {
+                    "code": "product_rollback_without_active_revision",
+                    "message": "A product rollback requires an active revision.",
+                }
+            )
+        elif predecessor_bundle.release["rollout"]["rollback"] != "artifact-only":
+            blockers.append(
+                {
+                    "code": "product_rollback_policy_unsupported",
+                    "message": "The active release requires coordinated data restore or does not support rollback.",
+                }
+            )
     artifact_digest = (
         str(bundle.artifact(artifact_id)["digest"])
         if artifact is None
@@ -175,6 +185,7 @@ def product_release_plan(
         "artifact_digest": artifact_digest,
         "environment": "production",
         "configuration_names": sorted(environment_values),
+        "configuration_digest": _configuration_value_digest(environment_values),
         "precondition_evidence": {
             item["id"]: item["evidence_digest"]
             for item in preconditions
@@ -183,8 +194,17 @@ def product_release_plan(
         "expected_active_revision_digest": (
             None if current is None else current.get("revision_digest")
         ),
+        "expected_active_generation": (
+            None if current is None else current.get("_journal_generation")
+        ),
+        "expected_active_operation_id": (
+            None if current is None else current.get("_journal_operation_id")
+        ),
     }
-    token = _confirmation_token(payload)
+    token = _confirmation_token(
+        local_approval_key(Path(runtime_root), create=True),
+        payload,
+    )
     return {
         "schema_version": 1,
         "kind": "ophelia.plan",
@@ -199,6 +219,9 @@ def product_release_plan(
         "environment": "production",
         "current_revision_id": None if current is None else current.get("revision_id"),
         "current_revision_digest": None if current is None else current.get("revision_digest"),
+        "current_revision_generation": (
+            None if current is None else current.get("_journal_generation")
+        ),
         "required_configuration_names": sorted(required_configuration),
         "provided_configuration_names": sorted(environment_values),
         "migration_count": len(bundle.release.get("migrations", [])),
@@ -276,14 +299,29 @@ def apply_product_release(
         environment=revision.environment,
         revision_id=revision.revision_id,
         revision_digest=revision.content_digest(),
-        idempotency_key=f"product:{operation}:{bundle.bundle_digest}:{artifact.digest}",
+        idempotency_key=(
+            f"product:{operation}:{bundle.bundle_digest}:{artifact.digest}:"
+            f"generation:{plan_report['current_revision_generation'] or 0}"
+        ),
     )
     journal = SQLiteOperationJournal.beneath_runtime_root(runtime_root)
     active = journal.active_revision(effective_host, revision.app, revision.environment)
+    actual_active_digest = None if active is None else active.revision_digest
+    actual_active_generation = None if active is None else active.generation
+    if (
+        actual_active_digest != plan_report["current_revision_digest"]
+        or actual_active_generation != plan_report["current_revision_generation"]
+    ):
+        raise ProductExecutionError(
+            "Active product state changed after release confirmation."
+        )
     observed_digest = canonical_digest(
         {
             "active_revision_id": None if active is None else active.revision_id,
             "active_revision_digest": None if active is None else active.revision_digest,
+            "active_revision_generation": (
+                None if active is None else active.generation
+            ),
         }
     )
     policy_digest = canonical_digest(
@@ -356,7 +394,8 @@ def apply_product_release(
         execution_input=execution_input,
     )
     receipt = executor.run(operation_ref.operation_id, owner_id=owner_id)
-    correlated = _correlated_receipt(bundle, receipt)
+    durable_approval = journal.approved_plan(operation_ref.operation_id)
+    correlated = _correlated_receipt(bundle, receipt, durable_approval)
     _persist_correlated_receipt(runtime_root, correlated)
     return correlated
 
@@ -418,7 +457,10 @@ def _stage_release(
     artifact_path: Path,
     confirmation: str,
 ) -> Tuple[OperationStaging, str]:
-    operation_id = "product-" + confirmation
+    operation_id = (
+        "product-"
+        + hashlib.sha256(confirmation.encode("utf-8")).hexdigest()[:32]
+    )
     try:
         staging = OperationStaging.create(runtime_root, operation_id)
         operations_target = staging.candidate / ".product" / "operations"
@@ -497,8 +539,12 @@ def _stage_release(
         ) from exc
 
 
-def _correlated_receipt(bundle: ProductOperationsBundle, receipt) -> Dict[str, Any]:
-    return {
+def _correlated_receipt(
+    bundle: ProductOperationsBundle,
+    receipt,
+    approval: ApprovedPlanRef,
+) -> Dict[str, Any]:
+    result = {
         "schema_version": 1,
         "kind": "ophelia.product-operation-receipt",
         "status": receipt.outcome.value,
@@ -516,6 +562,34 @@ def _correlated_receipt(bundle: ProductOperationsBundle, receipt) -> Dict[str, A
         "ophelia_receipt_digest": receipt.digest(),
         "ophelia_receipt": receipt.to_dict(),
         "inputs_redacted": True,
+    }
+    result.update(_operation_correlation(receipt, approval))
+    return result
+
+
+def _operation_correlation(receipt, approval: ApprovedPlanRef) -> Dict[str, str]:
+    if (
+        receipt.plan_id != approval.plan_id
+        or receipt.plan_digest != approval.plan_digest
+        or receipt.decision_id != approval.decision_id
+    ):
+        raise ProductExecutionError(
+            "Terminal receipt does not match its durable approval."
+        )
+    return {
+        "ophelia_request_digest": approval.request_digest,
+        "ophelia_plan_digest": approval.plan_digest,
+        "ophelia_approval_digest": approval.approval_digest,
+        "ophelia_operation_digest": canonical_digest(
+            {
+                "operation_id": receipt.operation_id,
+                "operation": receipt.operation,
+                "request_digest": approval.request_digest,
+                "plan_digest": approval.plan_digest,
+                "approval_digest": approval.approval_digest,
+            }
+        ),
+        "ophelia_verification_digest": receipt.verification.digest(),
     }
 
 
@@ -580,15 +654,7 @@ def _precondition_evidence(
             continue
         path = Path(raw_path)
         try:
-            metadata = path.lstat()
-            if (
-                path.is_symlink()
-                or not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_size < 1
-                or metadata.st_size > 4 << 20
-            ):
-                raise ValueError
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = _stable_evidence_digest(path)
         except (OSError, ValueError):
             blockers.append(
                 {
@@ -600,6 +666,43 @@ def _precondition_evidence(
             continue
         evidence[identifier] = "sha256:" + digest
     return evidence, blockers
+
+
+def _stable_evidence_digest(path: Path) -> str:
+    initial = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(initial.st_mode):
+        raise ValueError("Evidence must be a real regular file.")
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or not os.path.samestat(initial, metadata)
+            or metadata.st_size < 1
+            or metadata.st_size > 4 << 20
+        ):
+            raise ValueError("Evidence changed while it was opened.")
+        digest = hashlib.sha256()
+        remaining = (4 << 20) + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            digest.update(chunk)
+            remaining -= len(chunk)
+        final = os.fstat(descriptor)
+        if (
+            final.st_size != metadata.st_size
+            or final.st_mtime_ns != metadata.st_mtime_ns
+            or remaining <= 0
+        ):
+            raise ValueError("Evidence changed while it was read.")
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
 
 
 def _release_precondition(
@@ -634,6 +737,11 @@ def _current_backup_evidence(
     predecessor: ProductOperationsBundle,
     active: Mapping[str, Any],
 ) -> Optional[str]:
+    from .product_recovery import (
+        ProductRecoveryError,
+        _verified_backup_evidence,
+    )
+
     backup_root = (
         Path(runtime_root)
         / "backups"
@@ -642,35 +750,43 @@ def _current_backup_evidence(
     )
     if backup_root.is_symlink() or not backup_root.is_dir():
         return None
+    operation_id = active.get("_journal_operation_id")
+    if not isinstance(operation_id, str):
+        raise ProductExecutionError(
+            "Active product journal operation identity is unavailable."
+        )
+    try:
+        execution_input = SQLiteOperationJournal.beneath_runtime_root(
+            runtime_root
+        ).load_execution_input(operation_id)
+    except KeyError as exc:
+        raise ProductExecutionError(
+            "Active product execution evidence is unavailable."
+        ) from exc
+    revision = execution_input.revision
+    if (
+        revision.revision_id != active.get("revision_id")
+        or revision.content_digest() != active.get("revision_digest")
+        or revision.manifest_digest
+        != predecessor.document_digests["release-manifest"]
+    ):
+        raise ProductExecutionError(
+            "Active product execution evidence differs from its retained bundle."
+        )
     matches = []
-    for manifest_path in backup_root.glob("*/backup-manifest.json"):
+    for candidate in backup_root.iterdir():
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
         try:
-            if manifest_path.is_symlink() or not manifest_path.is_file():
-                continue
-            value = json.loads(
-                manifest_path.read_text(encoding="utf-8"),
-                object_pairs_hook=_strict_json_object,
+            manifest, digest = _verified_backup_evidence(
+                candidate,
+                predecessor,
+                expected_backup_id=candidate.name,
+                expected_revision=revision,
+                runtime_root=runtime_root,
             )
-            if (
-                not isinstance(value, dict)
-                or value.get("schema_version") != 1
-                or value.get("kind") != "ophelia.product-backup"
-                or value.get("product_id") != predecessor.product_id
-                or value.get("bundle_digest") != predecessor.bundle_digest
-                or value.get("recovery_contract_digest")
-                != predecessor.recovery["contract_digest"]
-                or value.get("revision_id") != active.get("revision_id")
-                or value.get("revision_digest") != active.get("revision_digest")
-                or value.get("inputs_redacted") is not True
-            ):
-                continue
-            matches.append(
-                (
-                    str(value.get("created_at", "")),
-                    "sha256:" + hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-                )
-            )
-        except (OSError, ValueError, json.JSONDecodeError, ProductExecutionError):
+            matches.append((str(manifest["created_at"]), digest))
+        except (OSError, ValueError, ProductRecoveryError):
             continue
     return None if not matches else max(matches)[1]
 
@@ -740,7 +856,10 @@ def _active_state(
         raise ProductExecutionError(
             "Runtime traffic evidence differs from the journal active revision."
         )
-    return value
+    result = dict(value)
+    result["_journal_operation_id"] = journal_active.operation_id
+    result["_journal_generation"] = journal_active.generation
+    return result
 
 
 def _retained_bundle(
@@ -809,9 +928,18 @@ def _slug(value: str) -> str:
     return normalized
 
 
-def _confirmation_token(value: Mapping[str, Any]) -> str:
+def _configuration_value_digest(values: Mapping[str, str]) -> str:
+    encoded = json.dumps(
+        {str(name): value for name, value in sorted(values.items())},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _confirmation_token(key: bytes, value: Mapping[str, Any]) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:20]
+    return hmac.new(key, encoded, hashlib.sha256).hexdigest()
 
 
 def _utc_now() -> str:

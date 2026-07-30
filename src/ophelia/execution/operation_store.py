@@ -1155,6 +1155,29 @@ class SQLiteOperationJournal:
             connection.close()
             self._repair_permissions()
 
+    def approved_plan(self, operation_id: str) -> ApprovedPlanRef:
+        """Return the verified approval that authorized an accepted operation."""
+
+        connection = self._connect()
+        try:
+            operation = self._accepted_operation_row(connection, operation_id)
+            if operation is None:
+                raise KeyError(operation_id)
+            try:
+                self._verified_acceptance_claims(operation)
+                return self._approved_plan_from_payload(
+                    json.loads(operation["approval_json"])
+                )
+            except IntegrityError:
+                raise
+            except Exception as exc:
+                raise IntegrityError(
+                    "Operation approval evidence is invalid."
+                ) from exc
+        finally:
+            connection.close()
+            self._repair_permissions()
+
     def get(self, operation_id: str) -> OperationRef:
         connection = self._connect()
         try:
