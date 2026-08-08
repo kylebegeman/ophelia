@@ -1,6 +1,6 @@
 # Ophelia Host Daemon
 
-Status: landed on `next`, released in 0.6.0 and hardened through 0.6.15
+Status: landed on `next`, released in 0.6.0 and hardened through 0.6.16
 
 `opheliad` is Ophelia's durable single-host authority. It owns the operation
 journal, runtime reconciliation, manifest v2 execution, scheduled workloads,
@@ -38,6 +38,11 @@ enables and starts or restarts the service, and requires a successful systemd
 health check against the promoted release. An
 incomplete version directory is quarantined before a replacement is staged and
 atomically published.
+
+Package installation builds from an isolated temporary copy beneath the
+release tree. Build-backend output never mutates the trusted source checkout,
+and generated `build`, cache, and package metadata directories do not affect
+source identity.
 
 The stable launcher treats a systemd-forwarded SIGTERM or SIGINT as an expected
 service stop. It exits cleanly without invoking failed-start rollback, while
