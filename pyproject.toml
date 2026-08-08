@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ophelia"
-version = "0.6.12"
+version = "0.6.13"
 description = "Fixture-first deployment control plane for VPS apps and agent-readable operations"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,8 +32,8 @@ ophelia = "ophelia.main:main"
 opheliad = "ophelia.daemon.main:main"
 
 [project.urls]
-Repository = "https://github.com/mrbagels/ophelia"
-Issues = "https://github.com/mrbagels/ophelia/issues"
+Repository = "https://github.com/kylebegeman/ophelia"
+Issues = "https://github.com/kylebegeman/ophelia/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

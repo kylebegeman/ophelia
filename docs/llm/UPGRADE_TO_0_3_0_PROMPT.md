@@ -7,7 +7,7 @@ already operating an Ophelia checkout.
 You are upgrading an existing Ophelia installation or app repository to Ophelia 0.3.0.
 
 Context:
-- Repository: https://github.com/mrbagels/ophelia
+- Repository: https://github.com/kylebegeman/ophelia
 - Distribution: GitHub only. Do not use PyPI.
 - License: Apache-2.0 with DCO sign-off for contributions.
 - Primary CLI: ship
@@ -44,8 +44,8 @@ PY
 Expected version output:
 ```text
 0.3.0
-Repository, https://github.com/mrbagels/ophelia
-Issues, https://github.com/mrbagels/ophelia/issues
+Repository, https://github.com/kylebegeman/ophelia
+Issues, https://github.com/kylebegeman/ophelia/issues
 ```
 
 Manifest migration notes:

@@ -2,17 +2,17 @@
 
 Status: active public-release gate
 
-Ophelia is being prepared as a public, fixture-first infrastructure project.
-The public repository should describe Ophelia's reusable contract, not one
+Ophelia is a public, fixture-first infrastructure project. The public
+repository describes Ophelia's reusable contract, not one
 operator's private host. Real deployment registries, production env files,
 provider evidence, and product-specific migration notes belong outside the
 public tree until a deliberate adoption or deployment phase starts.
 
 Current publication posture:
 
-- Repository target: `https://github.com/mrbagels/ophelia`
-- Visibility: private until the public release decision is made
-- Distribution: GitHub only for now, no PyPI release path is configured
+- Repository: `https://github.com/kylebegeman/ophelia`
+- Visibility: public
+- Distribution: versioned GitHub Releases, with no PyPI release path configured
 
 ## License And Contribution Model
 
