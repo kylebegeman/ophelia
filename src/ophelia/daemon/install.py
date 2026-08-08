@@ -158,14 +158,7 @@ def apply_daemon_install(
     )
     command.run(["systemctl", "daemon-reload"], timeout_seconds=60)
     if plan["activate"]:
-        command.run(
-            ["systemctl", "enable", "--now", "opheliad.service"],
-            timeout_seconds=120,
-        )
-        command.run(
-            ["systemctl", "is-active", "--quiet", "opheliad.service"],
-            timeout_seconds=60,
-        )
+        _activate_service(command)
     else:
         command.run(["systemctl", "enable", "opheliad.service"], timeout_seconds=60)
     return {
@@ -179,6 +172,17 @@ def apply_daemon_install(
         "config_digest": _file_digest(config_path),
         "service_state": "active" if plan["activate"] else "start_deferred",
     }
+
+
+def _activate_service(runner: SubprocessRunner) -> None:
+    runner.run(["systemctl", "enable", "opheliad.service"], timeout_seconds=60)
+    # `enable --now` leaves an already-active daemon process running from the
+    # previous release. An explicit restart is required after `current` moves.
+    runner.run(["systemctl", "restart", "opheliad.service"], timeout_seconds=120)
+    runner.run(
+        ["systemctl", "is-active", "--quiet", "opheliad.service"],
+        timeout_seconds=60,
+    )
 
 
 def _install_release(
