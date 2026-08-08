@@ -16,6 +16,12 @@ from ..command_catalog import (
     register_cli_descriptor,
 )
 from ..config import DEFAULT_RUNTIME_ROOT
+from ..execution import (
+    JournaledExecutorError,
+    OperationStoreError,
+    RuntimeFenceError,
+)
+from ..execution.process_backend import ProductProcessBackendError
 from ..product_bundle import (
     ProductBundleError,
     bundle_report,
@@ -35,6 +41,19 @@ from ..product_recovery import (
     product_restore_drill_plan,
 )
 from ._output import print_error, print_json
+
+
+_PRODUCT_COMMAND_ERRORS = (
+    ProductBundleError,
+    ProductExecutionError,
+    ProductRecoveryError,
+    JournaledExecutorError,
+    OperationStoreError,
+    RuntimeFenceError,
+    ProductProcessBackendError,
+    OSError,
+    ValueError,
+)
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -155,7 +174,7 @@ def run_release_plan(args: Namespace) -> int:
             operation=args.product_operation,
             precondition_evidence=_bindings(args.evidence, owner="Precondition evidence"),
         )
-    except (ProductBundleError, ProductExecutionError, OSError, ValueError) as exc:
+    except _PRODUCT_COMMAND_ERRORS as exc:
         return _failure(args, exc)
     _emit(report, args.json)
     return 0 if report["can_apply"] else 1
@@ -173,7 +192,7 @@ def run_release_apply(args: Namespace) -> int:
             operation=args.product_operation,
             precondition_evidence=_bindings(args.evidence, owner="Precondition evidence"),
         )
-    except (ProductBundleError, ProductExecutionError, OSError, ValueError) as exc:
+    except _PRODUCT_COMMAND_ERRORS as exc:
         return _failure(args, exc)
     _emit(report, args.json)
     return 0 if report["status"] == "succeeded" else 1
@@ -189,7 +208,7 @@ def run_backup_plan(args: Namespace) -> int:
             environment_values=_environment(args.env_file),
             host_id=args.host_id,
         )
-    except (ProductBundleError, ProductRecoveryError, OSError, ValueError) as exc:
+    except _PRODUCT_COMMAND_ERRORS as exc:
         return _failure(args, exc)
     _emit(report, args.json)
     return 0 if report["can_apply"] else 1
@@ -206,7 +225,7 @@ def run_backup_apply(args: Namespace) -> int:
             confirm=args.confirm,
             host_id=args.host_id,
         )
-    except (ProductBundleError, ProductRecoveryError, OSError, ValueError) as exc:
+    except _PRODUCT_COMMAND_ERRORS as exc:
         return _failure(args, exc)
     _emit(report, args.json)
     return 0 if report["status"] == "succeeded" else 1
@@ -222,7 +241,7 @@ def run_restore_plan(args: Namespace) -> int:
             environment_values=_environment(args.env_file),
             host_id=args.host_id,
         )
-    except (ProductBundleError, ProductRecoveryError, OSError, ValueError) as exc:
+    except _PRODUCT_COMMAND_ERRORS as exc:
         return _failure(args, exc)
     _emit(report, args.json)
     return 0 if report["can_apply"] else 1
@@ -239,7 +258,7 @@ def run_restore_apply(args: Namespace) -> int:
             confirm=args.confirm,
             host_id=args.host_id,
         )
-    except (ProductBundleError, ProductRecoveryError, OSError, ValueError) as exc:
+    except _PRODUCT_COMMAND_ERRORS as exc:
         return _failure(args, exc)
     _emit(report, args.json)
     return 0 if report["status"] == "succeeded" else 1
@@ -248,17 +267,46 @@ def run_restore_apply(args: Namespace) -> int:
 def _environment(path: Path | None) -> Dict[str, str]:
     if path is None:
         return {}
-    metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+    path = Path(path)
+    initial = path.lstat()
+    if not stat.S_ISREG(initial.st_mode) or path.is_symlink():
         raise ValueError("Environment file must be a real regular file.")
-    if stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise ValueError("Environment file must not be accessible by group or other users.")
-    if metadata.st_uid != os.geteuid():
-        raise ValueError("Environment file must be owned by the Ophelia process user.")
-    if metadata.st_size > 1 << 20:
-        raise ValueError("Environment file exceeds the 1 MiB safety limit.")
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or not os.path.samestat(initial, metadata)
+        ):
+            raise ValueError("Environment file changed while it was opened.")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise ValueError(
+                "Environment file must not be accessible by group or other users."
+            )
+        if metadata.st_uid != os.geteuid():
+            raise ValueError(
+                "Environment file must be owned by the Ophelia process user."
+            )
+        if metadata.st_size > 1 << 20:
+            raise ValueError("Environment file exceeds the 1 MiB safety limit.")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw_bytes = handle.read((1 << 20) + 1)
+        final = os.fstat(descriptor)
+        if (
+            final.st_size != metadata.st_size
+            or final.st_mtime_ns != metadata.st_mtime_ns
+        ):
+            raise ValueError("Environment file changed while it was read.")
+        if len(raw_bytes) > 1 << 20:
+            raise ValueError("Environment file exceeds the 1 MiB safety limit.")
+        raw_text = raw_bytes.decode("utf-8")
+    finally:
+        os.close(descriptor)
     values: Dict[str, str] = {}
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, raw in enumerate(raw_text.splitlines(), start=1):
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         line = raw

@@ -22,9 +22,25 @@ The implementation is in:
 
 Real Forge release profiles may declare startup migrations and multiple
 replicas. Initial releases waive backup and expand-contract evidence because no
-prior state exists. Upgrades require a verified backup of the active revision;
-use `--evidence ID=PATH` for expand-contract or custom preconditions. Only the
-evidence digest enters the plan.
+prior state exists. Upgrades require a backup of the exact active revision whose
+manifest, required dataset bytes, successful kernel terminal receipt, and
+correlated product receipt all reconcile. A standalone or copied manifest never
+satisfies `backup-complete`. Use `--evidence ID=PATH` for expand-contract or
+custom preconditions. Only the evidence digest enters the plan.
+
+Release and recovery confirmation tokens are host-keyed HMACs. They bind secret
+configuration values, active revision generation, exact contracts, artifacts,
+evidence, and, for restore drills, the exact backup manifest and dataset
+digests. Plans and receipts expose configuration names only. Product receipts
+publish explicit request, plan, approval, operation, verification, and terminal
+receipt digests so an agent can verify the full decision-to-effect chain without
+access to secret inputs.
+
+For the current local object-storage adapter, every non-excluded object-provider
+dataset must bind the same aggregate snapshot root. Ophelia records each
+contract identity, requires their captured digests to match, and rebinds that
+aggregate root inside the isolated drill. Independent per-dataset provider
+adapters remain a later protocol, not an implicit fallback.
 
 Read [Product Operations Bundle Bridge](../../architecture/product-operations-bridge.md)
 for commands, invariants, receipt correlation, and current v1 boundaries.

@@ -47,8 +47,13 @@ ship product release apply .product/operations \
 ```
 
 The environment file must be a real regular file with mode `0600` or stricter.
-Plans and receipts retain configuration names only. Values remain in process
-memory and are passed directly to the product process.
+It is opened through a no-follow file descriptor and revalidated after its
+bounded read. Plans and receipts retain configuration names only. Values remain
+in process memory and are passed directly to the product process. The
+confirmation token is a host-keyed HMAC over the complete secret-bearing
+configuration digest, active revision generation, artifact, contracts, and
+reviewed evidence. Changing a value after planning invalidates the token without
+placing that value or its raw digest in a plan, receipt, or runtime file.
 
 Roll back by planning the retained target bundle and artifact against the
 currently active revision:
@@ -65,6 +70,12 @@ ship product rollback apply .product/operations \
   --confirm <token> \
   --json
 ```
+
+The active release's rollback policy governs the operation. A target cannot
+weaken a running release that requires coordinated data restoration, and a
+rollback without an active predecessor is blocked. Re-deploying a release after
+it was rolled back receives a new active-generation identity instead of
+colliding with its earlier successful operation.
 
 Create a recovery-contract backup. Each provider-selected dataset must be bound
 to a local snapshot or mounted provider export for this v1 backend:
@@ -115,7 +126,11 @@ The drill restores into separate data and runtime roots, verifies dataset
 digests, runs SQLite integrity checks where declared, boots the exact retained
 artifact, executes the declared health probe, stops the isolated process set,
 and leaves the active runtime untouched. Filesystem and local object-storage
-snapshots are rebound through an isolated local provider. PostgreSQL uses
+snapshots are rebound through an isolated local provider. A restore plan accepts
+only a backup whose exact manifest and dataset bytes reconcile with a successful
+kernel terminal receipt and correlated product receipt. Its confirmation binds
+the exact backup manifest and every dataset digest, so replacing an otherwise
+valid snapshot invalidates the approval. PostgreSQL uses
 `pg_dump`, `pg_restore`, and `psql`; its target database name must end with
 `_ophelia_drill_<drill_id>` so the production database cannot be selected by
 mistake. Applied Goose migration state is verified before the application is
@@ -159,6 +174,10 @@ join, and still requires the release's backup precondition for upgrades.
 Initial releases do not require a backup of nonexistent state. Expand-contract
 compatibility and any custom precondition must be supplied as a bounded regular
 evidence file; its digest, never its contents or path, is bound into the plan.
+An upgrade's `backup-complete` precondition is satisfied only by a backup of the
+exact active revision whose required datasets, bytes, manifest, successful
+terminal receipt, and correlated receipt all reconcile. A manifest alone is
+never sufficient evidence.
 
 Release, rollback, backup, and restore operations all acquire the same durable
 host, app, and environment execution fence. Backup quiescence cannot race a
@@ -177,7 +196,8 @@ Product receipts bind all of the following:
 - runtime, release, and recovery canonical contract digests;
 - exact readable document byte digests;
 - release and artifact identity;
-- Ophelia plan, approval, operation, verification, and terminal receipt digest;
+- explicit Ophelia request, plan, approval, operation, verification, and
+  terminal receipt digests;
 - backup manifest or restore report digest when applicable.
 
 Receipt payloads contain no environment values or application output. Backend
@@ -188,25 +208,31 @@ verification prose is discarded before journal persistence.
 The integration test loads Forge's committed SQLite, PostgreSQL, and React
 Linklet bundles directly from their `.product/operations` directories and
 verifies them against `fixtures/compatibility/forge-products.json`, including
-the reviewed Forge commit, release identities, composition digests, and bundle
-digests. Updating that compatibility lock is an explicit interoperability
-review, not a side effect of running tests. This checks facets, shared-provider
-profiles, multi-replica declarations, and the shared wire contract without
-importing Forge packages. Executable lifecycle coverage uses WAL-mode synthetic
-SQLite artifacts for replica balancing, startup migrations, release evidence,
-local object recovery, PostgreSQL provider commands, upgrade, isolated restore,
-and rollback. A clean-host proof also executes the current Forge Linklet
-artifact through release, quiesced backup, provider capture, and isolated
-restore boot.
+the reviewed Forge history boundary, release identities, composition digests,
+and bundle digests. The shared checkout must descend from the reviewed commit,
+while every operations bundle must still match its exact reviewed content
+identity. This permits documentation-only and unrelated descendant commits
+without weakening the wire-contract proof. Updating that compatibility lock is
+an explicit interoperability review, not a side effect of running tests. This
+checks facets, shared-provider profiles, multi-replica declarations, and the
+shared wire contract without importing Forge packages. Executable lifecycle
+coverage uses WAL-mode synthetic SQLite artifacts for replica balancing,
+startup migrations, release evidence, local object recovery, PostgreSQL
+provider commands, upgrade, isolated restore, and rollback. When a shared Forge
+artifact is present, the compatibility test also verifies its bytes and plans
+any host-compatible profile. Forge's own clean-host lane remains the
+authoritative build-and-execute proof for the produced artifact.
 
 ## Current v1 boundaries
 
 - Multi-process, worker, cron, TCP-only, and HTTPS-terminated runtime shapes
   remain blocked until their backend protocols land.
 - Provider-selected backup inputs outside PostgreSQL must be exposed as local
-  files or directories. Remote object-store snapshot APIs remain provider
-  adapter work; copied snapshots can already be restored through the isolated
-  local object-storage adapter.
+  files or directories. The current local adapter treats all object-provider
+  dataset identities as views of one aggregate provider snapshot, requires
+  every binding and captured digest to identify that same snapshot, and rebinds
+  the aggregate through one isolated local root. Independent per-dataset
+  providers and remote object-store snapshot APIs remain provider-adapter work.
 - Unknown release preconditions require explicit reviewed evidence. Ophelia
   does not infer compatibility from migration names.
 - The TCP switch is host-local. Distributed routing and multi-host placement

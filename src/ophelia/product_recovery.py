@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import threading
 import uuid
@@ -41,6 +42,7 @@ from .domain import (
 from .execution import RuntimeHandle, SQLiteOperationJournal
 from .execution.legacy_adapter import local_host_id
 from .execution.process_backend import ProductProcessBackend
+from .manifest_v2_execution import local_approval_key
 from .product_bundle import ProductOperationsBundle, load_product_operations_bundle
 from .product_execution import _revision, _slug
 
@@ -122,6 +124,9 @@ def product_backup_plan(
         backup_id,
         resolved,
         configuration_names=tuple(sorted(environment_values)),
+        configuration_digest=_configuration_value_digest(environment_values),
+        active_generation=int(material["active_generation"]),
+        active_operation_id=str(material["active_operation_id"]),
     )
     return {
         "schema_version": 1,
@@ -135,6 +140,7 @@ def product_backup_plan(
         "bundle_digest": bundle.bundle_digest,
         "active_revision_id": material["revision"].revision_id,
         "active_revision_digest": material["revision"].content_digest(),
+        "active_revision_generation": material["active_generation"],
         "datasets": [
             {
                 "id": item["id"],
@@ -158,7 +164,14 @@ def product_backup_plan(
         "provided_configuration_names": sorted(environment_values),
         "blockers": blockers,
         "warnings": [],
-        "confirmation_token": None if blockers else _confirmation_token(payload),
+        "confirmation_token": (
+            None
+            if blockers
+            else _confirmation_token(
+                local_approval_key(Path(runtime_root), create=True),
+                payload,
+            )
+        ),
         "summary": (
             f"Product backup {backup_id} is blocked."
             if blockers
@@ -189,6 +202,7 @@ def create_product_backup(
     _require_confirmation(plan_report, confirm)
     bundle = load_product_operations_bundle(bundle_root)
     material = _active_material(runtime_root, bundle, host_id)
+    _require_recovery_material(plan_report, material)
     revision = material["revision"]
     resolved, blockers = _resolve_datasets(
         bundle,
@@ -224,6 +238,7 @@ def create_product_backup(
             backup_id,
             backup_root,
             existing,
+            approval,
         )
     started_at = _utc_now()
     backend = _backend_for_material(
@@ -241,7 +256,12 @@ def create_product_backup(
     heartbeat.start()
     try:
         if backup_root.exists() or backup_root.is_symlink():
-            manifest = _load_backup_manifest(backup_root, bundle)
+            manifest = _load_backup_manifest(
+                backup_root,
+                bundle,
+                expected_backup_id=backup_id,
+                expected_revision=revision,
+            )
             if (
                 manifest["backup_id"] != backup_id
                 or manifest["revision_id"] != revision.revision_id
@@ -333,6 +353,7 @@ def create_product_backup(
         correlated = _recovery_receipt(
             bundle,
             receipt,
+            approval,
             backup_id=backup_id,
             backup_manifest_digest=manifest_digest,
             backup_path=backup_root,
@@ -390,9 +411,16 @@ def product_restore_drill_plan(
     blockers = []
     blockers.extend(_configuration_blockers(bundle, environment_values))
     try:
-        manifest = _load_backup_manifest(backup_root, bundle)
+        manifest, backup_manifest_digest = _verified_backup_evidence(
+            backup_root,
+            bundle,
+            expected_backup_id=backup_id,
+            expected_revision=material["revision"],
+            runtime_root=runtime_root,
+        )
     except ProductRecoveryError as exc:
         manifest = None
+        backup_manifest_digest = None
         blockers.append({"code": "product_backup_invalid", "message": str(exc)})
     if manifest is not None:
         contracts = {item["id"]: item for item in bundle.recovery["datasets"]}
@@ -471,6 +499,14 @@ def product_restore_drill_plan(
         resolved,
         backup_id=backup_id,
         configuration_names=tuple(sorted(environment_values)),
+        configuration_digest=_configuration_value_digest(environment_values),
+        active_generation=int(material["active_generation"]),
+        active_operation_id=str(material["active_operation_id"]),
+        backup_manifest_digest=backup_manifest_digest,
+        backup_dataset_digests={
+            str(item["id"]): str(item["digest"])
+            for item in ([] if manifest is None else manifest["datasets"])
+        },
     )
     return {
         "schema_version": 1,
@@ -483,6 +519,10 @@ def product_restore_drill_plan(
         "backup_id": backup_id,
         "drill_id": drill_id,
         "bundle_digest": bundle.bundle_digest,
+        "backup_manifest_digest": backup_manifest_digest,
+        "active_revision_id": material["revision"].revision_id,
+        "active_revision_digest": material["revision"].content_digest(),
+        "active_revision_generation": material["active_generation"],
         "active_runtime_modified": False,
         "isolated_target": True,
         "required_configuration_names": sorted(
@@ -493,7 +533,14 @@ def product_restore_drill_plan(
         "provided_configuration_names": sorted(environment_values),
         "blockers": blockers,
         "warnings": [],
-        "confirmation_token": None if blockers else _confirmation_token(payload),
+        "confirmation_token": (
+            None
+            if blockers
+            else _confirmation_token(
+                local_approval_key(Path(runtime_root), create=True),
+                payload,
+            )
+        ),
         "summary": (
             f"Restore drill {drill_id} is blocked."
             if blockers
@@ -524,9 +571,25 @@ def apply_product_restore_drill(
     _require_confirmation(plan_report, confirm)
     bundle = load_product_operations_bundle(bundle_root)
     material = _active_material(runtime_root, bundle, host_id)
+    _require_recovery_material(plan_report, material)
     revision = material["revision"]
     backup_root = Path(runtime_root) / "backups" / "product" / _slug(bundle.product_id) / backup_id
-    backup_manifest = _load_backup_manifest(backup_root, bundle)
+    backup_manifest = _load_backup_manifest(
+        backup_root,
+        bundle,
+        expected_backup_id=backup_id,
+        expected_revision=revision,
+    )
+    expected_restore_datasets = {
+        str(item["id"]) for item in backup_manifest["datasets"]
+    }
+    backup_manifest_digest = _digest_file(
+        backup_root / "backup-manifest.json"
+    )
+    if backup_manifest_digest != plan_report["backup_manifest_digest"]:
+        raise ProductRecoveryError(
+            "Product backup changed after restore confirmation."
+        )
     drill_root = (
         Path(runtime_root)
         / "restore-drills"
@@ -534,13 +597,20 @@ def apply_product_restore_drill(
         / _slug(bundle.product_id)
         / drill_id
     )
+    restore_identity = canonical_digest(
+        {
+            "backup_id": backup_id,
+            "backup_manifest_digest": backup_manifest_digest,
+            "drill_id": drill_id,
+        }
+    )
     operation, approval, journal, fence, existing = _begin_recovery_operation(
         "restore-drill.apply",
         bundle,
         revision,
         str(material["host_id"]),
         confirm,
-        drill_id,
+        restore_identity,
         runtime_root,
         owner_id,
     )
@@ -553,11 +623,13 @@ def apply_product_restore_drill(
             drill_id,
             drill_root,
             existing,
+            approval,
         )
     started_at = _utc_now()
     temporary = drill_root.parent / ("." + drill_id + ".tmp")
     drill_backend = None
     drill_handle = None
+    drill_stopped = True
     heartbeat = _RecoveryFenceHeartbeat(journal, fence)
     heartbeat.start()
     try:
@@ -565,7 +637,13 @@ def apply_product_restore_drill(
         if drill_root.exists() or drill_root.is_symlink():
             try:
                 report = _load_restore_report(
-                    drill_root, bundle, revision, backup_id, drill_id
+                    drill_root,
+                    bundle,
+                    revision,
+                    backup_id,
+                    drill_id,
+                    expected_dataset_ids=expected_restore_datasets,
+                    expected_backup_manifest_digest=backup_manifest_digest,
                 )
             except ProductRecoveryError:
                 _remove_owned_tree(drill_root)
@@ -582,11 +660,7 @@ def apply_product_restore_drill(
                 record = records[dataset_id]
                 contract = contracts[dataset_id]
                 source = backup_root / str(record["relative_path"])
-                target = (
-                    temporary / "data" / PurePosixPath(str(contract["path"]))
-                    if contract["binding"] == "stack-owned"
-                    else temporary / "providers" / _slug(dataset_id)
-                )
+                target = _restored_dataset_path(temporary, contract)
                 _copy_verified(source, target)
                 digest = _path_digest(target)
                 if digest != record["digest"]:
@@ -605,7 +679,17 @@ def apply_product_restore_drill(
             os.replace(temporary, drill_root)
             _sync_directory(drill_root.parent)
             drill_environment = dict(environment_values)
-            private_objects = local_provider_roots.get("storage.object.private")
+            object_provider_roots = {
+                identifier: path
+                for identifier, path in local_provider_roots.items()
+                if contracts[identifier]["kind"]
+                in {"object-storage", "filesystem-or-object-store"}
+            }
+            private_objects = object_provider_roots.get("storage.object.private")
+            if private_objects is None and object_provider_roots:
+                private_objects = object_provider_roots[
+                    sorted(object_provider_roots)[0]
+                ]
             if private_objects is not None:
                 drill_environment["OBJECT_STORAGE_PROVIDER"] = "local"
                 drill_environment["OBJECT_STORAGE_LOCAL_ROOT"] = os.fspath(
@@ -626,11 +710,19 @@ def apply_product_restore_drill(
                 data_root=drill_root / "data",
             )
             drill_handle = drill_backend.start(revision)
+            drill_stopped = False
             observed = drill_backend.inspect(drill_handle)
             application = drill_backend.verify(revision, observed)
             if application.status is not VerificationStatus.PASSED:
                 raise ProductRecoveryError("Restored application did not pass its health probe.")
-            drill_backend.stop(drill_handle, drill_backend.shutdown_seconds())
+            stopped = drill_backend.stop(
+                drill_handle, drill_backend.shutdown_seconds()
+            )
+            drill_stopped = stopped.stopped
+            if not drill_stopped:
+                raise ProductRecoveryError(
+                    "Restored application process did not stop after validation."
+                )
             report = {
                 "schema_version": 1,
                 "kind": "ophelia.product-restore-drill",
@@ -638,6 +730,7 @@ def apply_product_restore_drill(
                 "backup_id": backup_id,
                 "product_id": bundle.product_id,
                 "bundle_digest": bundle.bundle_digest,
+                "backup_manifest_digest": backup_manifest_digest,
                 "revision_digest": revision.content_digest(),
                 "datasets": restored,
                 "application_health_digest": application.observed_state_digest,
@@ -680,7 +773,9 @@ def apply_product_restore_drill(
         correlated = _recovery_receipt(
             bundle,
             receipt,
+            approval,
             backup_id=backup_id,
+            backup_manifest_digest=backup_manifest_digest,
             restore_drill_id=drill_id,
             restore_report_digest=report_digest,
             restore_path=drill_root,
@@ -688,11 +783,17 @@ def apply_product_restore_drill(
         _persist_recovery_receipt(runtime_root, correlated)
         return correlated
     except BaseException:
-        if drill_backend is not None and drill_handle is not None:
+        if (
+            not drill_stopped
+            and drill_backend is not None
+            and drill_handle is not None
+        ):
             try:
-                drill_backend.stop(drill_handle, drill_backend.shutdown_seconds())
+                drill_stopped = drill_backend.stop(
+                    drill_handle, drill_backend.shutdown_seconds()
+                ).stopped
             except BaseException:
-                pass
+                drill_stopped = False
         if temporary.exists():
             shutil.rmtree(temporary, ignore_errors=True)
         if journal.receipt(operation.operation_id) is None:
@@ -704,7 +805,7 @@ def apply_product_restore_drill(
                 revision,
                 str(material["host_id"]),
                 started_at,
-                compensated=True,
+                compensated=drill_stopped,
             )
             journal.commit_receipt(
                 failed,
@@ -769,6 +870,8 @@ def _active_material(
         "artifact_path": revision_root / str(artifact["path"]),
         "data_root": scope / "data",
         "host_id": effective_host,
+        "active_generation": journal_active.generation,
+        "active_operation_id": journal_active.operation_id,
     }
 
 
@@ -940,6 +1043,28 @@ def _resolve_datasets(
                 )
                 continue
         resolved[dataset_id] = resolved_path
+    object_provider_ids = {
+        str(item["id"])
+        for item in bundle.recovery["datasets"]
+        if item["binding"] == "provider-selected"
+        and item["backup"] != "excluded"
+        and item["kind"] in {"object-storage", "filesystem-or-object-store"}
+    }
+    object_provider_sources = {
+        os.fspath(resolved[identifier])
+        for identifier in object_provider_ids
+        if identifier in resolved
+    }
+    if len(object_provider_sources) > 1:
+        blockers.append(
+            {
+                "code": "product_object_provider_snapshot_inconsistent",
+                "message": (
+                    "Object-storage recovery datasets must bind the same "
+                    "provider snapshot root."
+                ),
+            }
+        )
     return resolved, blockers
 
 
@@ -1119,26 +1244,238 @@ def _copy_verified(source: Path, target: Path) -> None:
         raise ProductRecoveryError("Recovery dataset source has an unsupported type.")
 
 
-def _load_backup_manifest(root: Path, bundle: ProductOperationsBundle) -> Mapping[str, Any]:
+def _contained_recovery_path(root: Path, relative: str) -> Path:
+    relative_path = PurePosixPath(relative)
+    if (
+        relative_path.is_absolute()
+        or not relative_path.parts
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+    ):
+        raise ProductRecoveryError("Recovery evidence contains an unsafe path.")
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise ProductRecoveryError("Recovery evidence root is unavailable or unsafe.")
+    resolved_root = root.resolve()
+    cursor = root
+    for part in relative_path.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise ProductRecoveryError(
+                "Recovery evidence path contains a symlink."
+            )
+    try:
+        cursor.resolve(strict=True).relative_to(resolved_root)
+    except (OSError, ValueError) as exc:
+        raise ProductRecoveryError(
+            "Recovery evidence path escapes its managed root."
+        ) from exc
+    return cursor
+
+
+def _restored_dataset_path(
+    root: Path, contract: Mapping[str, Any]
+) -> Path:
+    if contract["kind"] == "postgresql":
+        return Path(root) / "providers" / _slug(str(contract["id"]))
+    if contract["binding"] == "stack-owned":
+        relative = contract.get("path")
+        if not isinstance(relative, str):
+            raise ProductRecoveryError(
+                "Stack-owned recovery dataset has no managed path."
+            )
+        return Path(root) / "data" / PurePosixPath(relative)
+    return Path(root) / "providers" / _slug(str(contract["id"]))
+
+
+def _load_backup_manifest(
+    root: Path,
+    bundle: ProductOperationsBundle,
+    *,
+    expected_backup_id: Optional[str] = None,
+    expected_revision: Optional[Revision] = None,
+) -> Mapping[str, Any]:
+    if root.is_symlink() or not root.is_dir():
+        raise ProductRecoveryError("Product backup root is unavailable or unsafe.")
     manifest = _read_json(root / "backup-manifest.json")
     required = {
         "schema_version", "kind", "backup_id", "product_id", "release_id",
         "bundle_digest", "recovery_contract_digest", "recovery_document_digest",
         "revision_id", "revision_digest", "created_at", "datasets", "inputs_redacted",
     }
-    if set(manifest) != required or manifest.get("kind") != "ophelia.product-backup":
+    if (
+        set(manifest) != required
+        or manifest.get("schema_version") != 1
+        or manifest.get("kind") != "ophelia.product-backup"
+        or not isinstance(manifest.get("backup_id"), str)
+        or _RECOVERY_ID.fullmatch(str(manifest.get("backup_id"))) is None
+        or not isinstance(manifest.get("revision_id"), str)
+        or not _is_digest(manifest.get("revision_digest"))
+        or not isinstance(manifest.get("created_at"), str)
+        or not manifest.get("created_at")
+        or manifest.get("inputs_redacted") is not True
+    ):
         raise ProductRecoveryError("Product backup manifest is malformed.")
-    if manifest["product_id"] != bundle.product_id or manifest["bundle_digest"] != bundle.bundle_digest or manifest["recovery_contract_digest"] != bundle.recovery["contract_digest"]:
+    if (
+        manifest["product_id"] != bundle.product_id
+        or manifest["release_id"] != bundle.release_id
+        or manifest["bundle_digest"] != bundle.bundle_digest
+        or manifest["recovery_contract_digest"]
+        != bundle.recovery["contract_digest"]
+        or manifest["recovery_document_digest"]
+        != bundle.document_digests["recovery-contract"]
+    ):
         raise ProductRecoveryError("Product backup does not bind the active recovery contract.")
+    if (
+        expected_backup_id is not None
+        and manifest["backup_id"] != expected_backup_id
+    ):
+        raise ProductRecoveryError("Product backup identity does not match the request.")
+    if expected_revision is not None and (
+        manifest["revision_id"] != expected_revision.revision_id
+        or manifest["revision_digest"] != expected_revision.content_digest()
+    ):
+        raise ProductRecoveryError(
+            "Product backup does not bind the active product revision."
+        )
     if not isinstance(manifest["datasets"], list):
         raise ProductRecoveryError("Product backup datasets are malformed.")
+    contracts = {
+        str(item["id"]): item
+        for item in bundle.recovery["datasets"]
+        if item["backup"] != "excluded"
+    }
+    required_ids = {
+        identifier
+        for identifier, contract in contracts.items()
+        if contract["backup"] == "required"
+    }
+    seen_ids = set()
+    seen_paths = set()
     for item in manifest["datasets"]:
-        if not isinstance(item, dict) or set(item) != {"id", "kind", "relative_path", "digest", "validation_checks"}:
+        if (
+            not isinstance(item, dict)
+            or set(item)
+            != {"id", "kind", "relative_path", "digest", "validation_checks"}
+            or item.get("id") not in contracts
+            or item["id"] in seen_ids
+            or not _is_digest(item.get("digest"))
+        ):
             raise ProductRecoveryError("Product backup dataset evidence is malformed.")
-        path = root / PurePosixPath(str(item["relative_path"]))
+        contract = contracts[str(item["id"])]
+        expected_path = f"datasets/{_slug(str(item['id']))}"
+        if (
+            item.get("kind") != contract["kind"]
+            or item.get("relative_path") != expected_path
+            or item.get("validation_checks") != contract["restore_validations"]
+            or expected_path in seen_paths
+        ):
+            raise ProductRecoveryError(
+                "Product backup dataset evidence differs from the recovery contract."
+            )
+        path = _contained_recovery_path(root, expected_path)
         if _path_digest(path) != item["digest"]:
             raise ProductRecoveryError("Product backup dataset bytes do not match evidence.")
+        seen_ids.add(str(item["id"]))
+        seen_paths.add(expected_path)
+    if not required_ids.issubset(seen_ids):
+        raise ProductRecoveryError(
+            "Product backup is missing a required recovery dataset."
+        )
+    object_provider_ids = {
+        identifier
+        for identifier, contract in contracts.items()
+        if contract["binding"] == "provider-selected"
+        and contract["kind"] in {"object-storage", "filesystem-or-object-store"}
+    }
+    object_provider_digests = {
+        str(item["digest"])
+        for item in manifest["datasets"]
+        if item["id"] in object_provider_ids
+    }
+    if len(object_provider_digests) > 1:
+        raise ProductRecoveryError(
+            "Product backup object-provider snapshots do not share one identity."
+        )
     return manifest
+
+
+def _verified_backup_evidence(
+    root: Path,
+    bundle: ProductOperationsBundle,
+    *,
+    expected_backup_id: str,
+    expected_revision: Revision,
+    runtime_root: Path,
+) -> Tuple[Mapping[str, Any], str]:
+    """Validate backup bytes and their successful journal-correlated receipt."""
+
+    manifest = _load_backup_manifest(
+        root,
+        bundle,
+        expected_backup_id=expected_backup_id,
+        expected_revision=expected_revision,
+    )
+    manifest_digest = _digest_file(Path(root) / "backup-manifest.json")
+    expected_state_digest = canonical_digest(
+        {
+            "manifest_digest": manifest_digest,
+            "dataset_digests": sorted(
+                str(item["digest"]) for item in manifest["datasets"]
+            ),
+            "application_resumed": True,
+        }
+    )
+    receipts_root = Path(runtime_root) / "receipts" / "product"
+    if receipts_root.is_symlink() or not receipts_root.is_dir():
+        raise ProductRecoveryError(
+            "Product backup has no safe correlated receipt root."
+        )
+    journal = SQLiteOperationJournal.beneath_runtime_root(runtime_root)
+    for receipt_path in receipts_root.glob("*.json"):
+        try:
+            value = _read_json(receipt_path)
+            terminal_value = value.get("ophelia_receipt")
+            if not isinstance(terminal_value, dict):
+                continue
+            operation_id = terminal_value.get("operation_id")
+            receipt_id = terminal_value.get("receipt_id")
+            if (
+                not isinstance(operation_id, str)
+                or not isinstance(receipt_id, str)
+                or receipt_path.name != f"{receipt_id}.json"
+            ):
+                continue
+            terminal = journal.receipt(operation_id)
+            if terminal is None:
+                continue
+            approval = journal.approved_plan(operation_id)
+            if (
+                terminal.outcome is not ReceiptOutcome.SUCCEEDED
+                or terminal.operation != "backup.apply"
+                or terminal.effect is not ReceiptEffect.BACKUP_CREATED
+                or terminal.desired_revision_id
+                != expected_revision.revision_id
+                or terminal.desired_revision_digest
+                != expected_revision.content_digest()
+                or terminal.verification.observed_state_digest
+                != expected_state_digest
+            ):
+                continue
+            expected = _recovery_receipt(
+                bundle,
+                terminal,
+                approval,
+                backup_id=expected_backup_id,
+                backup_manifest_digest=manifest_digest,
+                backup_path=root,
+            )
+            if value == expected:
+                return manifest, manifest_digest
+        except (OSError, ValueError, ProductRecoveryError):
+            continue
+    raise ProductRecoveryError(
+        "Product backup has no successful journal-correlated receipt."
+    )
 
 
 def _load_restore_report(
@@ -1147,7 +1484,12 @@ def _load_restore_report(
     revision: Revision,
     backup_id: str,
     drill_id: str,
+    *,
+    expected_dataset_ids: set[str],
+    expected_backup_manifest_digest: str,
 ) -> Mapping[str, Any]:
+    if root.is_symlink() or not root.is_dir():
+        raise ProductRecoveryError("Restore drill root is unavailable or unsafe.")
     report = _read_json(root / "restore-report.json")
     required = {
         "schema_version",
@@ -1156,6 +1498,7 @@ def _load_restore_report(
         "backup_id",
         "product_id",
         "bundle_digest",
+        "backup_manifest_digest",
         "revision_digest",
         "datasets",
         "application_health_digest",
@@ -1172,6 +1515,8 @@ def _load_restore_report(
         or report.get("backup_id") != backup_id
         or report.get("product_id") != bundle.product_id
         or report.get("bundle_digest") != bundle.bundle_digest
+        or report.get("backup_manifest_digest")
+        != expected_backup_manifest_digest
         or report.get("revision_digest") != revision.content_digest()
         or report.get("status") != "succeeded"
         or report.get("active_runtime_modified") is not False
@@ -1193,13 +1538,13 @@ def _load_restore_report(
             raise ProductRecoveryError("Restore drill dataset evidence is malformed.")
         seen.add(item["id"])
         contract = contracts[item["id"]]
-        target = (
-            root / "data" / PurePosixPath(str(contract["path"]))
-            if contract["binding"] == "stack-owned"
-            else root / "providers" / _slug(str(item["id"]))
-        )
+        target = _restored_dataset_path(root, contract)
         if _path_digest(target) != item["digest"]:
             raise ProductRecoveryError("Restore drill dataset bytes differ from its report.")
+    if seen != expected_dataset_ids:
+        raise ProductRecoveryError(
+            "Restore drill report does not cover the exact backup dataset set."
+        )
     return report
 
 
@@ -1314,6 +1659,7 @@ def _begin_recovery_operation(
     )
     journal = SQLiteOperationJournal.beneath_runtime_root(runtime_root)
     operation = journal.accept(actor, request, approval)
+    approval = journal.approved_plan(operation.operation_id)
     existing = journal.receipt(operation.operation_id)
     if existing is not None:
         return operation, approval, journal, None, existing
@@ -1437,7 +1783,12 @@ def _passed_verification(revision: Revision, name: str, state_digest: str) -> Ve
     )
 
 
-def _recovery_receipt(bundle, receipt, **values) -> Dict[str, Any]:
+def _recovery_receipt(
+    bundle,
+    receipt,
+    approval: ApprovedPlanRef,
+    **values,
+) -> Dict[str, Any]:
     result = {
         "schema_version": 1,
         "kind": "ophelia.product-recovery-receipt",
@@ -1447,6 +1798,9 @@ def _recovery_receipt(bundle, receipt, **values) -> Dict[str, Any]:
         "release_id": bundle.release_id,
         "bundle_digest": bundle.bundle_digest,
         "composition_digest": bundle.composition_digest,
+        "runtime_contract_digest": bundle.runtime["contract_digest"],
+        "runtime_document_digest": bundle.document_digests["runtime-requirements"],
+        "release_manifest_digest": bundle.release["manifest_digest"],
         "release_document_digest": bundle.document_digests["release-manifest"],
         "recovery_contract_digest": bundle.recovery["contract_digest"],
         "recovery_document_digest": bundle.document_digests["recovery-contract"],
@@ -1454,8 +1808,38 @@ def _recovery_receipt(bundle, receipt, **values) -> Dict[str, Any]:
         "ophelia_receipt": receipt.to_dict(),
         "inputs_redacted": True,
     }
+    result.update(_recovery_operation_correlation(receipt, approval))
     result.update({key: os.fspath(value) if isinstance(value, Path) else value for key, value in values.items()})
     return result
+
+
+def _recovery_operation_correlation(
+    receipt: TerminalReceipt,
+    approval: ApprovedPlanRef,
+) -> Dict[str, str]:
+    if (
+        receipt.plan_id != approval.plan_id
+        or receipt.plan_digest != approval.plan_digest
+        or receipt.decision_id != approval.decision_id
+    ):
+        raise ProductRecoveryError(
+            "Terminal recovery receipt does not match its durable approval."
+        )
+    return {
+        "ophelia_request_digest": approval.request_digest,
+        "ophelia_plan_digest": approval.plan_digest,
+        "ophelia_approval_digest": approval.approval_digest,
+        "ophelia_operation_digest": canonical_digest(
+            {
+                "operation_id": receipt.operation_id,
+                "operation": receipt.operation,
+                "request_digest": approval.request_digest,
+                "plan_digest": approval.plan_digest,
+                "approval_digest": approval.approval_digest,
+            }
+        ),
+        "ophelia_verification_digest": receipt.verification.digest(),
+    }
 
 
 def _persist_recovery_receipt(runtime_root: Path, value: Mapping[str, Any]) -> Path:
@@ -1479,31 +1863,26 @@ def _existing_backup_receipt(
     backup_id: str,
     backup_root: Path,
     receipt: TerminalReceipt,
+    approval: ApprovedPlanRef,
 ) -> Dict[str, Any]:
-    try:
-        return _load_recovery_receipt(runtime_root, receipt.receipt_id)
-    except ProductRecoveryError:
-        values: Dict[str, Any] = {"backup_id": backup_id}
-        if receipt.outcome is ReceiptOutcome.SUCCEEDED:
-            manifest = _load_backup_manifest(backup_root, bundle)
-            if (
-                manifest["backup_id"] != backup_id
-                or manifest["revision_digest"] != revision.content_digest()
-            ):
-                raise ProductRecoveryError(
-                    "Terminal backup receipt does not match published evidence."
-                )
-            values.update(
-                {
-                    "backup_manifest_digest": _digest_file(
-                        backup_root / "backup-manifest.json"
-                    ),
-                    "backup_path": backup_root,
-                }
-            )
-        correlated = _recovery_receipt(bundle, receipt, **values)
-        _persist_recovery_receipt(runtime_root, correlated)
-        return correlated
+    values: Dict[str, Any] = {"backup_id": backup_id}
+    if receipt.outcome is ReceiptOutcome.SUCCEEDED:
+        _load_backup_manifest(
+            backup_root,
+            bundle,
+            expected_backup_id=backup_id,
+            expected_revision=revision,
+        )
+        values.update(
+            {
+                "backup_manifest_digest": _digest_file(
+                    backup_root / "backup-manifest.json"
+                ),
+                "backup_path": backup_root,
+            }
+        )
+    correlated = _recovery_receipt(bundle, receipt, approval, **values)
+    return _reconcile_recovery_receipt(runtime_root, correlated)
 
 
 def _existing_restore_receipt(
@@ -1514,29 +1893,73 @@ def _existing_restore_receipt(
     drill_id: str,
     drill_root: Path,
     receipt: TerminalReceipt,
+    approval: ApprovedPlanRef,
 ) -> Dict[str, Any]:
-    try:
-        return _load_recovery_receipt(runtime_root, receipt.receipt_id)
-    except ProductRecoveryError:
-        values: Dict[str, Any] = {
-            "backup_id": backup_id,
-            "restore_drill_id": drill_id,
-        }
-        if receipt.outcome is ReceiptOutcome.SUCCEEDED:
-            _load_restore_report(
-                drill_root, bundle, revision, backup_id, drill_id
+    values: Dict[str, Any] = {
+        "backup_id": backup_id,
+        "restore_drill_id": drill_id,
+    }
+    if receipt.outcome is ReceiptOutcome.SUCCEEDED:
+        backup_root = (
+            Path(runtime_root)
+            / "backups"
+            / "product"
+            / _slug(bundle.product_id)
+            / backup_id
+        )
+        backup_manifest = _load_backup_manifest(
+            backup_root,
+            bundle,
+            expected_backup_id=backup_id,
+            expected_revision=revision,
+        )
+        _load_restore_report(
+            drill_root,
+            bundle,
+            revision,
+            backup_id,
+            drill_id,
+            expected_dataset_ids={
+                str(item["id"]) for item in backup_manifest["datasets"]
+            },
+            expected_backup_manifest_digest=_digest_file(
+                backup_root / "backup-manifest.json"
+            ),
+        )
+        values.update(
+            {
+                "backup_manifest_digest": _digest_file(
+                    backup_root / "backup-manifest.json"
+                ),
+                "restore_report_digest": _digest_file(
+                    drill_root / "restore-report.json"
+                ),
+                "restore_path": drill_root,
+            }
+        )
+    correlated = _recovery_receipt(bundle, receipt, approval, **values)
+    return _reconcile_recovery_receipt(runtime_root, correlated)
+
+
+def _reconcile_recovery_receipt(
+    runtime_root: Path, expected: Mapping[str, Any]
+) -> Dict[str, Any]:
+    receipt_id = str(expected["ophelia_receipt"]["receipt_id"])
+    target = (
+        Path(runtime_root)
+        / "receipts"
+        / "product"
+        / f"{receipt_id}.json"
+    )
+    if target.exists() or target.is_symlink():
+        actual = _load_recovery_receipt(runtime_root, receipt_id)
+        if actual != expected:
+            raise ProductRecoveryError(
+                "Correlated recovery receipt differs from terminal evidence."
             )
-            values.update(
-                {
-                    "restore_report_digest": _digest_file(
-                        drill_root / "restore-report.json"
-                    ),
-                    "restore_path": drill_root,
-                }
-            )
-        correlated = _recovery_receipt(bundle, receipt, **values)
-        _persist_recovery_receipt(runtime_root, correlated)
-        return correlated
+        return actual
+    _persist_recovery_receipt(runtime_root, expected)
+    return dict(expected)
 
 
 def _recovery_confirmation_payload(
@@ -1550,6 +1973,11 @@ def _recovery_confirmation_payload(
     *,
     backup_id=None,
     configuration_names=(),
+    configuration_digest=None,
+    active_generation=None,
+    active_operation_id=None,
+    backup_manifest_digest=None,
+    backup_dataset_digests=None,
 ) -> Dict[str, Any]:
     return {
         "schema_version": 1,
@@ -1564,10 +1992,32 @@ def _recovery_confirmation_payload(
         "identity": identity,
         "backup_id": backup_id,
         "configuration_names": list(configuration_names),
+        "configuration_digest": configuration_digest,
+        "active_generation": active_generation,
+        "active_operation_id": active_operation_id,
+        "backup_manifest_digest": backup_manifest_digest,
+        "backup_dataset_digests": dict(
+            sorted((backup_dataset_digests or {}).items())
+        ),
         "dataset_bindings_digest": canonical_digest(
             {key: os.fspath(value) for key, value in sorted(datasets.items())}
         ),
     }
+
+
+def _require_recovery_material(
+    plan: Mapping[str, Any], material: Mapping[str, Any]
+) -> None:
+    if (
+        plan.get("active_revision_id") != material["revision"].revision_id
+        or plan.get("active_revision_digest")
+        != material["revision"].content_digest()
+        or plan.get("active_revision_generation")
+        != material["active_generation"]
+    ):
+        raise ProductRecoveryError(
+            "Active product state changed after recovery confirmation."
+        )
 
 
 def _require_confirmation(plan: Mapping[str, Any], supplied: str) -> None:
@@ -1576,9 +2026,18 @@ def _require_confirmation(plan: Mapping[str, Any], supplied: str) -> None:
         raise ProductRecoveryError("Confirmation token does not match the current recovery plan.")
 
 
-def _confirmation_token(value: Mapping[str, Any]) -> str:
+def _configuration_value_digest(values: Mapping[str, str]) -> str:
+    encoded = json.dumps(
+        {str(name): value for name, value in sorted(values.items())},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _confirmation_token(key: bytes, value: Mapping[str, Any]) -> str:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()[:20]
+    return hmac.new(key, raw, hashlib.sha256).hexdigest()
 
 
 def _recovery_id(value: str, owner: str) -> None:
@@ -1631,15 +2090,31 @@ def _path_digest(path: Path) -> str:
 
 
 def _read_json(path: Path) -> Mapping[str, Any]:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 << 20:
-        raise ProductRecoveryError("Recovery evidence is unavailable or unsafe.")
+    descriptor = _open_stable_file(path, max_size=4 << 20)
     try:
+        metadata = os.fstat(descriptor)
+        raw = bytearray()
+        while len(raw) <= 4 << 20:
+            chunk = os.read(
+                descriptor,
+                min(1024 * 1024, (4 << 20) + 1 - len(raw)),
+            )
+            if not chunk:
+                break
+            raw.extend(chunk)
+        _require_stable_file(descriptor, metadata)
+        if len(raw) > 4 << 20:
+            raise ProductRecoveryError(
+                "Recovery evidence is unavailable or unsafe."
+            )
         value = json.loads(
-            path.read_text(encoding="utf-8"),
+            bytes(raw).decode("utf-8"),
             object_pairs_hook=_strict_json_object,
         )
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProductRecoveryError("Recovery evidence is malformed.") from exc
+    finally:
+        os.close(descriptor)
     if not isinstance(value, dict):
         raise ProductRecoveryError("Recovery evidence must be an object.")
     return value
@@ -1707,14 +2182,66 @@ def _digest_file(path: Path) -> str:
 
 
 def _update_file_digest(digest, path: Path) -> None:
-    if path.is_symlink() or not path.is_file():
-        raise ProductRecoveryError("Recovery digest input must be a regular file.")
-    with path.open("rb") as handle:
+    descriptor = _open_stable_file(path)
+    try:
+        metadata = os.fstat(descriptor)
         while True:
-            chunk = handle.read(1024 * 1024)
+            chunk = os.read(descriptor, 1024 * 1024)
             if not chunk:
-                return
+                break
             digest.update(chunk)
+        _require_stable_file(descriptor, metadata)
+    finally:
+        os.close(descriptor)
+
+
+def _open_stable_file(
+    path: Path,
+    *,
+    max_size: Optional[int] = None,
+) -> int:
+    path = Path(path)
+    try:
+        initial = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(initial.st_mode):
+            raise ProductRecoveryError(
+                "Recovery digest input must be a regular file."
+            )
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise ProductRecoveryError(
+            "Recovery evidence is unavailable or unsafe."
+        ) from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or not os.path.samestat(initial, metadata)
+            or (max_size is not None and metadata.st_size > max_size)
+        ):
+            raise ProductRecoveryError(
+                "Recovery evidence changed while it was opened."
+            )
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _require_stable_file(descriptor: int, initial: os.stat_result) -> None:
+    final = os.fstat(descriptor)
+    if (
+        not os.path.samestat(initial, final)
+        or final.st_size != initial.st_size
+        or final.st_mtime_ns != initial.st_mtime_ns
+        or final.st_ctime_ns != initial.st_ctime_ns
+    ):
+        raise ProductRecoveryError(
+            "Recovery evidence changed while it was read."
+        )
 
 
 def _sqlite_existing_rw_uri(path: Path) -> str:

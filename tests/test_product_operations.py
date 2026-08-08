@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import contextlib
+import io
 import json
 import os
 import platform
@@ -14,6 +16,7 @@ import time
 import unittest
 import urllib.request
 from copy import deepcopy
+from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -26,7 +29,8 @@ from ophelia.product_bundle import (
     load_product_operations_bundle,
     verify_product_artifact,
 )
-from ophelia.execution import SQLiteOperationJournal
+from ophelia.execution import OperationStoreError, SQLiteOperationJournal
+from ophelia.commands import product as product_commands
 from ophelia.product_execution import (
     ProductExecutionError,
     apply_product_release,
@@ -34,8 +38,10 @@ from ophelia.product_execution import (
 )
 from ophelia.execution.process_backend import reap_product_children
 from ophelia.product_recovery import (
+    ProductRecoveryError,
     _backup_postgresql,
     _isolated_postgres_target,
+    _path_digest,
     _restore_postgresql,
     apply_product_restore_drill,
     create_product_backup,
@@ -90,6 +96,7 @@ def _fixture(
     release_preconditions: tuple[str, ...] = ("health-probe",),
     with_migration: bool = False,
     provider_dataset: bool = False,
+    rollback_policy: str = "artifact-only",
 ) -> tuple[Path, Path]:
     bundle_root = root / release / "operations"
     bundle_root.mkdir(parents=True)
@@ -229,7 +236,7 @@ ThreadingHTTPServer((host, int(port)), H).serve_forever()
         },
         "rollout": {
             "strategy": "replace", "migration_behavior": "forward-only-at-startup",
-            "rollback": "artifact-only", "preconditions": list(release_preconditions),
+            "rollback": rollback_policy, "preconditions": list(release_preconditions),
         },
     }
     if with_migration:
@@ -319,15 +326,44 @@ class ProductOperationsTests(unittest.TestCase):
         "optional sibling Forge checkout is unavailable",
     )
     def test_shared_forge_profiles_validate_without_forge_import(self) -> None:
+        self.assertEqual(
+            {
+                "product.runtime-requirements/v1",
+                "product.release-manifest/v1",
+                "product.recovery-contract/v1",
+                "product.operations-bundle/v1",
+            },
+            set(FORGE_COMPATIBILITY_LOCK["contracts"]),
+        )
+        self.assertEqual(
+            {"linklet", "linklet-postgres", "linklet-react"},
+            set(SHARED_FORGE_PROFILES),
+        )
         forge_root = SHARED_FORGE_ROOT.parent
         actual_commit = subprocess.check_output(
             ["git", "-C", str(forge_root), "rev-parse", "HEAD"],
             text=True,
         ).strip()
+        reviewed_commit = FORGE_COMPATIBILITY_LOCK["producer"]["reviewed_commit"]
+        ancestry = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(forge_root),
+                "merge-base",
+                "--is-ancestor",
+                reviewed_commit,
+                actual_commit,
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         self.assertEqual(
-            FORGE_COMPATIBILITY_LOCK["producer"]["commit"],
-            actual_commit,
-            "Forge checkout must match the explicitly reviewed compatibility commit",
+            0,
+            ancestry.returncode,
+            "Forge checkout must descend from the explicitly reviewed compatibility commit",
         )
         for profile, expected in SHARED_FORGE_PROFILES.items():
             with self.subTest(profile=profile):
@@ -342,9 +378,81 @@ class ProductOperationsTests(unittest.TestCase):
                     {item["id"] for item in bundle.runtime["stack"]["facets"]},
                 )
                 self.assertEqual(
+                    expected["replicas"],
+                    bundle.runtime["processes"][0]["replicas"],
+                )
+                self.assertEqual(
+                    set(expected["recoverable_provider_datasets"]),
+                    {
+                        item["id"]
+                        for item in bundle.recovery["datasets"]
+                        if item["binding"] == "provider-selected"
+                        and item["backup"] != "excluded"
+                    },
+                )
+                self.assertEqual(
                     expected["composition_digest"], bundle.composition_digest
                 )
                 self.assertEqual(expected["bundle_digest"], bundle.bundle_digest)
+                artifact_declaration = bundle.artifact(
+                    str(bundle.runtime["processes"][0]["artifact_id"])
+                )
+                artifact_path = (
+                    SHARED_FORGE_ROOT
+                    / profile
+                    / str(artifact_declaration["path"])
+                )
+                if not artifact_path.is_file():
+                    continue
+                verified = verify_product_artifact(
+                    bundle,
+                    str(artifact_declaration["id"]),
+                    artifact_path,
+                    require_compatible=False,
+                )
+                self.assertEqual(artifact_declaration["digest"], verified.digest)
+                if verified.compatible:
+                    environment_values = {
+                        str(item["name"]): "reviewed-fixture-value"
+                        for item in bundle.release.get("configuration", [])
+                        if item["required"]
+                    }
+                    plan = product_release_plan(
+                        SHARED_FORGE_ROOT
+                        / profile
+                        / ".product"
+                        / "operations",
+                        artifact_path,
+                        runtime_root=self.runtime / profile,
+                        environment_values=environment_values,
+                    )
+                    self.assertTrue(plan["can_apply"], plan["blockers"])
+
+    def test_product_cli_wraps_kernel_failures_in_json(self) -> None:
+        args = Namespace(
+            bundle=self.root / "operations",
+            artifact=self.root / "server",
+            runtime_root=self.runtime,
+            env_file=None,
+            host_id=None,
+            product_operation="deploy.apply",
+            evidence=[],
+            json=True,
+        )
+        output = io.StringIO()
+        with mock.patch.object(
+            product_commands,
+            "product_release_plan",
+            side_effect=OperationStoreError("operation journal is unavailable"),
+        ), contextlib.redirect_stdout(output):
+            result = product_commands.run_release_plan(args)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(1, result)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            "product_operation_failed", payload["blockers"][0]["code"]
+        )
+        self.assertNotIn("Traceback", output.getvalue())
 
     def test_multi_facet_process_must_bind_a_known_facet(self) -> None:
         bundle_root, _ = _fixture(self.root, "fixture-facets", self.port)
@@ -384,6 +492,39 @@ class ProductOperationsTests(unittest.TestCase):
         bundle["bundle_digest"] = _forge_digest(bundle, "bundle_digest")
         _write(bundle_path, bundle)
         load_product_operations_bundle(bundle_root)
+
+    def test_bundle_paths_and_recovery_semantics_match_forge_canonical_rules(self) -> None:
+        unsafe_root, _ = _fixture(
+            self.root, "fixture-unsafe-contract-path", self.port
+        )
+        bundle_path = unsafe_root / "bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        bundle["documents"][0]["path"] = "nested//recovery-contract.json"
+        _write(bundle_path, bundle)
+        with self.assertRaisesRegex(ProductBundleError, "unsafe"):
+            load_product_operations_bundle(unsafe_root)
+
+        mismatch_root, _ = _fixture(
+            self.root, "fixture-recovery-mismatch", self.port
+        )
+        runtime_path = mismatch_root / "runtime-requirements.json"
+        runtime = json.loads(runtime_path.read_text())
+        runtime["data"][0]["quiescence"] = "none"
+        runtime["contract_digest"] = _forge_digest(runtime, "contract_digest")
+        runtime_digest = _write(runtime_path, runtime)
+        bundle_path = mismatch_root / "bundle.json"
+        bundle = json.loads(bundle_path.read_text())
+        next(
+            item
+            for item in bundle["documents"]
+            if item["kind"] == "runtime-requirements"
+        )["digest"] = runtime_digest
+        bundle["bundle_digest"] = _forge_digest(bundle, "bundle_digest")
+        _write(bundle_path, bundle)
+        with self.assertRaisesRegex(
+            ProductBundleError, "kinds or quiescence policies differ"
+        ):
+            load_product_operations_bundle(mismatch_root)
 
     def test_artifact_bytes_and_platform_fail_closed(self) -> None:
         bundle_root, artifact = _fixture(self.root, "fixture-v1", self.port)
@@ -499,6 +640,35 @@ class ProductOperationsTests(unittest.TestCase):
             {item["code"] for item in blocked["blockers"]},
         )
 
+        first_secret = "first-secret-that-must-not-be-persisted"
+        second_secret = "second-secret-that-must-not-be-persisted"
+        first_secret_plan = product_release_plan(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={"APP_SECRET": first_secret},
+        )
+        second_secret_plan = product_release_plan(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={"APP_SECRET": second_secret},
+        )
+        self.assertNotEqual(
+            first_secret_plan["confirmation_token"],
+            second_secret_plan["confirmation_token"],
+        )
+        with self.assertRaisesRegex(
+            ProductExecutionError, "does not match"
+        ):
+            apply_product_release(
+                bundle_root,
+                artifact,
+                runtime_root=self.runtime,
+                environment_values={"APP_SECRET": second_secret},
+                confirm=first_secret_plan["confirmation_token"],
+            )
+
         canary = "canary-secret-that-must-not-be-persisted"
         plan = product_release_plan(
             bundle_root,
@@ -526,6 +696,8 @@ class ProductOperationsTests(unittest.TestCase):
         for path in self.runtime.rglob("*"):
             if path.is_file() and not path.is_symlink():
                 self.assertNotIn(canary.encode(), path.read_bytes(), path)
+                self.assertNotIn(first_secret.encode(), path.read_bytes(), path)
+                self.assertNotIn(second_secret.encode(), path.read_bytes(), path)
 
     def test_post_drain_commit_failure_restarts_exact_predecessor(self) -> None:
         first_root, first_artifact = _fixture(self.root, "fixture-v1", self.port)
@@ -665,7 +837,7 @@ class ProductOperationsTests(unittest.TestCase):
             backup_id="before-evidence-v2",
             dataset_bindings={},
         )
-        create_product_backup(
+        backup = create_product_backup(
             first_root,
             runtime_root=self.runtime,
             backup_id="before-evidence-v2",
@@ -673,6 +845,52 @@ class ProductOperationsTests(unittest.TestCase):
             environment_values={},
             confirm=backup_plan["confirmation_token"],
         )
+        backup_root = Path(backup["backup_path"])
+        manifest_path = backup_root / "backup-manifest.json"
+        original_manifest = manifest_path.read_bytes()
+        manifest = json.loads(original_manifest)
+        forged_root = backup_root.with_name("forged-without-receipt")
+        backup_root.rename(forged_root)
+        forged_manifest_path = forged_root / "backup-manifest.json"
+        forged_manifest = deepcopy(manifest)
+        forged_manifest["backup_id"] = "forged-without-receipt"
+        _write(forged_manifest_path, forged_manifest)
+        forged_plan = product_release_plan(
+            second_root,
+            second_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        self.assertIn(
+            "backup-complete",
+            {
+                item["precondition"]
+                for item in forged_plan["blockers"]
+                if item["code"] == "product_release_precondition_missing"
+            },
+        )
+        forged_manifest_path.write_bytes(original_manifest)
+        forged_root.rename(backup_root)
+
+        dataset_path = backup_root / manifest["datasets"][0]["relative_path"]
+        dataset_bytes = dataset_path.read_bytes()
+        dataset_path.write_bytes(dataset_bytes + b"tampered")
+        tampered_plan = product_release_plan(
+            second_root,
+            second_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        self.assertIn(
+            "backup-complete",
+            {
+                item["precondition"]
+                for item in tampered_plan["blockers"]
+                if item["code"] == "product_release_precondition_missing"
+            },
+        )
+        dataset_path.write_bytes(dataset_bytes)
+
         evidence = self.root / "expand-contract-reviewed.json"
         evidence.write_text('{"compatible":true}\n', encoding="utf-8")
         planned = product_release_plan(
@@ -808,6 +1026,19 @@ class ProductOperationsTests(unittest.TestCase):
             confirm=first_plan["confirmation_token"],
         )
         self.assertEqual("succeeded", first["status"])
+        for field in (
+            "ophelia_request_digest",
+            "ophelia_plan_digest",
+            "ophelia_approval_digest",
+            "ophelia_operation_digest",
+            "ophelia_verification_digest",
+            "ophelia_receipt_digest",
+        ):
+            self.assertTrue(first[field].startswith("sha256:"), field)
+        self.assertEqual(
+            first["ophelia_plan_digest"],
+            first["ophelia_receipt"]["plan_digest"],
+        )
         self.assertEqual(b"fixture-v1", urllib.request.urlopen(f"http://127.0.0.1:{self.port}/version").read())
 
         backup_plan = product_backup_plan(
@@ -896,6 +1127,255 @@ class ProductOperationsTests(unittest.TestCase):
         self.assertEqual(b"fixture-v1", urllib.request.urlopen(f"http://127.0.0.1:{self.port}/version").read())
         self.assertEqual(first["bundle_digest"], rollback["bundle_digest"])
         self.assertTrue(rollback["inputs_redacted"])
+
+        redeploy_plan = product_release_plan(
+            second_root,
+            second_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        redeployed = apply_product_release(
+            second_root,
+            second_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            confirm=redeploy_plan["confirmation_token"],
+        )
+        self.assertEqual("succeeded", redeployed["status"])
+        self.assertEqual(
+            b"fixture-v2",
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{self.port}/version"
+            ).read(),
+        )
+
+    def test_rollback_is_governed_by_the_active_release_policy(self) -> None:
+        target_root, target_artifact = _fixture(
+            self.root, "fixture-rollback-target", self.port
+        )
+        no_active = product_release_plan(
+            target_root,
+            target_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            operation="rollback.apply",
+        )
+        self.assertFalse(no_active["can_apply"])
+        self.assertIn(
+            "product_rollback_without_active_revision",
+            {item["code"] for item in no_active["blockers"]},
+        )
+
+        active_root, active_artifact = _fixture(
+            self.root,
+            "fixture-active-restore-required",
+            self.port,
+            rollback_policy="restore-required",
+        )
+        active_plan = product_release_plan(
+            active_root,
+            active_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        apply_product_release(
+            active_root,
+            active_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            confirm=active_plan["confirmation_token"],
+        )
+        blocked = product_release_plan(
+            target_root,
+            target_artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            operation="rollback.apply",
+        )
+        self.assertFalse(blocked["can_apply"])
+        self.assertIn(
+            "product_rollback_policy_unsupported",
+            {item["code"] for item in blocked["blockers"]},
+        )
+
+    def test_recovery_evidence_replay_rejects_tampering_and_contract_drift(self) -> None:
+        bundle_root, artifact = _fixture(
+            self.root, "fixture-evidence-integrity", self.port
+        )
+        release_plan = product_release_plan(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+        )
+        apply_product_release(
+            bundle_root,
+            artifact,
+            runtime_root=self.runtime,
+            environment_values={},
+            confirm=release_plan["confirmation_token"],
+        )
+        backup_plan = product_backup_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            dataset_bindings={},
+        )
+        backup = create_product_backup(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            dataset_bindings={},
+            environment_values={},
+            confirm=backup_plan["confirmation_token"],
+        )
+        for field in (
+            "runtime_contract_digest",
+            "runtime_document_digest",
+            "release_manifest_digest",
+            "release_document_digest",
+            "recovery_contract_digest",
+            "recovery_document_digest",
+            "ophelia_request_digest",
+            "ophelia_plan_digest",
+            "ophelia_approval_digest",
+            "ophelia_operation_digest",
+            "ophelia_verification_digest",
+            "ophelia_receipt_digest",
+        ):
+            self.assertTrue(backup[field].startswith("sha256:"), field)
+
+        backup_root = Path(backup["backup_path"])
+        manifest_path = backup_root / "backup-manifest.json"
+        original_manifest = manifest_path.read_bytes()
+        original = json.loads(original_manifest)
+
+        def assert_manifest_blocked(mutated) -> None:
+            manifest_path.write_text(
+                json.dumps(mutated, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            blocked = product_restore_drill_plan(
+                bundle_root,
+                runtime_root=self.runtime,
+                backup_id="integrity-backup",
+                drill_id="integrity-drill",
+            )
+            self.assertFalse(blocked["can_apply"])
+            self.assertIn(
+                "product_backup_invalid",
+                {item["code"] for item in blocked["blockers"]},
+            )
+            manifest_path.write_bytes(original_manifest)
+
+        substituted = deepcopy(original)
+        substituted["revision_digest"] = "sha256:" + "0" * 64
+        assert_manifest_blocked(substituted)
+
+        unsafe = deepcopy(original)
+        unsafe["datasets"][0]["relative_path"] = "../../outside"
+        assert_manifest_blocked(unsafe)
+
+        missing = deepcopy(original)
+        missing["datasets"] = []
+        assert_manifest_blocked(missing)
+
+        duplicated = deepcopy(original)
+        duplicated["datasets"].append(deepcopy(duplicated["datasets"][0]))
+        assert_manifest_blocked(duplicated)
+
+        dataset_path = backup_root / original["datasets"][0]["relative_path"]
+        external = self.root / "substituted-backup-dataset"
+        dataset_path.rename(external)
+        dataset_path.symlink_to(external)
+        blocked = product_restore_drill_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            drill_id="integrity-drill",
+        )
+        self.assertFalse(blocked["can_apply"])
+        self.assertIn(
+            "product_backup_invalid",
+            {item["code"] for item in blocked["blockers"]},
+        )
+        dataset_path.unlink()
+        external.rename(dataset_path)
+
+        stale_plan = product_restore_drill_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            drill_id="integrity-drill",
+        )
+        dataset_bytes = dataset_path.read_bytes()
+        dataset_path.write_bytes(dataset_bytes + b"substituted-snapshot")
+        replaced = deepcopy(original)
+        replaced["datasets"][0]["digest"] = _path_digest(dataset_path)
+        manifest_path.write_text(
+            json.dumps(replaced, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        replaced_plan = product_restore_drill_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            drill_id="integrity-drill",
+        )
+        self.assertFalse(replaced_plan["can_apply"])
+        self.assertIn(
+            "product_backup_invalid",
+            {item["code"] for item in replaced_plan["blockers"]},
+        )
+        with self.assertRaisesRegex(ProductRecoveryError, "does not match"):
+            apply_product_restore_drill(
+                bundle_root,
+                runtime_root=self.runtime,
+                backup_id="integrity-backup",
+                drill_id="integrity-drill",
+                environment_values={},
+                confirm=stale_plan["confirmation_token"],
+            )
+        dataset_path.write_bytes(dataset_bytes)
+        manifest_path.write_bytes(original_manifest)
+
+        drill_plan = product_restore_drill_plan(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            drill_id="integrity-drill",
+        )
+        drill = apply_product_restore_drill(
+            bundle_root,
+            runtime_root=self.runtime,
+            backup_id="integrity-backup",
+            drill_id="integrity-drill",
+            environment_values={},
+            confirm=drill_plan["confirmation_token"],
+        )
+        correlated_path = (
+            self.runtime
+            / "receipts"
+            / "product"
+            / f"{drill['ophelia_receipt']['receipt_id']}.json"
+        )
+        correlated = json.loads(correlated_path.read_text())
+        correlated["tampered"] = True
+        correlated_path.write_text(
+            json.dumps(correlated, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            ProductRecoveryError, "differs from terminal evidence"
+        ):
+            apply_product_restore_drill(
+                bundle_root,
+                runtime_root=self.runtime,
+                backup_id="integrity-backup",
+                drill_id="integrity-drill",
+                environment_values={},
+                confirm=drill_plan["confirmation_token"],
+            )
 
 
 if __name__ == "__main__":

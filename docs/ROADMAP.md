@@ -98,26 +98,7 @@ app is ready to move onto Ophelia. The expected flow is:
 
 ## Deferred Decisions
 
-1. Public launch timing
-
-   Issue: the repository is configured for `github.com/mrbagels/ophelia`, but it
-   intentionally remains private for now.
-
-   Proposed direction: keep developing on GitHub privately until the README,
-   license, docs, CI, and release audit are stable across normal work.
-
-   Why it matters: public launch changes the support, security, and contribution
-   surface.
-
-   Impact: repository visibility, issue intake, contribution expectations, and
-   release communication.
-
-   Risks/tradeoffs: opening too early creates support load and public contract
-   pressure; waiting too long reduces external feedback.
-
-   Complexity: Medium.
-
-2. First retained app adoption
+1. First retained app adoption
 
    Issue: old projects should not shape Ophelia's architecture unless they are
    intentionally retained and migrated.
