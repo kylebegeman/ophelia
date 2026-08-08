@@ -24,7 +24,11 @@ from ophelia.daemon.agent import OutboundHostAgent
 from ophelia.daemon.agent_store import AgentStore
 from ophelia.daemon.service import OpheliaDaemon
 from ophelia.daemon.store import DaemonStore
-from ophelia.daemon.install import _install_release, daemon_install_plan
+from ophelia.daemon.install import (
+    _activate_service,
+    _install_release,
+    daemon_install_plan,
+)
 from ophelia.daemon.enrollment import (
     EnrollmentError,
     _enable_agent_config,
@@ -336,6 +340,20 @@ class DaemonInstallTests(unittest.TestCase):
             runner.commands[0],
         )
         self.assertFalse(any(".install-" in part for command in runner.commands for part in command))
+
+    def test_installer_restarts_an_already_active_daemon_after_promotion(self) -> None:
+        runner = FakeUpgradeRunner()
+
+        _activate_service(runner)
+
+        self.assertEqual(
+            [
+                ["systemctl", "enable", "opheliad.service"],
+                ["systemctl", "restart", "opheliad.service"],
+                ["systemctl", "is-active", "--quiet", "opheliad.service"],
+            ],
+            runner.commands,
+        )
 
     def test_enrollment_plan_binds_token_digest_without_exposing_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

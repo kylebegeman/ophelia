@@ -1,6 +1,6 @@
 # Ophelia Host Daemon
 
-Status: landed on `next`, released in 0.6.0 and hardened in 0.6.1
+Status: landed on `next`, released in 0.6.0 and hardened through 0.6.14
 
 `opheliad` is Ophelia's durable single-host authority. It owns the operation
 journal, runtime reconciliation, manifest v2 execution, scheduled workloads,
@@ -34,7 +34,8 @@ sudo ship daemon install \
 The installer creates a dedicated `ophelia` identity, installs an immutable
 versioned Python environment beneath `/opt/ophelia/releases`, writes the
 systemd unit and initial strict configuration, promotes the `current` link,
-enables the service, and requires a successful systemd health check. An
+enables and starts or restarts the service, and requires a successful systemd
+health check against the promoted release. An
 incomplete version directory is quarantined before a replacement is staged and
 atomically published.
 
