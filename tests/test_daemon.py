@@ -6,6 +6,8 @@ import os
 import http.client
 import io
 import json
+import runpy
+import signal
 import socket
 import subprocess
 import tempfile
@@ -472,6 +474,23 @@ class SystemdNotificationTests(unittest.TestCase):
                 self.assertEqual(b"READY=1", receiver.recv(4096))
             finally:
                 receiver.close()
+
+
+class SystemdLauncherTests(unittest.TestCase):
+    def test_forwarded_shutdown_is_clean_and_does_not_trigger_upgrade_rollback(self) -> None:
+        launcher = runpy.run_path(
+            str(
+                Path(__file__).resolve().parents[1]
+                / "src/ophelia/resources/systemd/opheliad-launcher.py"
+            )
+        )
+        expected_stop = launcher["_expected_service_stop"]
+
+        self.assertTrue(expected_stop(-signal.SIGTERM, signal.SIGTERM))
+        self.assertTrue(expected_stop(0, signal.SIGTERM))
+        self.assertTrue(expected_stop(-signal.SIGINT, signal.SIGINT))
+        self.assertFalse(expected_stop(1, signal.SIGTERM))
+        self.assertFalse(expected_stop(-signal.SIGTERM, None))
 
 
 class DaemonStoreTests(unittest.TestCase):
