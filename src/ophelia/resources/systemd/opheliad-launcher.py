@@ -23,18 +23,27 @@ def main() -> int:
     install_root = arguments.install_root.resolve(strict=True)
     executable = _current_executable(install_root)
     process = subprocess.Popen([str(executable), "--config", str(arguments.config)])
+    forwarded_signal = None
 
     def forward(signum, _frame):
+        nonlocal forwarded_signal
+        forwarded_signal = signum
         if process.poll() is None:
             process.send_signal(signum)
 
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)
     return_code = process.wait()
+    if _expected_service_stop(return_code, forwarded_signal):
+        return 0
     if return_code == RESTART_FOR_STAGED_STATE:
         return return_code
     _rollback_unconfirmed_upgrade(install_root)
     return return_code
+
+
+def _expected_service_stop(return_code, forwarded_signal):
+    return forwarded_signal is not None and return_code in (0, -forwarded_signal)
 
 
 def _current_executable(install_root: Path) -> Path:

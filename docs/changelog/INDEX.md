@@ -107,3 +107,4 @@
 | [0103](0103-product-operations-evidence-hardening.md) | 2026-07-30 | landed | Product operations evidence and compatibility hardening | forge, product-contracts, execution, backup, restore, rollback, receipts, security, cli, docs, tests |
 | [0104](0104-release-0613-publication.md) | 2026-08-08 | landed | Release 0.6.13 and public GitHub publication | release, github, packaging, docs, open-source, forge, product-contracts, tests |
 | [0105](0105-release-0614-daemon-installer-restart.md) | 2026-08-08 | landed | Release 0.6.14 daemon installer restart correction | release, daemon, installer, systemd, reliability, docs, tests |
+| [0106](0106-release-0615-clean-launcher-shutdown.md) | 2026-08-08 | landed | Release 0.6.15 clean launcher shutdown handling | release, daemon, launcher, systemd, upgrades, reliability, docs, tests |
