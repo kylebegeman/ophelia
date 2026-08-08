@@ -29,6 +29,7 @@ from ophelia.daemon.store import DaemonStore
 from ophelia.daemon.install import (
     _activate_service,
     _install_release,
+    _source_digest,
     daemon_install_plan,
 )
 from ophelia.daemon.enrollment import (
@@ -341,7 +342,28 @@ class DaemonInstallTests(unittest.TestCase):
             ["python3", "-m", "venv", str(release)],
             runner.commands[0],
         )
+        staged_source = Path(runner.commands[1][-1])
+        self.assertNotEqual(source, staged_source)
+        self.assertFalse(staged_source.exists())
         self.assertFalse(any(".install-" in part for command in runner.commands for part in command))
+
+    def test_source_digest_ignores_build_and_package_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / "pyproject.toml").write_text("[project]\nname='fixture'\n")
+            expected = _source_digest(source)
+            for path in (
+                source / "build/lib/fixture.py",
+                source / "src/fixture.egg-info/PKG-INFO",
+                source / "src/fixture/__pycache__/module.pyc",
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("generated")
+
+            self.assertEqual(expected, _source_digest(source))
+            (source / "src/fixture/module.py").parent.mkdir(parents=True, exist_ok=True)
+            (source / "src/fixture/module.py").write_text("value = 1\n")
+            self.assertNotEqual(expected, _source_digest(source))
 
     def test_installer_restarts_an_already_active_daemon_after_promotion(self) -> None:
         runner = FakeUpgradeRunner()

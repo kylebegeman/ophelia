@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import stat
+import tempfile
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -18,6 +19,11 @@ from ..version import package_version
 
 class DaemonInstallError(RuntimeError):
     pass
+
+
+_SOURCE_EXCLUDED_PARTS = frozenset(
+    {".git", ".venv", "build", "dist", "__pycache__"}
+)
 
 
 def daemon_install_plan(
@@ -205,16 +211,28 @@ def _install_release(
     # creation path. Build directly at the immutable digest-addressed release
     # path; moving a staged venv would make opheliad non-executable.
     runner.run(["python3", "-m", "venv", str(release_root)], timeout_seconds=120)
-    runner.run(
-        [
-            str(release_root / "bin" / "python"),
-            "-m",
-            "pip",
-            "install",
-            str(source_root),
-        ],
-        timeout_seconds=600,
-    )
+    # Build backends may write `build/` and `*.egg-info` beside their input.
+    # Install from an isolated copy so a trusted source digest remains stable
+    # across retries and repeated plans.
+    with tempfile.TemporaryDirectory(
+        prefix=".ophelia-source-", dir=str(release_root.parent)
+    ) as temporary:
+        staged_source = Path(temporary) / "source"
+        shutil.copytree(
+            source_root,
+            staged_source,
+            ignore=_ignore_generated_source_paths,
+        )
+        runner.run(
+            [
+                str(release_root / "bin" / "python"),
+                "-m",
+                "pip",
+                "install",
+                str(staged_source),
+            ],
+            timeout_seconds=600,
+        )
     _secure_write(
         release_root / "ophelia-install.json",
         (
@@ -373,10 +391,9 @@ def _file_digest(path: Path) -> Optional[str]:
 
 def _source_digest(root: Path) -> str:
     digest = hashlib.sha256()
-    excluded = {".git", ".venv", "build", "dist", "__pycache__"}
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
-        if any(part in excluded for part in relative.parts):
+        if any(_source_part_excluded(part) for part in relative.parts):
             continue
         if path.is_symlink():
             raise DaemonInstallError("Ophelia install source may not contain symbolic links.")
@@ -387,3 +404,11 @@ def _source_digest(root: Path) -> str:
         digest.update(relative.as_posix().encode("utf-8") + b"\0")
         digest.update(path.read_bytes() + b"\0")
     return "sha256:" + digest.hexdigest()
+
+
+def _ignore_generated_source_paths(_directory: str, names: list[str]) -> set[str]:
+    return {name for name in names if _source_part_excluded(name)}
+
+
+def _source_part_excluded(part: str) -> bool:
+    return part in _SOURCE_EXCLUDED_PARTS or part.endswith(".egg-info")
