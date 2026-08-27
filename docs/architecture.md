@@ -180,6 +180,12 @@ rendered bundles under `apps/<app>/release-bundles/` so rollback can restore
 generated Compose, Caddy, env fragment, and artifact files without deleting
 operator-managed runtime state.
 
+The journaled executor holds an application-scoped fencing lease for the full
+operation. A background heartbeat renews that lease while readiness checks,
+image pulls, container starts, and other backend work block. If renewal fails,
+the worker stops before committing further journal state so recovery can safely
+reconcile the exact accepted operation.
+
 ## Two Deployment Modes
 
 ### 1. Manual `ship` from an operator machine
