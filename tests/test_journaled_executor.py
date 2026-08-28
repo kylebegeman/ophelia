@@ -4,6 +4,8 @@ import hashlib
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -38,6 +40,7 @@ from ophelia.execution import (
     BackendContractError,
     ExecutionInput,
     JournaledExecutor,
+    LeaseConflict,
     PreflightResult,
     RemoveResult,
     RevisionArtifactRef,
@@ -455,6 +458,79 @@ class JournaledExecutorTests(unittest.TestCase):
         ):
             self.assertIn(f"phase.{phase.value}.completed", event_types)
         self.journal.integrity_check()
+
+    def test_long_backend_phase_keeps_execution_fence_active(self) -> None:
+        started = time.monotonic()
+        clock = lambda: NOW + time.monotonic() - started
+        journal = SQLiteOperationJournal.beneath_runtime_root(
+            Path(self.temporary.name) / "slow", clock=clock
+        )
+        runtime = _RuntimeState()
+
+        class SlowStartBackend(_FakeStaticBackend):
+            def start(self, revision: Revision) -> RuntimeHandle:
+                time.sleep(0.15)
+                return super().start(revision)
+
+        executor = JournaledExecutor(
+            journal=journal,
+            backend_factory=lambda execution_input, operation, fence: SlowStartBackend(
+                execution_input, runtime
+            ),
+            clock=clock,
+            lease_ttl_seconds=0.05,
+            lease_heartbeat_interval_seconds=0.01,
+        )
+        actor, request, approval, execution_input = _bundle("slow-phase")
+        operation = executor.submit(
+            actor, request, approval, execution_input=execution_input
+        )
+
+        receipt = executor.run(operation.operation_id, owner_id="worker-one")
+
+        self.assertEqual(ReceiptOutcome.SUCCEEDED, receipt.outcome)
+        self.assertEqual(request.revision_id, receipt.active_revision_id)
+        journal.integrity_check()
+
+    def test_heartbeat_authority_loss_stops_execution(self) -> None:
+        started = time.monotonic()
+        clock = lambda: NOW + time.monotonic() - started
+        journal = SQLiteOperationJournal.beneath_runtime_root(
+            Path(self.temporary.name) / "lost-heartbeat", clock=clock
+        )
+        original_heartbeat = journal.heartbeat_fence
+
+        def heartbeat_fence(fence, ttl_seconds):
+            if threading.current_thread().name == "ophelia-execution-fence-heartbeat":
+                raise LeaseConflict("fixture heartbeat authority loss")
+            return original_heartbeat(fence, ttl_seconds)
+
+        journal.heartbeat_fence = heartbeat_fence
+        runtime = _RuntimeState()
+
+        class SlowStartBackend(_FakeStaticBackend):
+            def start(self, revision: Revision) -> RuntimeHandle:
+                time.sleep(0.05)
+                return super().start(revision)
+
+        executor = JournaledExecutor(
+            journal=journal,
+            backend_factory=lambda execution_input, operation, fence: SlowStartBackend(
+                execution_input, runtime
+            ),
+            clock=clock,
+            lease_ttl_seconds=0.2,
+            lease_heartbeat_interval_seconds=0.01,
+        )
+        actor, request, approval, execution_input = _bundle("lost-heartbeat")
+        operation = executor.submit(
+            actor, request, approval, execution_input=execution_input
+        )
+
+        with self.assertRaisesRegex(LeaseConflict, "heartbeat authority loss"):
+            executor.run(operation.operation_id, owner_id="worker-one")
+
+        self.assertIsNone(journal.receipt(operation.operation_id))
 
     def test_terminal_retry_returns_the_original_receipt_without_mutation(self) -> None:
         operation, actor, request, approval, execution_input = self._submit("retry")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 import uuid
 from dataclasses import dataclass, replace
@@ -169,6 +170,58 @@ class _ExecutionDeadlineExpired(Exception):
     pass
 
 
+class _FenceHeartbeat:
+    """Keep an execution fence active while a backend call blocks."""
+
+    def __init__(
+        self,
+        *,
+        journal: SQLiteOperationJournal,
+        fence: ExecutionFence,
+        ttl_seconds: float,
+        interval_seconds: float,
+    ) -> None:
+        self._journal = journal
+        self._fence = fence
+        self._ttl_seconds = ttl_seconds
+        self._interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._failure: Optional[Exception] = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="ophelia-execution-fence-heartbeat",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join()
+
+    def raise_if_failed(self) -> None:
+        with self._lock:
+            failure = self._failure
+        if failure is not None:
+            raise failure
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_seconds):
+            try:
+                refreshed = self._journal.heartbeat_fence(
+                    self._fence, self._ttl_seconds
+                )
+            except Exception as exc:
+                with self._lock:
+                    self._failure = exc
+                self._stop.set()
+                return
+            with self._lock:
+                self._fence = refreshed
+
+
 class JournaledExecutor:
     """Execute one immutable revision through journaled, recoverable phases.
 
@@ -185,13 +238,39 @@ class JournaledExecutor:
         backend_factory: BackendFactory,
         clock: Callable[[], float] = time.time,
         lease_ttl_seconds: float = 300.0,
+        lease_heartbeat_interval_seconds: Optional[float] = None,
     ) -> None:
-        if lease_ttl_seconds <= 0:
-            raise ValueError("lease_ttl_seconds must be greater than zero.")
+        if (
+            isinstance(lease_ttl_seconds, bool)
+            or not isinstance(lease_ttl_seconds, (int, float))
+            or not math.isfinite(float(lease_ttl_seconds))
+            or lease_ttl_seconds <= 0
+            or lease_ttl_seconds > 86400
+        ):
+            raise ValueError(
+                "lease_ttl_seconds must be greater than zero and no more than 86400."
+            )
+        heartbeat_interval = (
+            min(60.0, lease_ttl_seconds / 3.0)
+            if lease_heartbeat_interval_seconds is None
+            else lease_heartbeat_interval_seconds
+        )
+        if (
+            isinstance(heartbeat_interval, bool)
+            or not isinstance(heartbeat_interval, (int, float))
+            or not math.isfinite(float(heartbeat_interval))
+            or heartbeat_interval <= 0
+            or heartbeat_interval >= lease_ttl_seconds
+        ):
+            raise ValueError(
+                "lease_heartbeat_interval_seconds must be greater than zero "
+                "and less than lease_ttl_seconds."
+            )
         self.journal = journal
         self.backend_factory = backend_factory
         self._clock = clock
         self.lease_ttl_seconds = lease_ttl_seconds
+        self.lease_heartbeat_interval_seconds = heartbeat_interval
 
     def submit(
         self,
@@ -242,7 +321,23 @@ class JournaledExecutor:
             execution_input = self.journal.load_execution_input(operation_id)
             self._validate_supported_plan(execution_input)
             backend = self.backend_factory(execution_input, operation, fence)
-            return self._run_fenced(operation, execution_input, backend, fence)
+            heartbeat = _FenceHeartbeat(
+                journal=self.journal,
+                fence=fence,
+                ttl_seconds=self.lease_ttl_seconds,
+                interval_seconds=self.lease_heartbeat_interval_seconds,
+            )
+            heartbeat.start()
+            try:
+                return self._run_fenced(
+                    operation,
+                    execution_input,
+                    backend,
+                    fence,
+                    heartbeat,
+                )
+            finally:
+                heartbeat.stop()
         finally:
             try:
                 self.journal.release_fence(fence)
@@ -257,6 +352,7 @@ class JournaledExecutor:
         execution_input: ExecutionInput,
         backend: RecoverableExecutionBackend,
         fence: ExecutionFence,
+        heartbeat: _FenceHeartbeat,
     ) -> TerminalReceipt:
         events = self.journal.events(operation.operation_id)
         started_at = events[0].occurred_at if events else self._utc_now()
@@ -279,6 +375,7 @@ class JournaledExecutor:
                 candidate,
                 previous,
                 fence,
+                heartbeat,
                 started_at,
                 cancelled=operation.state is OperationState.CANCELLING,
                 verification=None,
@@ -297,15 +394,19 @@ class JournaledExecutor:
         verification: Optional[VerificationResult] = None
         try:
             fence = self._phase_stage(operation, execution_input, backend, fence)
+            heartbeat.raise_if_failed()
             fence = self._phase_preflight(
                 operation, execution_input, backend, fence
             )
+            heartbeat.raise_if_failed()
             candidate, verification, fence = self._phase_start_candidate(
                 operation, execution_input, backend, candidate, fence
             )
+            heartbeat.raise_if_failed()
             verification, fence = self._phase_readiness(
                 operation, execution_input, backend, candidate, fence
             )
+            heartbeat.raise_if_failed()
             fence = self._phase_switch_traffic(
                 operation,
                 execution_input,
@@ -314,9 +415,11 @@ class JournaledExecutor:
                 previous,
                 fence,
             )
+            heartbeat.raise_if_failed()
             verification, fence = self._phase_external_verify(
                 operation, execution_input, backend, candidate, fence
             )
+            heartbeat.raise_if_failed()
             fence = self._phase_drain_previous(
                 operation,
                 execution_input,
@@ -325,8 +428,10 @@ class JournaledExecutor:
                 previous,
                 fence,
             )
+            heartbeat.raise_if_failed()
             self._checkpoint_control(operation.operation_id, execution_input)
             fence = self._heartbeat(fence)
+            heartbeat.raise_if_failed()
             self._event(
                 operation,
                 f"phase.{PlanPhase.COMMIT.value}.started",
@@ -349,6 +454,7 @@ class JournaledExecutor:
         except LeaseConflict:
             raise
         except _CancellationRequested:
+            heartbeat.raise_if_failed()
             return self._finish_interrupted(
                 operation,
                 execution_input,
@@ -356,11 +462,13 @@ class JournaledExecutor:
                 candidate,
                 previous,
                 fence,
+                heartbeat,
                 started_at,
                 cancelled=True,
                 verification=verification,
             )
         except Exception as exc:
+            heartbeat.raise_if_failed()
             failed_verification = (
                 exc.verification if isinstance(exc, _PhaseFailure) else verification
             )
@@ -371,6 +479,7 @@ class JournaledExecutor:
                 candidate,
                 previous,
                 fence,
+                heartbeat,
                 started_at,
                 cancelled=False,
                 verification=failed_verification,
@@ -588,12 +697,14 @@ class JournaledExecutor:
         candidate: RuntimeHandle,
         previous: Optional[ActiveRevision],
         fence: ExecutionFence,
+        heartbeat: _FenceHeartbeat,
         started_at: str,
         *,
         cancelled: bool,
         verification: Optional[VerificationResult],
         failure_diagnostic: Optional[dict[str, object]] = None,
     ) -> TerminalReceipt:
+        heartbeat.raise_if_failed()
         fence = self._heartbeat(fence)
         state = (
             OperationState.CANCELLING
@@ -636,6 +747,7 @@ class JournaledExecutor:
                 result = backend.restore(
                     self._previous_handle(backend, previous), candidate
                 )
+                heartbeat.raise_if_failed()
                 if result.active_revision_digest != previous.revision_digest:
                     raise BackendContractError(
                         "Compensation did not restore the exact predecessor."
@@ -644,6 +756,7 @@ class JournaledExecutor:
             elif switch_started:
                 if previous is None:
                     result = backend.deactivate(candidate)
+                    heartbeat.raise_if_failed()
                     if result.active_revision_digest is not None:
                         raise BackendContractError(
                             "Compensation did not verify an empty active state."
@@ -653,6 +766,7 @@ class JournaledExecutor:
             cleanup_required = candidate_started
             if cleanup_required:
                 removal = backend.remove(candidate)
+                heartbeat.raise_if_failed()
                 if not removal.removed:
                     raise BackendContractError(
                         "Candidate cleanup did not verify removal."
@@ -692,6 +806,7 @@ class JournaledExecutor:
                 status=CompensationStatus.FAILED,
             )
 
+        heartbeat.raise_if_failed()
         self._ensure_revision_state(
             operation.operation_id, RevisionState.FAILED, fence
         )
@@ -737,6 +852,7 @@ class JournaledExecutor:
             started_at=started_at,
             completed_at=completed_at,
         )
+        heartbeat.raise_if_failed()
         self.journal.commit_receipt(
             receipt,
             lease_owner=fence.owner_id,

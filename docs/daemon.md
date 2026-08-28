@@ -1,6 +1,6 @@
 # Ophelia Host Daemon
 
-Status: landed on `next`, released in 0.6.0 and hardened through 0.6.16
+Status: landed on `next`, released in 0.6.0 and hardened through 0.6.17
 
 `opheliad` is Ophelia's durable single-host authority. It owns the operation
 journal, runtime reconciliation, manifest v2 execution, scheduled workloads,
