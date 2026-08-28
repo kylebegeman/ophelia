@@ -124,9 +124,13 @@ The exchange generates the host key locally, sends only a CSR, verifies the
 returned host certificate, CA, and Lumen signing key, and enables the outbound
 agent. Host key and certificate material live under the independent
 `/var/lib/ophelia-identity` state directory; root-managed CA and decision keys live under
-`/etc/ophelia/trust`. The token is deleted only after the restarted daemon
-passes its systemd health check. A failed health check restores the previous
-configuration and removes the newly published identity.
+`/etc/ophelia/trust`. Planning reads the configured operation journal without
+mutating it and blocks before exchange when that journal is bound to another
+host identity. After a successful exchange, the remote identity and one-time
+credential are already committed. Ophelia therefore deletes the consumed token
+and retains the published identity and agent configuration even if the daemon
+health check fails, returning an explicit service-repair error instead of
+claiming that the remote enrollment was rolled back.
 
 Normal fleet traffic is outbound HTTPS on port 443 with mutual TLS. No public
 Ophelia listener is required. Lumen derives host identity from the client

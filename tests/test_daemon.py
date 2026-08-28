@@ -422,6 +422,43 @@ class DaemonInstallTests(unittest.TestCase):
                     config_path=config,
                 )
 
+    def test_enrollment_plan_blocks_a_journal_bound_to_another_host(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            token = root / "enrollment.token"
+            token.write_text("secret-one-time-token")
+            token.chmod(0o600)
+            config = root / "agent.toml"
+            config.write_text(
+                'runtime_root = %s\nagent_enabled = false\n' % json.dumps(str(runtime))
+            )
+            journal = SQLiteOperationJournal.beneath_runtime_root(runtime)
+            DaemonStore(journal).register_host(
+                host_id="host_existing",
+                capabilities={},
+                agent_version="0.6.17",
+                protocol_version=1,
+            )
+            with mock.patch(
+                "ophelia.daemon.enrollment.shutil.which", return_value="/usr/bin/tool"
+            ):
+                plan = enrollment_plan(
+                    host_id="host_replacement",
+                    control_plane_url="https://control.example.com",
+                    token_file=token,
+                    trust_root=root / "trust",
+                    identity_root=root / "identity",
+                    config_path=config,
+                )
+
+        self.assertFalse(plan["can_apply"])
+        self.assertIn("operation_journal_host_identity_mismatch", plan["blockers"])
+        self.assertEqual(
+            ["host_existing"],
+            plan["observations"]["operation_journal"]["host_ids"],
+        )
+
 
 class AgentUpgradeTests(unittest.TestCase):
     def test_staged_upgrade_promotes_and_confirms_exact_release(self) -> None:

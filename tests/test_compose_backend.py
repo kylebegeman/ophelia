@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Set
 
 from ophelia.domain.receipts import VerificationStatus
-from ophelia.execution.compose_backend import ComposeRevisionBackend, _HTTP_PROBE_IMAGE
+from ophelia.execution.compose_backend import (
+    ComposeRevisionBackend,
+    _HTTP_PROBE_IMAGE,
+    _update_private_env,
+)
 from ophelia.execution.contracts import ExecutionFence
 from ophelia.execution.subprocesses import ProcessResult
 from ophelia.manifest_v2 import HttpProbeV2, ProbeV2, RouteTlsV2, load_manifest_v2
@@ -68,6 +72,18 @@ class FakeRunner:
 
 
 class ComposeRevisionBackendTests(unittest.TestCase):
+    def test_route_secret_refresh_preserves_a_bind_mounted_env_inode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / "env"
+            env.write_text('OPHELIA_ROUTE_AUTH_FIXTURE="old-secret-value"\n')
+            before = env.stat().st_ino
+
+            _update_private_env(env, {"OPHELIA_ROUTE_AUTH_FIXTURE": "new-secret-value"})
+
+            self.assertEqual(before, env.stat().st_ino)
+            self.assertIn("new-secret-value", env.read_text())
+            self.assertNotIn("old-secret-value", env.read_text())
+
     def test_non_root_policy_rejects_an_image_that_defaults_to_root(self) -> None:
         class RootImageRunner(FakeRunner):
             def run(self, argv: Sequence[str], **kwargs: object) -> ProcessResult:

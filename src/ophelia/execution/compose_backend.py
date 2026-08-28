@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -1289,7 +1290,7 @@ class ComposeRevisionBackend:
         if not self.shared_compose.is_file():
             if self.require_edge_runtime and self.manifest.routes:
                 self._restore_caddy_predecessor(previous, displaced_legacy)
-                _restore_private_file(env_path, previous_env)
+                _restore_private_env(env_path, previous_env)
                 _prune_route_auth_env(env_path, self.caddy_include.parent)
                 self._cleanup_legacy_caddy_displacement(displaced_legacy)
                 raise ComposeBackendError("Shared Caddy runtime is unavailable.")
@@ -1301,7 +1302,7 @@ class ComposeRevisionBackend:
             self._caddy("reload", "--config", "/etc/caddy/Caddyfile")
         except Exception:
             self._restore_caddy_predecessor(previous, displaced_legacy)
-            _restore_private_file(env_path, previous_env)
+            _restore_private_env(env_path, previous_env)
             _prune_route_auth_env(env_path, self.caddy_include.parent)
             self._caddy("reload", "--config", "/etc/caddy/Caddyfile", check=False)
             self._cleanup_legacy_caddy_displacement(displaced_legacy)
@@ -1327,7 +1328,7 @@ class ComposeRevisionBackend:
         except Exception:
             self._restore_caddy_bytes(previous)
             _restore_private_file(self.legacy_caddy_include, legacy_previous)
-            _restore_private_file(env_path, previous_env)
+            _restore_private_env(env_path, previous_env)
             if self.shared_compose.is_file():
                 self._caddy(
                     "reload", "--config", "/etc/caddy/Caddyfile", check=False
@@ -1861,7 +1862,7 @@ def _update_private_env(path: Path, updates: Mapping[str, str]) -> None:
             output.append(line)
     for name, value in sorted(pending.items()):
         output.append(name + "=" + json.dumps(value))
-    _atomic_bytes(path, ("\n".join(output) + "\n").encode("utf-8"), mode=0o600)
+    _write_private_env(path, ("\n".join(output) + "\n").encode("utf-8"))
 
 
 def _prune_route_auth_env(path: Path, sites_root: Path) -> None:
@@ -1894,10 +1895,9 @@ def _prune_route_auth_env(path: Path, sites_root: Path) -> None:
             continue
         output.append(line)
     if output != original:
-        _atomic_bytes(
+        _write_private_env(
             path,
             (("\n".join(output) + "\n") if output else "").encode("utf-8"),
-            mode=0o600,
         )
 
 
@@ -1906,6 +1906,38 @@ def _restore_private_file(path: Path, value: Optional[bytes]) -> None:
         path.unlink(missing_ok=True)
     else:
         _atomic_bytes(path, value, mode=0o600)
+
+
+def _restore_private_env(path: Path, value: Optional[bytes]) -> None:
+    if value is None:
+        path.unlink(missing_ok=True)
+    else:
+        _write_private_env(path, value)
+
+
+def _write_private_env(path: Path, value: bytes) -> None:
+    """Update a bind-mounted env file without replacing its visible inode."""
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ComposeBackendError("Refusing to write through a symbolic link.")
+    if not path.exists():
+        _atomic_bytes(path, value, mode=0o600)
+        return
+    flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ComposeBackendError("Caddy environment path is unsafe.")
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(value):
+            offset += os.write(descriptor, value[offset:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    _sync_directory(path.parent)
 
 
 def _atomic_bytes(path: Path, value: bytes, *, mode: int) -> None:

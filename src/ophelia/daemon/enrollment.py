@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import ssl
 import stat
 import tempfile
@@ -20,7 +21,12 @@ from ..domain import canonical_digest
 from ..domain._contracts import parse_utc
 from ..execution.subprocesses import SubprocessRunner
 from ..version import package_version
-from .config import DEFAULT_IDENTITY_ROOT, PROTOCOL_VERSION
+from .config import (
+    DEFAULT_IDENTITY_ROOT,
+    DaemonConfigError,
+    PROTOCOL_VERSION,
+    load_daemon_config,
+)
 from .install import _secure_write
 
 
@@ -80,6 +86,8 @@ def enrollment_plan(
         "openssl": shutil.which("openssl"),
         "systemctl": shutil.which("systemctl"),
     }
+    journal = _operation_journal_observation(config)
+    observations["operation_journal"] = journal
     blockers = []
     if observations["openssl"] is None:
         blockers.append("openssl_missing")
@@ -87,6 +95,10 @@ def enrollment_plan(
         blockers.append("systemctl_missing")
     if observations["config_digest"] is None:
         blockers.append("daemon_config_missing")
+    if journal["state"] == "invalid":
+        blockers.append("operation_journal_invalid")
+    if any(value != host_id for value in journal["host_ids"]):
+        blockers.append("operation_journal_host_identity_mismatch")
     if any(value is not None for value in observations["existing_targets"].values()):
         blockers.append("host_identity_already_present")
     exact = {
@@ -151,8 +163,6 @@ def apply_enrollment(
     if refreshed.get("confirmation_token") != confirmation:
         raise EnrollmentError("Enrollment inputs changed after planning.")
     command = runner or SubprocessRunner()
-    original_config = Path(plan["config_path"]).read_bytes()
-    original_config_mode = stat.S_IMODE(Path(plan["config_path"]).stat().st_mode)
     trust_root = Path(plan["trust_root"])
     identity_root = Path(plan["identity_root"])
     trust_root.mkdir(mode=0o750, parents=True, exist_ok=True)
@@ -247,6 +257,7 @@ def apply_enrollment(
     command.run(
         ["chown", "root:ophelia", plan["config_path"]], timeout_seconds=30
     )
+    Path(plan["token_file"]).unlink()
     try:
         command.run(["systemctl", "restart", "opheliad.service"], timeout_seconds=120)
         command.run(
@@ -254,29 +265,11 @@ def apply_enrollment(
             timeout_seconds=60,
         )
     except Exception as exc:
-        _secure_write(
-            Path(plan["config_path"]), original_config, mode=original_config_mode
-        )
-        command.run(
-            ["chown", "root:ophelia", plan["config_path"]], timeout_seconds=30
-        )
-        for target in plan["targets"].values():
-            path = Path(target)
-            if path.is_symlink():
-                raise EnrollmentError(
-                    "Enrollment rollback encountered an unsafe target."
-                ) from exc
-            if path.is_file():
-                path.unlink()
-        command.run(
-            ["systemctl", "restart", "opheliad.service"],
-            timeout_seconds=120,
-            check=False,
-        )
         raise EnrollmentError(
-            "Enrolled identity did not pass the daemon health check; local changes were rolled back."
+            "Remote enrollment succeeded, but the daemon health check failed. "
+            "The consumed token was deleted and the enrolled identity and agent "
+            "configuration were retained for explicit service repair."
         ) from exc
-    Path(plan["token_file"]).unlink()
     return {
         "schema_version": 1,
         "kind": "ophelia.enrollment-receipt",
@@ -287,6 +280,36 @@ def apply_enrollment(
         "certificate_digest": enrollment["certificate_digest"],
         "decision_key_digest": enrollment["decision_key_digest"],
         "token_deleted": True,
+    }
+
+
+def _operation_journal_observation(config_path: Path) -> Dict[str, Any]:
+    try:
+        config = load_daemon_config(config_path)
+    except (DaemonConfigError, OSError, UnicodeError):
+        return {"state": "invalid", "path": None, "host_ids": []}
+    database = config.runtime_root / "host-state" / "operations.db"
+    if not database.exists():
+        return {"state": "absent", "path": str(database), "host_ids": []}
+    if database.is_symlink() or not database.is_file():
+        return {"state": "invalid", "path": str(database), "host_ids": []}
+    try:
+        connection = sqlite3.connect(
+            "file:%s?mode=ro&immutable=1" % database,
+            uri=True,
+        )
+        try:
+            rows = connection.execute(
+                "SELECT host_id FROM host_state ORDER BY host_id LIMIT 2"
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.DatabaseError:
+        return {"state": "invalid", "path": str(database), "host_ids": []}
+    return {
+        "state": "bound" if rows else "unbound",
+        "path": str(database),
+        "host_ids": [str(row[0]) for row in rows],
     }
 
 
