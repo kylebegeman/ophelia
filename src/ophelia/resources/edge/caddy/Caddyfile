@@ -1,0 +1,5 @@
+{
+	import /etc/caddy/global.d/*.caddy
+}
+
+import /etc/caddy/sites.d/*.caddy

@@ -1,0 +1,59 @@
+name: CI
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  push:
+    branches:
+      - next
+      - master
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Validate example manifests
+        run: make validate-examples
+
+      - name: Validate platform manifests
+        run: make validate-manifests
+
+      - name: Validate fixture manifests
+        run: make validate-fixtures
+
+      - name: Validate adoption fixtures
+        run: make validate-adoption-fixtures
+
+      - name: Validate fixture plugins
+        run: make validate-fixture-plugins
+
+      - name: Run open-source readiness audit
+        run: make open-source-audit-strict
+
+      - name: Render example bundles
+        run: make render-examples
+
+      - name: Render platform manifests
+        run: make render-manifests
+
+      - name: Run unit tests
+        run: make test PYTHON=python
+
+      - name: Compile Python sources
+        run: make compile PYTHON=python
+
+      - name: Check docs
+        run: make docs-check PYTHON=python
