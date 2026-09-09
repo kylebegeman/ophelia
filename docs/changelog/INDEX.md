@@ -110,3 +110,4 @@
 | [0106](0106-release-0615-clean-launcher-shutdown.md) | 2026-08-08 | landed | Release 0.6.15 clean launcher shutdown handling | release, daemon, launcher, systemd, upgrades, reliability, docs, tests |
 | [0107](0107-release-0616-immutable-install-source.md) | 2026-08-08 | landed | Release 0.6.16 immutable installer source identity | release, daemon, installer, packaging, reproducibility, reliability, docs, tests |
 | [0108](0108-release-0617-execution-fence-heartbeat.md) | 2026-08-27 | landed | Release 0.6.17 long-operation execution fence heartbeat | release, execution, leases, reliability, lumen, docs, tests |
+| [0109](0109-portability-minor-completion-and-major-program.md) | 2026-08-30 | landed | Portability minor completion and major-feature program | portability, readiness, backup, conflicts, runbook, receipts, docs, tests |

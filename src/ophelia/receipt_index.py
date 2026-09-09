@@ -1,15 +1,15 @@
 """Receipt timeline read-model.
 
 A thin, read-only projection over the receipts that already live in the runtime
-root. :func:`receipt_timeline` wraps :func:`ophelia.portability._receipt_records`
-(the single source of truth for *where* receipts live and how they sort) and
-layers filtering, newest-first ordering, and two extra per-entry facets:
+root. :func:`receipt_timeline` wraps
+:func:`ophelia.receipt_sources.receipt_records` (the single source of truth for
+*where* receipts live and how they sort) and layers filtering, newest-first
+ordering, and two extra per-entry facets:
 ``artifact_paths`` (names/paths only) and ``rollback_available``.
 
-This module never raises on a bad receipt. ``_receipt_records`` already drops
-malformed JSON silently; we re-read each receipt defensively here so a payload
-that cannot be parsed (or whose ``artifacts``/``rollback`` shape is wrong)
-surfaces as a structured ``warnings`` entry instead of crashing the timeline.
+This module never raises on a bad receipt. Storage-source diagnostics and
+payloads that cannot be parsed surface as structured ``warnings`` entries.
+Unreadable identities are retained when the source can still prove their id.
 
 No secret values are read or emitted: only artifact *paths*, a rollback boolean,
 and the already-redaction-safe record fields from ``_receipt_records``.
@@ -17,13 +17,12 @@ and the already-redaction-safe record fields from ``_receipt_records``.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import DEFAULT_RUNTIME_ROOT
 from .operation_schema import SCHEMA_VERSION, issue
-from .portability import _receipt_records
+from .receipt_sources import receipt_payload, receipt_scan
 
 KIND = "ophelia.receipt_timeline"
 
@@ -46,8 +45,7 @@ def receipt_timeline(
     correctly as strings). Malformed receipts become ``warnings`` and are
     skipped, never raised.
     """
-    warnings: List[Dict[str, str]] = []
-    records = _receipt_records(runtime_root, app=app, environment=environment)
+    records, warnings = receipt_scan(runtime_root, app=app, environment=environment)
 
     entries: List[Dict[str, Any]] = []
     for record in records:
@@ -59,7 +57,7 @@ def receipt_timeline(
         if not _within_bounds(started_at, since, until):
             continue
         entry = dict(record)
-        facets = _receipt_facets(Path(str(record.get("path"))), warnings)
+        facets = _receipt_facets(record, warnings)
         entry["artifact_paths"] = facets["artifact_paths"]
         entry["rollback_available"] = facets["rollback_available"]
         entries.append(entry)
@@ -111,29 +109,25 @@ def _until_ceiling(until: str, started_at: str) -> str:
     return until
 
 
-def _receipt_facets(path: Path, warnings: List[Dict[str, str]]) -> Dict[str, Any]:
+def _receipt_facets(record: Dict[str, object], warnings: List[Dict[str, str]]) -> Dict[str, Any]:
     """Read artifact paths + rollback availability defensively.
 
-    ``_receipt_records`` already tolerated unreadable files; here we parse again
+    ``receipt_records`` already tolerated unreadable files; here we parse again
     so a payload that is not valid JSON, or whose ``artifacts``/``rollback`` keys
     have the wrong shape, becomes a warning rather than a crash.
     """
     facets: Dict[str, Any] = {"artifact_paths": [], "rollback_available": False}
-    try:
-        raw = path.read_text()
-    except OSError as exc:
-        warnings.append(issue("receipt_unreadable", f"Could not read receipt: {exc}", str(path)))
+    if record.get("payload_readable") is False:
         return facets
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        warnings.append(issue("receipt_unreadable", f"Receipt is not valid JSON: {exc}", str(path)))
-        return facets
+    payload = receipt_payload(record)
     if not isinstance(payload, dict):
-        warnings.append(issue("receipt_unreadable", "Receipt payload is not a JSON object.", str(path)))
+        locator = str(record.get("path") or "unknown")
+        warnings.append(issue("receipt_unreadable", "Receipt payload is not readable JSON.", locator))
         return facets
 
-    artifacts = payload.get("artifacts")
+    terminal = payload.get("ophelia_receipt")
+    receipt = terminal if isinstance(terminal, dict) else payload
+    artifacts = receipt.get("artifacts")
     if isinstance(artifacts, list):
         for item in artifacts:
             if isinstance(item, dict):
@@ -143,14 +137,19 @@ def _receipt_facets(path: Path, warnings: List[Dict[str, str]]) -> Dict[str, Any
             elif isinstance(item, str) and item:
                 facets["artifact_paths"].append(item)
 
-    rollback = payload.get("rollback")
+    rollback = receipt.get("rollback")
     if isinstance(rollback, dict):
         facets["rollback_available"] = bool(rollback.get("available"))
+    elif (
+        receipt.get("kind") == "ophelia.kernel.terminal_receipt"
+        and receipt.get("operation") in {"deploy.apply", "rollback.apply"}
+    ):
+        facets["rollback_available"] = bool(receipt.get("previous_revision_id"))
     return facets
 
 
 def _summary(entries: List[Dict[str, Any]], warnings: List[Dict[str, str]]) -> str:
     base = f"{len(entries)} receipt(s) on the timeline"
     if warnings:
-        base += f", {len(warnings)} unreadable receipt(s) skipped"
+        base += f", {len(warnings)} warning(s)"
     return base + "."

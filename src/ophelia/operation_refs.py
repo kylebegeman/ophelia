@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import DEFAULT_RUNTIME_ROOT
 from .operation_schema import issue
 from .receipt_index import receipt_timeline
+from .receipt_sources import receipt_payload
 from .redaction import deep_redact
 
 
@@ -18,6 +19,7 @@ def resolve_receipt_ref(
     environment: Optional[str] = None,
     operation: Optional[str] = None,
     status: Optional[str] = None,
+    operation_filter: Optional[Callable[[str], bool]] = None,
 ) -> Dict[str, Any]:
     """Resolve a receipt reference to one deterministic receipt record.
 
@@ -28,16 +30,60 @@ def resolve_receipt_ref(
     - ``latest``
     - ``latest:<app>`` or ``latest:<operation>``
     """
-    return _resolve_ref(
+    timeline = receipt_timeline(
+        runtime_root,
+        environment=environment,
+        status=status,
+    )
+    records = timeline.get("receipts") if isinstance(timeline.get("receipts"), list) else []
+    if operation_filter is not None:
+        records = [
+            record
+            for record in records
+            if isinstance(record, dict)
+            and operation_filter(str(record.get("operation") or ""))
+        ]
+    resolution = _resolve_ref(
         reference,
         target="receipt",
-        records_loader=lambda: _receipt_records(runtime_root, environment=environment, status=status),
+        records_loader=lambda: [record for record in records if isinstance(record, dict)],
         id_key="receipt_id",
         app=app,
         environment=environment,
         operation=operation,
         status=status,
     )
+    if resolution.get("ok") and operation_filter is not None:
+        record = resolution.get("record") if isinstance(resolution.get("record"), dict) else {}
+        resolved_operation = str(record.get("operation") or "")
+        if not operation_filter(resolved_operation):
+            resolution["ok"] = False
+            resolution["payload"] = None
+            resolution["blockers"] = [
+                *(
+                    resolution.get("blockers", [])
+                    if isinstance(resolution.get("blockers"), list)
+                    else []
+                ),
+                issue(
+                    "operation_ref_operation_mismatch",
+                    f"Reference operation '{resolved_operation or 'unknown'}' is not allowed for this command.",
+                ),
+            ]
+    timeline_warnings = (
+        timeline.get("warnings") if isinstance(timeline.get("warnings"), list) else []
+    )
+    resolution["warnings"] = _dedupe_issues(
+        [
+            *(
+                resolution.get("warnings")
+                if isinstance(resolution.get("warnings"), list)
+                else []
+            ),
+            *(item for item in timeline_warnings if isinstance(item, dict)),
+        ]
+    )
+    return resolution
 
 
 def resolve_workflow_ref(
@@ -180,11 +226,53 @@ def _resolve_path_reference(
     operation: Optional[str],
     status: Optional[str],
 ) -> Optional[Dict[str, Any]]:
+    if target == "receipt" and requested.startswith("sqlite:"):
+        base = _base_resolution(requested, target)
+        payload = receipt_payload(requested)
+        if not isinstance(payload, dict):
+            base["strategy"] = "path"
+            base["path"] = requested
+            base["blockers"].append(
+                issue("operation_ref_unreadable", f"Could not read {target} locator: {requested}.")
+            )
+            return base
+        record = _record_from_payload(Path(requested.rpartition("/")[2]), payload, id_key)
+        record["path"] = requested
+        record["source"] = "journal"
+        scope_blockers = _scope_blockers(
+            record,
+            app=app,
+            environment=environment,
+            operation=operation,
+            status=status,
+        )
+        if scope_blockers:
+            base["strategy"] = "path"
+            base["path"] = requested
+            base["record"] = record
+            base["blockers"].extend(scope_blockers)
+            return base
+        base.update(
+            {
+                "ok": True,
+                "strategy": "path",
+                "resolved_id": record.get(id_key),
+                "path": requested,
+                "record": record,
+                "payload": payload,
+            }
+        )
+        return base
+
     candidate_path = Path(requested).expanduser()
     if not candidate_path.exists() or not candidate_path.is_file():
         return None
     base = _base_resolution(requested, target)
-    payload = _read_json(candidate_path)
+    payload = (
+        receipt_payload(candidate_path)
+        if target == "receipt"
+        else _read_json(candidate_path)
+    )
     if not isinstance(payload, dict):
         base["strategy"] = "path"
         base["path"] = str(candidate_path)
@@ -211,12 +299,6 @@ def _resolve_path_reference(
     return base
 
 
-def _receipt_records(runtime_root: Path, *, environment: Optional[str], status: Optional[str]) -> List[Dict[str, Any]]:
-    timeline = receipt_timeline(runtime_root, environment=environment, status=status)
-    records = timeline.get("receipts") if isinstance(timeline.get("receipts"), list) else []
-    return [record for record in records if isinstance(record, dict)]
-
-
 def _workflow_records(runtime_root: Path) -> List[Dict[str, Any]]:
     root = Path(runtime_root) / "workflows"
     records: List[Dict[str, Any]] = []
@@ -236,17 +318,29 @@ def _workflow_records(runtime_root: Path) -> List[Dict[str, Any]]:
 
 
 def _record_from_payload(path: Path, payload: Dict[str, Any], id_key: str) -> Dict[str, Any]:
-    resolved_id = _payload_id(path, payload, id_key)
+    terminal = payload.get("ophelia_receipt")
+    record_payload = terminal if id_key == "receipt_id" and isinstance(terminal, dict) else payload
+    resolved_id = _payload_id(path, record_payload, id_key)
     return {
         id_key: resolved_id,
-        "receipt_id": resolved_id if id_key == "receipt_id" else payload.get("receipt_id"),
-        "workflow_id": resolved_id if id_key == "workflow_id" else payload.get("workflow_id"),
-        "operation": payload.get("operation"),
-        "status": payload.get("status"),
-        "app": payload.get("app"),
-        "environment": payload.get("environment"),
-        "started_at": payload.get("started_at") or payload.get("created_at") or payload.get("applied_at"),
-        "completed_at": payload.get("completed_at") or payload.get("created_at") or payload.get("applied_at"),
+        "receipt_id": resolved_id if id_key == "receipt_id" else record_payload.get("receipt_id"),
+        "workflow_id": resolved_id if id_key == "workflow_id" else record_payload.get("workflow_id"),
+        "operation": payload.get("operation") or record_payload.get("operation"),
+        "status": payload.get("status") or record_payload.get("status") or record_payload.get("outcome"),
+        "app": payload.get("app") or record_payload.get("app"),
+        "environment": payload.get("environment") or record_payload.get("environment"),
+        "started_at": (
+            payload.get("started_at")
+            or record_payload.get("started_at")
+            or payload.get("created_at")
+            or payload.get("applied_at")
+        ),
+        "completed_at": (
+            payload.get("completed_at")
+            or record_payload.get("completed_at")
+            or payload.get("created_at")
+            or payload.get("applied_at")
+        ),
         "path": str(path),
     }
 
@@ -255,7 +349,15 @@ def _payload_id(path: Path, payload: Dict[str, Any], id_key: str) -> str:
     preferred = payload.get(id_key)
     if isinstance(preferred, str) and preferred:
         return preferred
-    for key in ("receipt_id", "operation_id", "workflow_id", "verify_id", "backup_id", "rollback_id"):
+    for key in (
+        "receipt_id",
+        "verify_id",
+        "restore_drill_id",
+        "operation_id",
+        "workflow_id",
+        "backup_id",
+        "rollback_id",
+    ):
         value = payload.get(key)
         if isinstance(value, str) and value:
             return value
@@ -340,6 +442,24 @@ def _scope_blockers(
 
 
 def _resolved(base: Dict[str, Any], record: Dict[str, Any], id_key: str, *, strategy: str) -> Dict[str, Any]:
+    payload = receipt_payload(record) if id_key == "receipt_id" else None
+    if id_key == "receipt_id" and not isinstance(payload, dict):
+        base.update(
+            {
+                "strategy": strategy,
+                "resolved_id": record.get(id_key),
+                "path": record.get("path"),
+                "record": record,
+            }
+        )
+        base["blockers"].append(
+            issue(
+                "operation_ref_unreadable",
+                f"Receipt '{record.get(id_key)}' was discovered but its payload is unreadable.",
+                str(record.get("path") or ""),
+            )
+        )
+        return base
     base.update(
         {
             "ok": True,
@@ -347,6 +467,7 @@ def _resolved(base: Dict[str, Any], record: Dict[str, Any], id_key: str, *, stra
             "resolved_id": record.get(id_key),
             "path": record.get("path"),
             "record": record,
+            "payload": payload,
         }
     )
     return base
@@ -366,6 +487,22 @@ def _candidate(record: Dict[str, Any], id_key: str) -> Dict[str, Any]:
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:
     try:
         payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _dedupe_issues(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    seen = set()
+    for item in items:
+        identity = (
+            str(item.get("code") or ""),
+            str(item.get("message") or ""),
+            str(item.get("path") or ""),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(item)
+    return result

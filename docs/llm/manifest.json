@@ -42,7 +42,12 @@
     {
       "label": "Roadmap",
       "path": "../ROADMAP.md",
-      "purpose": "Current 0.4.x status, next work, adoption flow, and deferred decisions."
+      "purpose": "Current 0.6.x status, next work, selected portability program, adoption flow, and deferred decisions."
+    },
+    {
+      "label": "Portability major features",
+      "path": "../features/portability-major-features.md",
+      "purpose": "Detailed later-phase specification for selected major features 1, 2, 3, 4, 5, 6, and 8."
     },
     {
       "label": "0.3.0 upgrade prompt",

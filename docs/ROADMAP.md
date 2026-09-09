@@ -80,6 +80,42 @@ non-overlapping worker and internal handoff, cron fencing metadata,
 operation-scoped migrations, transactional Caddy activation, exact local
 approval binding, and terminal kernel receipts.
 
+## Selected Portability Program
+
+The eight selected minor portability features are implemented. This completion
+pass closes the remaining gaps without changing their read-only or
+confirmation-gated safety boundaries:
+
+| # | Minor feature | Current status |
+| ---: | --- | --- |
+| 1 | App Move Readiness Checklist | Landed through `ship app readiness`, with blockers, warnings, score factors, source reports, and typed next actions. |
+| 2 | Redacted Env Shape Diff | Landed through `ship env diff`; key names and status are visible while values remain redacted. |
+| 3 | Backup Freshness Receipt | Landed through `ship backup status`; successful backup verification evidence is surfaced, otherwise validation is explicitly metadata-only. |
+| 4 | Route And Domain Conflict Scanner | Landed through `ship inspect conflicts`, including host-global on-demand TLS ask and catch-all ownership conflicts. |
+| 5 | Portability Score | Landed as a deterministic, explainable readiness score that never overrides blockers. |
+| 6 | Generated App Runbook | Landed with one structured redacted model rendered as aligned JSON and Markdown. |
+| 7 | Receipt Browser Commands | Landed across legacy files, global product wrappers, and authoritative kernel terminal receipts, with source and integrity diagnostics. |
+| 8 | Pack Init Scaffolder | Landed as preview-first scaffolding with explicit write and overwrite gates. |
+
+Major features 1, 2, 3, 4, 5, 6, and 8 are selected for a later implementation
+phase. They are specified in detail in
+[Portability Major Features](features/portability-major-features.md), with a
+[static HTML reading version](features/portability-major-features.html). The
+specification records current `0.6.x` foundations separately from remaining
+work, then defines contracts, safety invariants, recovery behavior,
+dependency-ordered slices, acceptance tests, and definitions of done.
+
+Feature 6 is a working interpretation named **Host Bootstrap And Reconcile**.
+The archived taxonomy omitted its number, while current architecture contains
+the corresponding installer, daemon, host inventory, recovery, and observation
+foundations. A later approved taxonomy correction may rename or renumber it
+without weakening the documented contract.
+
+This selected program does not replace the immediate Lumen integration work in
+[Next Practical Work](#next-practical-work). Its dependency order begins with
+contract characterization, a canonical portability domain, and isolation and
+host foundations before real import, restore, cutover, and UI completion.
+
 ## Adoption And Live-Values Phase
 
 Live values and production adoption should start only when an actual retained

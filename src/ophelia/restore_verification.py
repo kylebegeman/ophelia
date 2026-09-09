@@ -44,11 +44,11 @@ from .portability import (
     _backup_threshold_hours,
     _freshness_status,
     _read_json,
-    _restore_drill_receipts,
     _utc_now,
     resolve_app_manifest,
 )
 from .redaction import deep_redact, redact_command_string
+from .receipt_sources import receipt_payload, receipt_records
 
 VERIFY_PLAN_OPERATION = "backup.verify.plan"
 VERIFY_APPLY_OPERATION = "backup.verify.apply"
@@ -56,6 +56,14 @@ VERIFY_APPLY_OPERATION = "backup.verify.apply"
 # Where isolated rehearsals are allowed to write. Anything resolving outside
 # this subtree (or into a production app dir / the repo) is refused.
 REHEARSALS_DIRNAME = "rehearsals"
+
+
+def is_restore_drill_receipt_operation(operation: str) -> bool:
+    return (
+        operation in {VERIFY_APPLY_OPERATION, "backup.rehearse.apply"}
+        or "restore-drill" in operation
+        or "restore_drill" in operation
+    )
 
 
 def backup_verify_plan(
@@ -330,24 +338,33 @@ def restore_drills_list(
 def restore_drills_show(
     drill_id: str,
     runtime_root: Path = DEFAULT_RUNTIME_ROOT,
+    *,
+    resolved_payload: Optional[Dict[str, object]] = None,
+    receipt_locator: Optional[str] = None,
 ) -> Dict[str, object]:
     """Show one restore-drill / verification receipt by id (read-only)."""
+    if isinstance(resolved_payload, dict):
+        return _restore_drill_show_report(
+            resolved_payload,
+            drill_id,
+            requested_ref=drill_id,
+            receipt_locator=receipt_locator,
+        )
     drill_path = Path(str(drill_id)).expanduser()
     if drill_path.exists() and drill_path.is_file():
-        payload = _read_json(drill_path)
+        payload = receipt_payload(drill_path)
         if payload:
-            resolved_id = str(payload.get("verify_id") or payload.get("operation_id") or payload.get("receipt_id") or drill_path.stem)
-            return report_envelope(
-                "restore.drills.show",
-                payload.get("app") if isinstance(payload.get("app"), str) else None,
-                payload.get("environment") if isinstance(payload.get("environment"), str) else None,
-                f"Restore drill / verification receipt {resolved_id}.",
-                artifacts=[artifact(str(drill_path), "restore-drill", present=True)],
-                kind="ophelia.restore_drill",
-                drill=deep_redact(payload, propagate=True),
-                drill_id=resolved_id,
+            resolved_id = str(
+                payload.get("verify_id")
+                or payload.get("receipt_id")
+                or payload.get("operation_id")
+                or drill_path.stem
+            )
+            return _restore_drill_show_report(
+                payload,
+                resolved_id,
                 requested_ref=drill_id,
-                secrets_redacted=True,
+                receipt_locator=str(drill_path),
             )
         return report_envelope(
             "restore.drills.show",
@@ -358,32 +375,22 @@ def restore_drills_show(
             kind="ophelia.restore_drill",
             drill_id=drill_id,
         )
-    apps_root = runtime_root / "apps"
-    if apps_root.exists():
-        for app_root in sorted(path for path in apps_root.iterdir() if path.is_dir()):
-            for root in (app_root / "restore-drills", app_root / "receipts"):
-                if not root.exists():
-                    continue
-                for path in sorted(root.rglob("*.json")):
-                    payload = _read_json(path)
-                    candidate = str(
-                        payload.get("verify_id")
-                        or payload.get("operation_id")
-                        or payload.get("receipt_id")
-                        or path.stem
-                    )
-                    if candidate == drill_id:
-                        return report_envelope(
-                            "restore.drills.show",
-                            str(payload.get("app") or app_root.name or "unknown"),
-                            payload.get("environment") if isinstance(payload.get("environment"), str) else None,
-                            f"Restore drill / verification receipt {drill_id}.",
-                            artifacts=[artifact(str(path), "restore-drill", present=True)],
-                            kind="ophelia.restore_drill",
-                            drill=deep_redact(payload, propagate=True),
-                            drill_id=drill_id,
-                            secrets_redacted=True,
-                        )
+    for record in receipt_records(runtime_root):
+        if str(record.get("receipt_id") or "") != drill_id:
+            continue
+        payload = receipt_payload(record)
+        if isinstance(payload, dict):
+            return _restore_drill_show_report(
+                payload,
+                drill_id,
+                requested_ref=drill_id,
+                receipt_locator=str(record.get("path") or ""),
+                fallback_app=(
+                    record.get("app")
+                    if isinstance(record.get("app"), str)
+                    else None
+                ),
+            )
     return report_envelope(
         "restore.drills.show",
         None,
@@ -392,6 +399,56 @@ def restore_drills_show(
         blockers=[schema_issue("restore_drill_not_found", f"Restore drill not found: {drill_id}")],
         kind="ophelia.restore_drill",
         drill_id=drill_id,
+    )
+
+
+def _restore_drill_show_report(
+    payload: Dict[str, object],
+    drill_id: str,
+    *,
+    requested_ref: str,
+    receipt_locator: Optional[str],
+    fallback_app: Optional[str] = None,
+) -> Dict[str, object]:
+    nested = payload.get("ophelia_receipt")
+    terminal = nested if isinstance(nested, dict) else payload
+    operation = str(payload.get("operation") or terminal.get("operation") or "")
+    if not is_restore_drill_receipt_operation(operation):
+        return report_envelope(
+            "restore.drills.show",
+            None,
+            None,
+            f"Receipt {drill_id} is not restore-drill or backup-verification evidence.",
+            blockers=[
+                schema_issue(
+                    "restore_drill_operation_invalid",
+                    f"Receipt operation '{operation or 'unknown'}' is not valid restore-drill evidence.",
+                )
+            ],
+            kind="ophelia.restore_drill",
+            drill_id=drill_id,
+            requested_ref=requested_ref,
+            receipt_locator=receipt_locator,
+        )
+    artifacts = (
+        [artifact(receipt_locator, "restore-drill", present=True)]
+        if receipt_locator
+        else []
+    )
+    app_value = payload.get("app") or terminal.get("app")
+    environment_value = payload.get("environment") or terminal.get("environment")
+    return report_envelope(
+        "restore.drills.show",
+        app_value if isinstance(app_value, str) else fallback_app,
+        environment_value if isinstance(environment_value, str) else None,
+        f"Restore drill / verification receipt {drill_id}.",
+        artifacts=artifacts,
+        kind="ophelia.restore_drill",
+        drill=deep_redact(payload, propagate=True),
+        drill_id=drill_id,
+        requested_ref=requested_ref,
+        receipt_locator=receipt_locator,
+        secrets_redacted=True,
     )
 
 
@@ -733,51 +790,37 @@ def _resolve_manifest_for_apply(
 def _verification_and_drill_records(
     runtime_root: Path, app: str, environment: Optional[str]
 ) -> List[Dict[str, object]]:
-    """Combine restore-drill receipts and backup-verification receipts.
-
-    Reuses :func:`_restore_drill_receipts` for legacy restore-drill receipts and
-    scans the same roots for ``backup.verify.apply`` receipts. Malformed receipts
-    are skipped via :func:`_read_json` (which returns ``{}`` on bad JSON), so a
-    bad file never crashes the listing.
-    """
+    """Combine drill and verification records across every receipt backend."""
     records: List[Dict[str, object]] = []
     seen: set = set()
-
-    for receipt in _restore_drill_receipts(runtime_root, app):
-        receipt_id = str(receipt.get("receipt_id"))
-        if receipt_id in seen:
+    for record in receipt_records(runtime_root, app=app):
+        operation = str(record.get("operation") or "")
+        if not is_restore_drill_receipt_operation(operation):
             continue
+        if environment and record.get("environment") not in (None, environment):
+            continue
+        receipt_id = str(record.get("receipt_id") or "")
+        if not receipt_id or receipt_id in seen:
+            continue
+        payload = receipt_payload(record) or {}
+        nested = payload.get("ophelia_receipt")
+        terminal = nested if isinstance(nested, dict) else payload
         seen.add(receipt_id)
-        records.append({**receipt, "kind": "restore-drill"})
-
-    roots = [
-        runtime_root / "apps" / app / "restore-drills",
-        runtime_root / "apps" / app / "receipts",
-    ]
-    for root in roots:
-        if not root.exists():
-            continue
-        for path in sorted(root.rglob("*.json")):
-            payload = _read_json(path)
-            operation = str(payload.get("operation") or "")
-            if operation != VERIFY_APPLY_OPERATION:
-                continue
-            receipt_id = str(payload.get("verify_id") or payload.get("operation_id") or path.stem)
-            if receipt_id in seen:
-                continue
-            if environment and payload.get("environment") not in (None, environment):
-                continue
-            seen.add(receipt_id)
-            records.append(
-                {
-                    "receipt_id": receipt_id,
-                    "operation": operation,
-                    "status": payload.get("status"),
-                    "backup_id": payload.get("backup_id"),
-                    "path": str(path),
-                    "kind": "backup-verification",
-                }
-            )
+        records.append(
+            {
+                "receipt_id": receipt_id,
+                "operation": operation,
+                "status": record.get("status"),
+                "backup_id": payload.get("backup_id") or terminal.get("backup_id"),
+                "path": str(record.get("path") or ""),
+                "kind": (
+                    "backup-verification"
+                    if operation == VERIFY_APPLY_OPERATION
+                    else "restore-drill"
+                ),
+                "source": record.get("source"),
+            }
+        )
     return records
 
 

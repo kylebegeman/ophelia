@@ -44,6 +44,9 @@ from .redaction import (
     redacted_cloudflare_record,
     redacted_compose_text,
 )
+from .receipt_sources import receipt_payload as _receipt_payload
+from .receipt_sources import receipt_records as _unified_receipt_records
+from .receipt_sources import receipt_scan as _unified_receipt_scan
 from .runtime import active_release, active_release_id, image_references, latest_release_id
 from .templates import RUNTIME_INJECTED_ENV_KEYS, compose_network_summary, data_volume_name, render_env_example
 from .verify import run_app_owned_verifications, run_verifications, verification_checks
@@ -1620,6 +1623,7 @@ def backup_status_report(
     warnings = [schema_issue("manifest_warning", message) for message in resolution.warnings]
     blockers = [schema_issue("manifest_unresolved", message) for message in resolution.blockers]
     manifest = resolution.manifest
+    resolved_environment = environment or (manifest.environment if manifest else None) or "unknown"
     backups_root = runtime_root / "backups" / "apps" / app
     backups = _backup_records(backups_root)
     if manifest is not None:
@@ -1629,6 +1633,11 @@ def backup_status_report(
     threshold_hours = _backup_threshold_hours(manifest)
     freshness = _freshness_status(latest, threshold_hours)
     backup_required = bool(manifest and manifest.data.backups and manifest.data.backups.required)
+    latest_verification = _latest_successful_backup_verification(
+        runtime_root,
+        app,
+        resolved_environment,
+    )
     if backup_required and freshness["status"] in {"missing", "stale", "invalid"}:
         blockers.append(
             schema_issue(
@@ -1648,6 +1657,15 @@ def backup_status_report(
         },
         {"name": "latest_backup", "ok": latest is not None, "message": latest["backup_id"] if latest else "none"},
         {"name": "freshness", "ok": freshness["status"] == "fresh", "message": freshness["status"]},
+        {
+            "name": "backup_verification",
+            "ok": latest_verification is not None,
+            "message": (
+                str(latest_verification.get("verify_id") or latest_verification.get("receipt_id"))
+                if latest_verification is not None
+                else "no successful verification receipt"
+            ),
+        },
     ]
     artifacts = [
         artifact(str(item["path"]), "backup", f"Backup {item['backup_id']}", present=True)
@@ -1656,7 +1674,7 @@ def backup_status_report(
     return report_envelope(
         "backup.status",
         app,
-        environment or (manifest.environment if manifest else None) or "unknown",
+        resolved_environment,
         f"Backup status for {app}: {freshness['status']}.",
         blockers=blockers,
         warnings=warnings,
@@ -1668,7 +1686,15 @@ def backup_status_report(
         freshness=freshness,
         coverage=(latest or {}).get("coverage", {}),
         offsite_requirement=_offsite_requirement_summary(manifest),
-        validation={"status": "metadata-only", "destructive_restore_supported": False},
+        validation={
+            "status": "verified" if latest_verification is not None else "metadata-only",
+            "verify_id": latest_verification.get("verify_id") if latest_verification is not None else None,
+            "receipt_id": latest_verification.get("receipt_id") if latest_verification is not None else None,
+            "backup_id": latest_verification.get("backup_id") if latest_verification is not None else None,
+            "completed_at": latest_verification.get("completed_at") if latest_verification is not None else None,
+            "receipt_path": latest_verification.get("path") if latest_verification is not None else None,
+            "destructive_restore_supported": False,
+        },
     )
 
 
@@ -2023,57 +2049,491 @@ def app_runbook_report(
     manifest_path: Optional[Path] = None,
 ) -> Dict[str, object]:
     readiness = app_readiness_report(app, environment, runtime_root, manifest_path)
-    markdown = render_app_runbook(readiness)
+    resolution = resolve_app_manifest(app, environment, manifest_path=manifest_path)
+    generated_at = _utc_now()
+    runbook = _app_runbook_model(
+        readiness,
+        resolution.manifest,
+        resolution.manifest_path,
+        runtime_root,
+        generated_at,
+    )
+    markdown = render_app_runbook(runbook)
     return report_envelope(
         "app.runbook",
-        readiness.get("app") if isinstance(readiness.get("app"), str) else app,
-        readiness.get("environment") if isinstance(readiness.get("environment"), str) else environment,
+        str(runbook["app"]),
+        str(runbook["environment"]),
         f"Generated runbook for {app}.",
         blockers=readiness.get("blockers", []),
         warnings=readiness.get("warnings", []),
         checks=readiness.get("checks", []),
+        generated_at=generated_at,
         markdown=markdown,
+        runbook=runbook,
         readiness=readiness,
     )
 
 
-def render_app_runbook(readiness: Dict[str, object]) -> str:
-    app = str(readiness.get("app") or "unknown")
-    environment = str(readiness.get("environment") or "unknown")
+def _app_runbook_model(
+    readiness: Dict[str, object],
+    manifest: Optional[Manifest],
+    manifest_path: Optional[Path],
+    runtime_root: Path,
+    generated_at: str,
+) -> Dict[str, object]:
+    app = str(readiness.get("app") or (manifest.app if manifest is not None else "unknown"))
+    environment = str(
+        readiness.get("environment")
+        or (manifest.environment if manifest is not None else None)
+        or "unknown"
+    )
+    app_runtime = runtime_root / "apps" / app
+    routes = _app_runbook_routes(manifest)
+    services = _app_runbook_services(manifest)
+    data_dependencies = _app_runbook_data_dependencies(manifest)
+    backup = _app_runbook_backup(readiness, manifest)
+    restore = _app_runbook_restore(readiness, manifest)
+    release = readiness.get("release") if isinstance(readiness.get("release"), dict) else {}
+    score = readiness.get("portability_score") if isinstance(readiness.get("portability_score"), dict) else {}
+    blockers = _app_runbook_findings(readiness.get("blockers"))
+    warnings = _app_runbook_findings(readiness.get("warnings"))
+    next_actions = _app_runbook_next_actions(readiness.get("next_actions"))
+    operations = _app_runbook_operations(
+        app,
+        environment,
+        manifest_path,
+        runtime_root,
+    )
+    manifest_resolved = manifest is not None and manifest_path is not None
+    return {
+        "schema_version": 1,
+        "kind": "ophelia.app_runbook",
+        "generated_at": generated_at,
+        "app": app,
+        "environment": environment,
+        "app_kind": manifest.kind if manifest is not None else None,
+        "manifest_resolved": manifest_resolved,
+        "readiness_level": readiness.get("readiness_level") or readiness.get("status") or "unknown",
+        "portability_score": {
+            "score": score.get("score"),
+            "level": score.get("level"),
+        },
+        "sources": {
+            "manifest_path": str(manifest_path) if manifest_resolved else None,
+            "runtime_path": str(app_runtime),
+            "release_metadata_path": str(app_runtime / "active_release.json"),
+            "backup_path": str(runtime_root / "backups" / "apps" / app),
+            "receipt_path": str(app_runtime / "receipts"),
+        },
+        "routes": routes,
+        "services": services,
+        "data_dependencies": data_dependencies,
+        "backup": backup,
+        "restore": restore,
+        "release": {
+            "present": bool(release.get("present")),
+            "release_id": release.get("release_id"),
+        },
+        "operations": operations,
+        "blockers": blockers,
+        "warnings": warnings,
+        "next_actions": next_actions,
+        "rollback_and_recovery": [
+            "Readiness, status, planning, and runbook generation are read-only.",
+            "Every mutating command requires a fresh token from its matching plan and writes a receipt.",
+            "Export and backup operations do not delete source data.",
+            "Import and restore-drill apply remain isolated from the active runtime.",
+            "Plan rollback against an explicit retained release before applying it.",
+        ],
+        "values_redacted": True,
+    }
+
+
+def _app_runbook_routes(manifest: Optional[Manifest]) -> List[Dict[str, object]]:
+    if manifest is None:
+        return []
+    routes: List[Dict[str, object]] = []
+    for route in manifest.routes:
+        if route.path is not None:
+            match = route.path
+            match_kind = "path"
+        elif route.path_prefix is not None:
+            match = route.path_prefix
+            match_kind = "path_prefix"
+        else:
+            match = "/"
+            match_kind = "all"
+        routes.append(
+            {
+                "domain": route.domain.lower().rstrip("."),
+                "match": match,
+                "match_kind": match_kind,
+                "service": route.service,
+                "target_kind": "service" if route.service else "upstream" if route.upstream else manifest.kind,
+            }
+        )
+    return sorted(
+        routes,
+        key=lambda item: (
+            str(item["domain"]),
+            str(item["match_kind"]),
+            str(item["match"]),
+            str(item.get("service") or ""),
+        ),
+    )
+
+
+def _app_runbook_services(manifest: Optional[Manifest]) -> List[Dict[str, object]]:
+    if manifest is None:
+        return []
+    services: List[Dict[str, object]] = []
+    for name, service in sorted(manifest.services.items()):
+        image = service.image or manifest.image
+        services.append(
+            {
+                "name": name,
+                "port": service.port,
+                "host_port": service.host_port,
+                "image_digest_pinned": bool(image and "@sha256:" in image),
+                "mount_count": len(service.mounts),
+            }
+        )
+    return services
+
+
+def _app_runbook_data_dependencies(manifest: Optional[Manifest]) -> List[Dict[str, object]]:
+    if manifest is None:
+        return []
+    dependencies: List[Dict[str, object]] = []
+    for kind, service in (("postgres", manifest.data.postgres), ("redis", manifest.data.redis)):
+        if service is None:
+            continue
+        dependencies.append(
+            {
+                "id": f"{kind}:{service.mode}",
+                "kind": kind,
+                "mode": service.mode,
+                "service": service.service,
+                "database": service.database if kind == "postgres" else None,
+                "class": service.class_name,
+                "durable": service.durable,
+                "inferred_from_addon": service.inferred_from_addon,
+                "export_declared": bool(service.export),
+                "import_declared": bool(service.import_config),
+                "verify_declared": bool(service.verify),
+            }
+        )
+    for volume in manifest.data.volumes:
+        dependencies.append(
+            {
+                "id": f"volume:{volume.name}",
+                "kind": "volume",
+                "name": volume.name,
+                "service": volume.service,
+                "mount": volume.mount,
+                "class": volume.class_name,
+                "export_declared": bool(volume.export),
+                "import_declared": bool(volume.import_config),
+                "verify_declared": bool(volume.verify),
+            }
+        )
+    aggregate_kinds = (
+        ("object_storage", manifest.data.object_storage),
+        ("static_asset", manifest.data.static_assets),
+        ("external_service", manifest.data.external_services),
+    )
+    for kind, entries in aggregate_kinds:
+        for index, _entry in enumerate(entries, start=1):
+            dependencies.append(
+                {
+                    "id": f"{kind}:{index}",
+                    "kind": kind,
+                    "metadata_redacted": True,
+                }
+            )
+    return sorted(dependencies, key=lambda item: str(item["id"]))
+
+
+def _app_runbook_backup(
+    readiness: Dict[str, object],
+    manifest: Optional[Manifest],
+) -> Dict[str, object]:
+    report = readiness.get("backup_status") if isinstance(readiness.get("backup_status"), dict) else {}
+    freshness = report.get("freshness") if isinstance(report.get("freshness"), dict) else {}
+    latest = report.get("latest_backup") if isinstance(report.get("latest_backup"), dict) else {}
+    backups = manifest.data.backups if manifest is not None else None
+    return deep_redact(
+        {
+            "required": bool(backups and backups.required),
+            "status": report.get("status") or freshness.get("status") or "unknown",
+            "count": report.get("backup_count", 0),
+            "freshness": {
+                "status": freshness.get("status") or "unknown",
+                "age_hours": freshness.get("age_hours"),
+                "threshold_hours": freshness.get("threshold_hours"),
+            },
+            "latest": {
+                "backup_id": latest.get("backup_id"),
+                "created_at": latest.get("created_at"),
+                "source": latest.get("source"),
+            },
+            "offsite_required": bool(backups and backups.offsite_required),
+            "offsite_configured": bool(
+                isinstance(report.get("offsite_requirement"), dict)
+                and report["offsite_requirement"].get("configured")
+            ),
+        }
+    )
+
+
+def _app_runbook_restore(
+    readiness: Dict[str, object],
+    manifest: Optional[Manifest],
+) -> Dict[str, object]:
+    receipts = (
+        readiness.get("restore_drill_receipts")
+        if isinstance(readiness.get("restore_drill_receipts"), list)
+        else []
+    )
+    safe_receipts = [
+        {
+            "receipt_id": item.get("receipt_id"),
+            "operation": item.get("operation"),
+            "status": item.get("status"),
+        }
+        for item in receipts
+        if isinstance(item, dict)
+    ]
+    safe_receipts.sort(key=lambda item: (str(item.get("receipt_id") or ""), str(item.get("operation") or "")))
+    source_reports = readiness.get("source_reports") if isinstance(readiness.get("source_reports"), dict) else {}
+    verification = (
+        source_reports.get("backup_verification")
+        if isinstance(source_reports.get("backup_verification"), dict)
+        else {}
+    )
+    backups = manifest.data.backups if manifest is not None else None
+    return {
+        "drill_required": bool(backups and backups.restore_drill_required),
+        "drill_receipt_count": len(safe_receipts),
+        "latest_drill": safe_receipts[-1] if safe_receipts else None,
+        "verification": {
+            "status": verification.get("status") or "missing",
+            "verify_id": verification.get("verify_id"),
+            "backup_id": verification.get("backup_id"),
+        },
+    }
+
+
+def _app_runbook_operations(
+    app: str,
+    environment: str,
+    manifest_path: Optional[Path],
+    runtime_root: Path,
+) -> Dict[str, str]:
+    manifest_arg = shlex.quote(str(manifest_path)) if manifest_path is not None else "<manifest>"
+    runtime_arg = shlex.quote(str(runtime_root))
+    common = f"--environment {shlex.quote(environment)} --manifest {manifest_arg} --runtime-root {runtime_arg} --json"
+    app_arg = shlex.quote(app)
+    return {
+        "validate_pack": f"./cli/ship pack validate {manifest_arg} --json",
+        "readiness": f"./cli/ship app readiness {app_arg} {common}",
+        "deploy_plan": f"./cli/ship deploy {manifest_arg} --plan --runtime-root {runtime_arg} --json",
+        "deploy_apply": f"./cli/ship deploy {manifest_arg} --apply --runtime-root {runtime_arg} --confirm <confirmation-token> --json",
+        "backup_status": f"./cli/ship backup status {app_arg} {common}",
+        "backup_plan": f"./cli/ship backup plan {app_arg} --runtime-root {runtime_arg} --json",
+        "export_plan": f"./cli/ship app export plan {app_arg} {common}",
+        "import_plan": f"./cli/ship app import plan <export-bundle> --runtime-root {runtime_arg} --json",
+        "restore_drill_plan": f"./cli/ship app restore-drill plan {app_arg} {common}",
+        "rollback_plan": f"./cli/ship rollback plan {app_arg} <release-id> --runtime-root {runtime_arg} --json",
+        "receipts": f"./cli/ship receipts timeline --app {app_arg} --environment {shlex.quote(environment)} --runtime-root {runtime_arg} --json",
+    }
+
+
+def _app_runbook_findings(value: object) -> List[Dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    findings: List[Dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            findings.append({"code": "issue", "message": deep_redact(str(item))})
+            continue
+        findings.append(
+            deep_redact(
+                {
+                    "code": str(item.get("code") or item.get("type") or "issue"),
+                    "message": str(item.get("message") or "Operational review required."),
+                    "path": str(item.get("path")) if item.get("path") else None,
+                }
+            )
+        )
+    return findings
+
+
+def _app_runbook_next_actions(value: object) -> List[Dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    actions: List[Dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        command = item.get("command")
+        actions.append(
+            {
+                "code": str(item.get("code") or "action"),
+                "area": str(item.get("area") or "review"),
+                "summary": deep_redact(str(item.get("summary") or "Review the finding.")),
+                "command": redact_command_string(str(command)) if command else None,
+            }
+        )
+    return actions
+
+
+def render_app_runbook(runbook: Dict[str, object]) -> str:
+    app = str(runbook.get("app") or "unknown")
+    environment = str(runbook.get("environment") or "unknown")
+    score = runbook.get("portability_score") if isinstance(runbook.get("portability_score"), dict) else {}
     lines = [
         f"# {app} {environment} Runbook",
         "",
-        f"Generated: {_utc_now()}",
+        f"Generated: {runbook.get('generated_at') or 'unknown'}",
         "",
-        f"Readiness: {readiness.get('readiness_level', readiness.get('status', 'unknown'))}",
+        f"Readiness: {runbook.get('readiness_level', 'unknown')}",
+        f"Portability score: {score.get('score', 'unknown')} ({score.get('level', 'unknown')})",
         "",
-        "## Commands",
-        "",
-        "- Validate pack: `./cli/ship pack validate <manifest> --json`",
-        f"- Check readiness: `./cli/ship app readiness {app} --environment {environment} --json`",
-        f"- Plan export: `./cli/ship app export plan {app} --environment {environment} --json`",
-        f"- Check backups: `./cli/ship backup status {app} --environment {environment} --json`",
-        "",
-        "## Blockers",
+        "## Sources",
         "",
     ]
-    blockers = readiness.get("blockers") if isinstance(readiness.get("blockers"), list) else []
-    if blockers:
-        lines.extend(f"- {item.get('message') if isinstance(item, dict) else item}" for item in blockers)
+    sources = runbook.get("sources") if isinstance(runbook.get("sources"), dict) else {}
+    if not runbook.get("manifest_resolved"):
+        lines.append("- Manifest unresolved")
+    for label, value in sources.items():
+        lines.append(f"- {str(label).replace('_', ' ').title()}: `{value if value is not None else 'unknown'}`")
+
+    lines.extend(["", "## Routes", ""])
+    routes = runbook.get("routes") if isinstance(runbook.get("routes"), list) else []
+    if routes:
+        for item in routes:
+            if not isinstance(item, dict):
+                continue
+            service = item.get("service") or item.get("target_kind") or "unknown"
+            lines.append(
+                f"- `{item.get('domain')}` `{item.get('match_kind')}:{item.get('match')}` to `{service}`"
+            )
     else:
         lines.append("- none")
-    lines.extend(["", "## Warnings", ""])
-    warnings = readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else []
-    if warnings:
-        lines.extend(f"- {item.get('message') if isinstance(item, dict) else item}" for item in warnings)
+
+    lines.extend(["", "## Services", ""])
+    services = runbook.get("services") if isinstance(runbook.get("services"), list) else []
+    if services:
+        for item in services:
+            if not isinstance(item, dict):
+                continue
+            host_port = f", host port {item.get('host_port')}" if item.get("host_port") is not None else ""
+            digest = "digest pinned" if item.get("image_digest_pinned") else "image not digest pinned"
+            lines.append(f"- `{item.get('name')}`: port {item.get('port')}{host_port}, {digest}")
     else:
         lines.append("- none")
-    lines.extend(["", "## Backup Status", ""])
-    backup = readiness.get("backup_status") if isinstance(readiness.get("backup_status"), dict) else {}
+
+    lines.extend(["", "## Data Dependencies", ""])
+    dependencies = (
+        runbook.get("data_dependencies") if isinstance(runbook.get("data_dependencies"), list) else []
+    )
+    if dependencies:
+        for item in dependencies:
+            if not isinstance(item, dict):
+                continue
+            details = [str(item.get("kind") or "unknown")]
+            if item.get("mode"):
+                details.append(str(item["mode"]))
+            if item.get("mount"):
+                details.append(f"mount {item['mount']}")
+            if item.get("export_declared") is not None:
+                details.append(f"export {'declared' if item.get('export_declared') else 'missing'}")
+            if item.get("import_declared") is not None:
+                details.append(f"import {'declared' if item.get('import_declared') else 'missing'}")
+            lines.append(f"- `{item.get('id')}`: {', '.join(details)}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Backup And Restore", ""])
+    backup = runbook.get("backup") if isinstance(runbook.get("backup"), dict) else {}
     freshness = backup.get("freshness") if isinstance(backup.get("freshness"), dict) else {}
-    lines.append(f"- Status: {freshness.get('status', 'unknown')}")
-    lines.append(f"- Latest backup: {(backup.get('latest_backup') or {}).get('backup_id') if isinstance(backup.get('latest_backup'), dict) else 'none'}")
-    lines.extend(["", "## Rollback Notes", "", "- Export and readiness checks do not mutate runtime state."])
+    latest = backup.get("latest") if isinstance(backup.get("latest"), dict) else {}
+    restore = runbook.get("restore") if isinstance(runbook.get("restore"), dict) else {}
+    verification = restore.get("verification") if isinstance(restore.get("verification"), dict) else {}
+    lines.extend(
+        [
+            f"- Backup required: {bool(backup.get('required'))}",
+            f"- Freshness: {freshness.get('status', 'unknown')}",
+            f"- Latest backup: {latest.get('backup_id') or 'none'}",
+            f"- Offsite required/configured: {bool(backup.get('offsite_required'))}/{bool(backup.get('offsite_configured'))}",
+            f"- Restore drill required: {bool(restore.get('drill_required'))}",
+            f"- Restore drill receipts: {restore.get('drill_receipt_count', 0)}",
+            f"- Backup verification: {verification.get('status', 'missing')}",
+        ]
+    )
+
+    lines.extend(["", "## Release", ""])
+    release = runbook.get("release") if isinstance(runbook.get("release"), dict) else {}
+    lines.extend(
+        [
+            f"- Active release present: {bool(release.get('present'))}",
+            f"- Release id: {release.get('release_id') or 'none'}",
+        ]
+    )
+
+    lines.extend(["", "## Operations", ""])
+    operations = runbook.get("operations") if isinstance(runbook.get("operations"), dict) else {}
+    for name, command in operations.items():
+        lines.append(f"- {str(name).replace('_', ' ').title()}: `{command}`")
+
+    lines.extend(["", "## Risks And Next Actions", "", "### Blockers", ""])
+    blockers = runbook.get("blockers") if isinstance(runbook.get("blockers"), list) else []
+    if blockers:
+        lines.extend(
+            f"- `{item.get('code')}`: {item.get('message')}"
+            for item in blockers
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend(["", "### Warnings", ""])
+    warnings = runbook.get("warnings") if isinstance(runbook.get("warnings"), list) else []
+    if warnings:
+        lines.extend(
+            f"- `{item.get('code')}`: {item.get('message')}"
+            for item in warnings
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- none")
+    lines.extend(["", "### Next Actions", ""])
+    next_actions = runbook.get("next_actions") if isinstance(runbook.get("next_actions"), list) else []
+    if next_actions:
+        for item in next_actions:
+            if not isinstance(item, dict):
+                continue
+            command = f" Run `{item.get('command')}`." if item.get("command") else ""
+            lines.append(f"- `{item.get('code')}`: {item.get('summary')}.{command}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Rollback And Recovery", ""])
+    recovery = (
+        runbook.get("rollback_and_recovery")
+        if isinstance(runbook.get("rollback_and_recovery"), list)
+        else []
+    )
+    if recovery:
+        lines.extend(f"- {item}" for item in recovery)
+    else:
+        lines.append("- Review the latest receipt before recovery.")
+    lines.extend(
+        [
+            "",
+            "Values and secret-bearing command metadata are redacted from this runbook.",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -2290,32 +2750,82 @@ def receipt_list_report(
     app: Optional[str] = None,
     environment: Optional[str] = None,
 ) -> Dict[str, object]:
-    receipts = _receipt_records(runtime_root, app=app, environment=environment)
+    receipts, warnings = _unified_receipt_scan(
+        runtime_root,
+        app=app,
+        environment=environment,
+    )
     return report_envelope(
         "receipts.list",
         app,
         environment,
         f"Found {len(receipts)} receipt(s).",
-        checks=[{"name": "receipt_scan", "ok": True, "message": str(runtime_root)}],
+        warnings=warnings,
+        checks=[{"name": "receipt_scan", "ok": not warnings, "message": str(runtime_root)}],
         receipts=receipts,
     )
 
 
 def receipt_show_report(receipt_id: str, runtime_root: Path = DEFAULT_RUNTIME_ROOT) -> Dict[str, object]:
-    receipt_path = Path(str(receipt_id)).expanduser()
-    if receipt_path.exists() and receipt_path.is_file():
-        payload = _read_json(receipt_path)
+    if str(receipt_id).startswith("sqlite:"):
+        payload = _receipt_payload(receipt_id)
         if payload:
-            resolved_id = _receipt_id(receipt_path, payload)
+            display_payload, display_warnings = _receipt_display_payload(payload)
+            resolved_id = str(payload.get("receipt_id") or str(receipt_id).rpartition("/")[2])
             return report_envelope(
                 "receipts.show",
                 payload.get("app") if isinstance(payload.get("app"), str) else None,
                 payload.get("environment") if isinstance(payload.get("environment"), str) else None,
                 f"Receipt {resolved_id}.",
-                artifacts=[artifact(str(receipt_path), "receipt", present=True)],
-                receipt=payload,
+                warnings=display_warnings,
+                artifacts=[artifact(str(receipt_id), "receipt", present=True)],
+                receipt=display_payload,
                 receipt_id=resolved_id,
                 requested_ref=receipt_id,
+                receipt_source="journal",
+                receipt_locator=receipt_id,
+            )
+        return report_envelope(
+            "receipts.show",
+            None,
+            None,
+            f"Receipt locator is unreadable: {receipt_id}.",
+            blockers=[schema_issue("receipt_unreadable", f"Could not read receipt locator: {receipt_id}")],
+            receipt_id=receipt_id,
+        )
+    receipt_path = Path(str(receipt_id)).expanduser()
+    if receipt_path.exists() and receipt_path.is_file():
+        payload = _receipt_payload(receipt_path)
+        if payload:
+            nested = payload.get("ophelia_receipt")
+            terminal = nested if isinstance(nested, dict) else payload
+            display_payload, display_warnings = _receipt_display_payload(payload)
+            resolved_id = _receipt_id(receipt_path, terminal)
+            source = (
+                "product"
+                if payload.get("kind")
+                in {
+                    "ophelia.product-operation-receipt",
+                    "ophelia.product-recovery-receipt",
+                }
+                else "file"
+            )
+            return report_envelope(
+                "receipts.show",
+                str(payload.get("app") or terminal.get("app"))
+                if payload.get("app") or terminal.get("app")
+                else None,
+                str(payload.get("environment") or terminal.get("environment"))
+                if payload.get("environment") or terminal.get("environment")
+                else None,
+                f"Receipt {resolved_id}.",
+                warnings=display_warnings,
+                artifacts=[artifact(str(receipt_path), "receipt", present=True)],
+                receipt=display_payload,
+                receipt_id=resolved_id,
+                requested_ref=receipt_id,
+                receipt_source=source,
+                receipt_locator=str(receipt_path),
             )
         return report_envelope(
             "receipts.show",
@@ -2325,18 +2835,48 @@ def receipt_show_report(receipt_id: str, runtime_root: Path = DEFAULT_RUNTIME_RO
             blockers=[schema_issue("receipt_unreadable", f"Could not read receipt JSON: {receipt_path}")],
             receipt_id=receipt_id,
         )
-    receipts = _receipt_records(runtime_root)
+    receipts, source_warnings = _unified_receipt_scan(runtime_root)
     for record in receipts:
         if record["receipt_id"] == receipt_id:
-            payload = _read_json(Path(str(record["path"])))
+            payload = _receipt_payload(record)
+            if not isinstance(payload, dict):
+                return report_envelope(
+                    "receipts.show",
+                    record.get("app") if isinstance(record.get("app"), str) else None,
+                    record.get("environment")
+                    if isinstance(record.get("environment"), str)
+                    else None,
+                    f"Receipt payload is unreadable: {receipt_id}.",
+                    warnings=source_warnings,
+                    blockers=[
+                        schema_issue(
+                            "receipt_unreadable",
+                            f"Receipt was discovered but its payload could not be read: {receipt_id}",
+                            str(record.get("path") or ""),
+                        )
+                    ],
+                    receipt_id=receipt_id,
+                    receipt_source=record.get("source") or "file",
+                    receipt_locator=record.get("path"),
+                )
+            display_payload, display_warnings = _receipt_display_payload(payload)
             return report_envelope(
                 "receipts.show",
                 str(payload.get("app") or record.get("app") or "unknown"),
-                payload.get("environment") if isinstance(payload.get("environment"), str) else None,
+                str(payload.get("environment") or record.get("environment"))
+                if payload.get("environment") or record.get("environment")
+                else None,
                 f"Receipt {receipt_id}.",
+                warnings=_dedupe_receipt_warnings([*source_warnings, *display_warnings]),
                 artifacts=[artifact(str(record["path"]), "receipt", present=True)],
-                receipt=payload,
+                receipt=display_payload,
                 receipt_id=receipt_id,
+                receipt_source=record.get("source") or "file",
+                receipt_locator=record.get("path"),
+                receipt_sources=record.get("sources") or [record.get("source") or "file"],
+                receipt_locators=record.get("receipt_locators") or [record.get("path")],
+                journal_locator=record.get("journal_locator"),
+                product_receipt_path=record.get("product_receipt_path"),
             )
     return report_envelope(
         "receipts.show",
@@ -2344,8 +2884,51 @@ def receipt_show_report(receipt_id: str, runtime_root: Path = DEFAULT_RUNTIME_RO
         None,
         f"Receipt not found: {receipt_id}.",
         blockers=[schema_issue("receipt_not_found", f"Receipt not found: {receipt_id}")],
+        warnings=source_warnings,
         receipt_id=receipt_id,
     )
+
+
+def _receipt_display_payload(
+    payload: Dict[str, object],
+) -> Tuple[Dict[str, object], List[Dict[str, str]]]:
+    terminal = payload.get("ophelia_receipt")
+    terminal_payload = terminal if isinstance(terminal, dict) else payload
+    declared_redacted = payload.get(
+        "inputs_redacted",
+        terminal_payload.get("inputs_redacted"),
+    )
+    warnings: List[Dict[str, str]] = []
+    if declared_redacted is False:
+        warnings.append(
+            schema_issue(
+                "receipt_inputs_not_redacted",
+                "The receipt declares unredacted inputs; display output was defensively redacted.",
+            )
+        )
+    safe_payload = deep_redact(payload, propagate=True)
+    return (
+        safe_payload if isinstance(safe_payload, dict) else {},
+        warnings,
+    )
+
+
+def _dedupe_receipt_warnings(
+    warnings: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    seen = set()
+    for warning in warnings:
+        identity = (
+            str(warning.get("code") or ""),
+            str(warning.get("message") or ""),
+            str(warning.get("path") or ""),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(warning)
+    return result
 
 
 def restore_drill_plan(
@@ -3320,8 +3903,10 @@ def traffic_status(
     records = _receipt_records(runtime_root, app=app, environment=environment)
     apply_record = _latest_record_for(records, "app.traffic.apply")
     rollback_record = _latest_record_for(records, "app.traffic.rollback.apply")
-    apply_receipt = _read_json(Path(str(apply_record["path"]))) if apply_record else {}
-    rollback_receipt = _read_json(Path(str(rollback_record["path"]))) if rollback_record else {}
+    apply_receipt = _receipt_payload(apply_record) if apply_record else {}
+    rollback_receipt = _receipt_payload(rollback_record) if rollback_record else {}
+    apply_receipt = apply_receipt or {}
+    rollback_receipt = rollback_receipt or {}
 
     resolved_environment = str(
         environment
@@ -4527,11 +5112,12 @@ def _load_traffic_receipt(receipt_id: str, runtime_root: Path, app: str) -> Tupl
         return {}, receipt_path, [f"Could not read receipt JSON: {receipt_path}"]
     for record in _receipt_records(runtime_root, app=app):
         if record.get("receipt_id") == receipt_id:
-            path = Path(str(record["path"]))
-            payload = _read_json(path)
+            payload = _receipt_payload(record) or {}
+            locator = str(record["path"])
+            path = Path(str(record.get("storage_path") or locator))
             if payload:
                 return payload, path, []
-            return {}, path, [f"Could not read receipt JSON: {path}"]
+            return {}, path, [f"Could not read receipt: {locator}"]
     return {}, None, [f"Traffic receipt not found: {receipt_id}"]
 
 
@@ -5103,26 +5689,23 @@ def _issue_message_from_mapping(item: Dict[str, object], code: str) -> str:
 
 
 def _restore_drill_receipts(runtime_root: Path, app: str) -> List[Dict[str, object]]:
-    roots = [
-        runtime_root / "apps" / app / "restore-drills",
-        runtime_root / "apps" / app / "receipts",
-    ]
     receipts: List[Dict[str, object]] = []
-    for root in roots:
-        if not root.exists():
+    for record in _unified_receipt_records(runtime_root, app=app):
+        operation = str(record.get("operation") or "")
+        if (
+            "restore-drill" not in operation
+            and "restore_drill" not in operation
+            and operation != "backup.rehearse.apply"
+        ):
             continue
-        for path in sorted(root.rglob("*.json")):
-            payload = _read_json(path)
-            operation = str(payload.get("operation") or "")
-            if "restore-drill" in operation or "restore_drill" in operation or operation == "backup.rehearse.apply":
-                receipts.append(
-                    {
-                        "receipt_id": str(payload.get("operation_id") or path.stem),
-                        "operation": operation,
-                        "status": payload.get("status"),
-                        "path": str(path),
-                    }
-                )
+        receipts.append(
+            {
+                "receipt_id": str(record.get("receipt_id") or "unknown"),
+                "operation": operation,
+                "status": record.get("status"),
+                "path": str(record.get("path") or ""),
+            }
+        )
     return receipts
 
 
@@ -5131,39 +5714,38 @@ def _latest_successful_backup_verification(
 ) -> Optional[Dict[str, object]]:
     """Return the latest *succeeded* ``backup.verify.apply`` receipt for an app.
 
-    Scans the same roots restore-drill receipts live in and reuses
-    :func:`_read_json` so a malformed receipt is skipped rather than crashing.
-    Only names/ids and the status are surfaced (never secret values). Returns
-    ``None`` when no successful verification receipt exists, which keeps readiness
-    additive: apps without verification keep their prior behavior and score.
+    Uses the unified file, product-wrapper, and kernel-journal projection. Only
+    names, ids, source locators, and status are surfaced. Returns ``None`` when
+    no successful verification receipt exists, which keeps readiness additive:
+    apps without verification keep their prior behavior and score.
     """
-    roots = [
-        runtime_root / "apps" / app / "restore-drills",
-        runtime_root / "apps" / app / "receipts",
-    ]
     candidates: List[Dict[str, object]] = []
-    for root in roots:
-        if not root.exists():
+    for record in _unified_receipt_records(
+        runtime_root,
+        app=app,
+    ):
+        if str(record.get("operation") or "") != "backup.verify.apply":
             continue
-        for path in sorted(root.rglob("*.json")):
-            payload = _read_json(path)
-            if str(payload.get("operation") or "") != "backup.verify.apply":
-                continue
-            if str(payload.get("status") or "") != "succeeded":
-                continue
-            if environment and payload.get("environment") not in (None, environment):
-                continue
-            candidates.append(
-                {
-                    "verify_id": payload.get("verify_id"),
-                    "receipt_id": payload.get("operation_id") or path.stem,
-                    "operation": payload.get("operation"),
-                    "status": payload.get("status"),
-                    "backup_id": payload.get("backup_id"),
-                    "completed_at": payload.get("completed_at") or payload.get("started_at"),
-                    "path": str(path),
-                }
-            )
+        if str(record.get("status") or "") != "succeeded":
+            continue
+        if environment and record.get("environment") not in (None, environment):
+            continue
+        payload = _receipt_payload(record) or {}
+        nested = payload.get("ophelia_receipt")
+        terminal = nested if isinstance(nested, dict) else payload
+        candidates.append(
+            {
+                "verify_id": payload.get("verify_id") or terminal.get("verify_id"),
+                "receipt_id": record.get("receipt_id"),
+                "operation": record.get("operation"),
+                "status": record.get("status"),
+                "backup_id": payload.get("backup_id") or terminal.get("backup_id"),
+                "completed_at": record.get("completed_at") or record.get("started_at"),
+                "path": str(record.get("path") or ""),
+                "source": record.get("source"),
+                "sources": record.get("sources"),
+            }
+        )
     if not candidates:
         return None
     candidates.sort(key=lambda item: (str(item.get("completed_at") or ""), str(item.get("receipt_id") or "")))
@@ -5174,7 +5756,12 @@ def _route_conflict_issues(report: Dict[str, object], manifest: Manifest) -> Lis
     issues: List[Dict[str, str]] = []
     conflicts = report.get("conflicts") if isinstance(report.get("conflicts"), list) else []
     for conflict in conflicts:
-        if not isinstance(conflict, dict) or conflict.get("type") not in {"duplicate_domain", "duplicate_route"}:
+        if not isinstance(conflict, dict) or conflict.get("type") not in {
+            "duplicate_domain",
+            "duplicate_route",
+            "conflicting_on_demand_tls_ask",
+            "duplicate_catch_all_edge",
+        }:
             continue
         owners = conflict.get("owners") if isinstance(conflict.get("owners"), list) else []
         if not any(isinstance(owner, dict) and owner.get("app") == manifest.app for owner in owners):
@@ -5186,6 +5773,25 @@ def _route_conflict_issues(report: Dict[str, object], manifest: Manifest) -> Lis
             and (owner.get("app"), owner.get("environment")) != (manifest.app, manifest.environment)
         ]
         if not competing:
+            continue
+        conflict_type = str(conflict.get("type"))
+        if conflict_type == "conflicting_on_demand_tls_ask":
+            issues.append(
+                schema_issue(
+                    "edge_on_demand_tls_conflict",
+                    "The host has multiple on-demand TLS ask endpoints; active declarations must share one exact endpoint.",
+                    "edge.on_demand_tls.ask",
+                )
+            )
+            continue
+        if conflict_type == "duplicate_catch_all_edge":
+            issues.append(
+                schema_issue(
+                    "edge_catch_all_conflict",
+                    "The host catch-all edge is owned by more than one app or environment.",
+                    "edge.catch_all",
+                )
+            )
             continue
         issues.append(
             schema_issue(
@@ -5668,44 +6274,7 @@ def _receipt_records(
     app: Optional[str] = None,
     environment: Optional[str] = None,
 ) -> List[Dict[str, object]]:
-    roots: List[Tuple[Optional[str], Optional[str], Path]] = []
-    apps_root = runtime_root / "apps"
-    if apps_root.exists():
-        for app_root in sorted(path for path in apps_root.iterdir() if path.is_dir()):
-            if app and app_root.name != app:
-                continue
-            roots.append((app_root.name, None, app_root / "receipts"))
-            for env_root in sorted(path for path in app_root.iterdir() if path.is_dir()):
-                if environment and env_root.name != environment:
-                    continue
-                roots.append((app_root.name, env_root.name, env_root / "receipts"))
-            roots.append((app_root.name, None, app_root / "rollback-reports"))
-    if app is None or (runtime_root / "backups" / "apps" / app).exists():
-        backup_apps = [runtime_root / "backups" / "apps" / app] if app else sorted((runtime_root / "backups" / "apps").glob("*")) if (runtime_root / "backups" / "apps").exists() else []
-        for backup_app_root in backup_apps:
-            roots.append((backup_app_root.name, environment, backup_app_root))
-
-    records: List[Dict[str, object]] = []
-    for owner_app, owner_env, root in roots:
-        if not root.exists():
-            continue
-        for path in sorted(root.rglob("*.json")):
-            payload = _read_json(path)
-            receipt_id = _receipt_id(path, payload)
-            records.append(
-                {
-                    "receipt_id": receipt_id,
-                    "operation": payload.get("operation") or _operation_from_receipt_path(path),
-                    "status": payload.get("status") or "unknown",
-                    "app": payload.get("app") or owner_app,
-                    "environment": payload.get("environment") or owner_env,
-                    "started_at": payload.get("started_at") or payload.get("created_at") or payload.get("applied_at"),
-                    "completed_at": payload.get("completed_at") or payload.get("created_at") or payload.get("applied_at"),
-                    "path": str(path),
-                    "inputs_redacted": payload.get("inputs_redacted", True),
-                }
-            )
-    return sorted(records, key=lambda item: (str(item.get("started_at") or ""), str(item["receipt_id"])))
+    return _unified_receipt_records(runtime_root, app=app, environment=environment)
 
 
 def _receipt_id(path: Path, payload: Dict[str, object]) -> str:
@@ -7394,7 +7963,7 @@ def _read_json(path: Path) -> Dict[str, object]:
         return {}
     try:
         payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 

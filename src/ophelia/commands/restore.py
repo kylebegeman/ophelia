@@ -7,8 +7,12 @@ from pathlib import Path
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
 from ..operation_refs import public_resolution, resolve_receipt_ref
-from ..operation_schema import report_envelope
-from ..restore_verification import restore_drills_list, restore_drills_show
+from ..operation_schema import operation_digest, report_envelope
+from ..restore_verification import (
+    is_restore_drill_receipt_operation,
+    restore_drills_list,
+    restore_drills_show,
+)
 
 
 def register(subparsers: _SubParsersAction) -> None:
@@ -42,11 +46,42 @@ def run_restore_drills_list(args: Namespace) -> int:
 
 
 def run_restore_drills_show(args: Namespace) -> int:
-    resolution = resolve_receipt_ref(args.drill_id, runtime_root=args.runtime_root)
+    resolution = resolve_receipt_ref(
+        args.drill_id,
+        runtime_root=args.runtime_root,
+        operation_filter=is_restore_drill_receipt_operation,
+    )
     if resolution.get("ok"):
-        report = restore_drills_show(str(resolution.get("path") or resolution.get("resolved_id")), runtime_root=args.runtime_root)
+        resolved_id = str(resolution.get("resolved_id") or args.drill_id)
+        report = restore_drills_show(
+            resolved_id,
+            runtime_root=args.runtime_root,
+            resolved_payload=(
+                resolution.get("payload")
+                if isinstance(resolution.get("payload"), dict)
+                else None
+            ),
+            receipt_locator=(
+                str(resolution.get("path")) if resolution.get("path") else None
+            ),
+        )
         report["requested_ref"] = args.drill_id
         report["resolved_ref"] = public_resolution(resolution)
+        report["warnings"] = _dedupe_warnings(
+            [
+                *(
+                    report.get("warnings", [])
+                    if isinstance(report.get("warnings"), list)
+                    else []
+                ),
+                *(
+                    resolution.get("warnings", [])
+                    if isinstance(resolution.get("warnings"), list)
+                    else []
+                ),
+            ]
+        )
+        report["digest"] = operation_digest(report)
     else:
         report = report_envelope(
             "restore.drills.show",
@@ -67,6 +102,24 @@ def run_restore_drills_show(args: Namespace) -> int:
     else:
         print(report["summary"])
     return 0 if not report.get("blockers") else 1
+
+
+def _dedupe_warnings(items: list) -> list:
+    result = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        identity = (
+            str(item.get("code") or ""),
+            str(item.get("message") or ""),
+            str(item.get("path") or ""),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(item)
+    return result
 
 
 register_cli_descriptor(

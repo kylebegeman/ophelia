@@ -1,13 +1,34 @@
 # Portable App Pack Spec
 
-Status: draft, with Phase 1 manifest support, pack validation/explain,
-readiness reports, receipt browsing, export plan, and import plan implemented.
+Status: active `0.6.x` compatibility specification. The eight selected minor
+portability surfaces are implemented. Major completion work is planned in the
+[Portability Major Features specification](features/portability-major-features.md).
 
 A portable app pack is the Ophelia contract that makes one app environment
 deployable, inspectable, exportable, importable, and movable between hosts.
 
 The pack is not the app source code. It is the deployment and data contract that
 lets Ophelia safely operate the app.
+
+## Selected Minor Feature Completion
+
+The selected minor portability program is complete across these existing
+command families:
+
+| Feature | Command surface | Completed contract |
+| --- | --- | --- |
+| App Move Readiness Checklist | `ship app readiness` | Aggregates pack, env, backup, route, release, app-owned verification, restore evidence, score, and remediation without writing Ophelia state. Manifest-declared app checks still execute. |
+| Redacted Env Shape Diff | `ship env diff` | Compares required key names and presence states without emitting values. |
+| Backup Freshness Receipt | `ship backup status` | Reports coverage and age, then links the latest successful `backup.verify.apply` evidence or says `metadata-only`. |
+| Route And Domain Conflict Scanner | `ship inspect conflicts` | Detects app routes, ports, aliases, and host-global on-demand TLS ask or catch-all ownership conflicts. |
+| Portability Score | readiness and pack reports | Uses deterministic factors and categories while preserving blocker authority. |
+| Generated App Runbook | `ship app runbook` | Produces a structured `ophelia.app_runbook` model and Markdown from the same redacted source. |
+| Receipt Browser Commands | `ship receipts list|show|timeline` | Unifies compatibility JSON files, global product wrappers, and kernel receipts in `host-state/operations.db`. |
+| Pack Init Scaffolder | `ship pack init` | Previews or explicitly writes app-pack support files with overwrite guards. |
+
+These commands do not make the later major systems complete. Export/import,
+full restore, coordinated cutover, complete isolation, host reconcile, and the
+private UI adapter remain separately scoped major work.
 
 ## Design Principles
 
@@ -330,9 +351,47 @@ credential URLs are masked while preserving enough command shape for review.
 ./cli/ship receipts list --app demo-service --json
 ```
 
-These commands are read-only. They report redacted env shape, backup freshness,
-route/domain ownership, portability score, generated runbook text, and existing
-operation receipts.
+These commands do not write Ophelia state. They report redacted env shape,
+backup freshness, route/domain ownership, portability score, generated runbook
+text, and existing operation receipts. `app readiness` also executes
+manifest-declared app-owned verification commands inside live Compose services.
+Those commands are app code, so pack authors must keep them observational and
+safe to run against the selected environment.
+
+`backup status` includes `validation.status: verified` when a successful
+`backup.verify.apply` receipt exists for the app and environment. It also
+returns the verification, receipt, and backup ids, completion time, and receipt
+path. Without that evidence, the status is explicitly `metadata-only`; it never
+claims that a destructive production restore was tested.
+
+Conflict scanning treats `edge.on_demand_tls.ask` and `edge.catch_all` as
+host-global resources. Active on-demand TLS declarations must share one exact
+ask endpoint, and only one app/environment may own the catch-all site. Ask URL
+credentials and query values are redacted in reports.
+
+`app runbook --json` returns additive `generated_at` and `runbook` fields. The
+structured model and Markdown contain the same routes, services, data
+dependencies, backup and restore evidence, release state, typed Ophelia
+commands, findings, next actions, and recovery notes. Manifest env values and
+data command arguments are not copied into the runbook.
+
+Receipt browsing projects three storage sources into one deterministic ledger:
+
+- compatibility JSON under app and rollback receipt roots, plus fixed
+  `backup-manifest.json` and `restore-report.json` metadata paths
+- correlated product wrappers under `<runtime-root>/receipts/product/`
+- authoritative terminal receipts in
+  `<runtime-root>/host-state/operations.db`
+
+Records expose source and locator metadata. Every product wrapper must carry a
+valid nested kernel-receipt digest, even when no journal copy is present.
+Matching product and journal copies are correlated by receipt identity and
+payload integrity. A mismatch keeps the journal authoritative and emits a
+warning. Kernel rows must match the full migration schema, stored digest,
+operation id, and outcome. Corrupt rows, implicit paths that cross symlinks,
+conflicting duplicate ids, and unredacted display payloads degrade to structured
+warnings or blockers rather than disappearing or leaking values. Arbitrary JSON
+inside a backup archive is never indexed as a receipt.
 
 ### Production Image Lock Commands
 

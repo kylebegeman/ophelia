@@ -22,13 +22,14 @@ provides sanitized live material for an approved migration or deployment phase.
 2. [Documentation Index](../README.md)
 3. [Platform Strategy And Technical Architecture](../product/ophelia-platform-strategy.md)
 4. [Roadmap](../ROADMAP.md)
-5. [Platform Handbook](../platform-handbook.md)
-6. [Architecture](../architecture.md)
-7. [Manifest Spec](../manifest-spec.md)
-8. [Preflight And Safety](../preflight-and-safety.md)
-9. [Fixture App Suite](../fixture-app-suite.md)
-10. [Job And Action API](../job-action-api.md)
-11. [Open Source Readiness](../open-source-readiness.md)
+5. [Portability Major Features](../features/portability-major-features.md)
+6. [Platform Handbook](../platform-handbook.md)
+7. [Architecture](../architecture.md)
+8. [Manifest Spec](../manifest-spec.md)
+9. [Preflight And Safety](../preflight-and-safety.md)
+10. [Fixture App Suite](../fixture-app-suite.md)
+11. [Job And Action API](../job-action-api.md)
+12. [Open Source Readiness](../open-source-readiness.md)
 
 For existing checkouts or app repositories, use the copyable
 [0.3.0 Upgrade Prompt](UPGRADE_TO_0_3_0_PROMPT.md).
@@ -85,6 +86,7 @@ make production-hardening-fixtures
 | Review readiness | `./cli/ship live-readiness run ... --json` |
 | Prepare live evidence | `./cli/ship live-hydration report ... --json` |
 | Review operation history | `./cli/ship receipts list --json` |
+| Plan selected portability major work | `docs/features/portability-major-features.md`, then current source and tests |
 | Execute a product operations bundle | `docs/llm/capabilities/product-operations.md`, then `./cli/ship product validate ... --json` |
 
 ## Data Boundaries

@@ -7,7 +7,7 @@ from pathlib import Path
 from ..command_catalog import CommandDescriptor, register_cli_descriptor
 from ..config import DEFAULT_RUNTIME_ROOT
 from ..operation_refs import public_resolution, resolve_receipt_ref
-from ..operation_schema import report_envelope
+from ..operation_schema import operation_digest, report_envelope
 from ..portability import receipt_list_report, receipt_show_report
 from ..receipt_index import receipt_timeline
 
@@ -57,9 +57,25 @@ def run_list(args: Namespace) -> int:
 def run_show(args: Namespace) -> int:
     resolution = resolve_receipt_ref(args.receipt_id, runtime_root=args.runtime_root)
     if resolution.get("ok"):
-        report = receipt_show_report(str(resolution.get("path") or resolution.get("resolved_id")), runtime_root=args.runtime_root)
+        lookup = (
+            resolution.get("path")
+            if resolution.get("strategy") == "path"
+            else resolution.get("resolved_id")
+        )
+        report = receipt_show_report(str(lookup), runtime_root=args.runtime_root)
         report["requested_ref"] = args.receipt_id
         report["resolved_ref"] = public_resolution(resolution)
+        report["warnings"] = _dedupe_warnings(
+            [
+                *(report.get("warnings", []) if isinstance(report.get("warnings"), list) else []),
+                *(
+                    resolution.get("warnings", [])
+                    if isinstance(resolution.get("warnings"), list)
+                    else []
+                ),
+            ]
+        )
+        report["digest"] = operation_digest(report)
     else:
         report = report_envelope(
             "receipts.show",
@@ -84,6 +100,24 @@ def run_show(args: Namespace) -> int:
         else:
             print(json.dumps(report["receipt"], indent=2, sort_keys=True))
     return 0 if not report["blockers"] else 1
+
+
+def _dedupe_warnings(items: list) -> list:
+    result = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        identity = (
+            str(item.get("code") or ""),
+            str(item.get("message") or ""),
+            str(item.get("path") or ""),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(item)
+    return result
 
 
 def run_timeline(args: Namespace) -> int:

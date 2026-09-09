@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .manifest import Manifest, ManifestError, load_manifest
 from .operation_schema import report_envelope
+from .redaction import redact_url
 from .runtime import active_release
 from .verify import verification_checks
 
@@ -29,6 +30,7 @@ def scan_conflicts(manifest_dir: Path, runtime_root: Optional[Path] = None) -> D
     _duplicate_routes(manifests, conflicts)
     _duplicate_host_ports(manifests, conflicts)
     _duplicate_aliases(manifests, conflicts)
+    _edge_resource_conflicts(manifests, conflicts)
     _environment_host_warnings(manifests, warnings)
     _missing_verification_warnings(manifests, warnings)
 
@@ -70,7 +72,7 @@ def scan_conflicts(manifest_dir: Path, runtime_root: Optional[Path] = None) -> D
 
 def _conflict_identity(item: Dict[str, object]) -> str:
     """The most specific identifying field of a conflict/warning, as a string."""
-    for key in ("domain", "route", "app", "alias", "host_port", "path"):
+    for key in ("domain", "route", "app", "alias", "host_port", "host_resource", "path"):
         value = item.get(key)
         if value not in (None, ""):
             return str(value)
@@ -111,6 +113,7 @@ def _conflict_path(item: Dict[str, object]) -> str:
         or item.get("app")
         or item.get("alias")
         or item.get("host_port")
+        or item.get("host_resource")
         or item.get("path")
         or ""
     )
@@ -170,6 +173,69 @@ def _duplicate_aliases(manifests: List[Tuple[Path, Manifest, Dict[str, object]]]
         owners = _dedupe_active_runtime_owners(owners)
         if len(owners) > 1:
             conflicts.append({"type": "duplicate_docker_alias", "alias": alias, "owners": owners})
+
+
+def _edge_resource_conflicts(
+    manifests: List[Tuple[Path, Manifest, Dict[str, object]]],
+    conflicts: List[Dict[str, object]],
+) -> None:
+    """Detect host-level Caddy resources that cannot be app-local.
+
+    A host may have many apps using on-demand TLS, but every active declaration
+    must use the exact same ask endpoint because Ophelia consolidates it into one
+    global Caddy option. The catch-all ``https://`` site block has one owner per
+    host. Raw ask query strings can carry tokens, so conflict payloads retain
+    only :func:`redact_url` output.
+    """
+    ask_owners: List[Dict[str, object]] = []
+    catch_all_owners: List[Dict[str, object]] = []
+    for _path, manifest, owner in manifests:
+        on_demand = manifest.edge.on_demand_tls
+        if on_demand is not None:
+            ask_owners.append(
+                {
+                    **owner,
+                    "_ask_identity": on_demand.ask,
+                    "ask": redact_url(on_demand.ask),
+                }
+            )
+        catch_all = manifest.edge.catch_all
+        if catch_all is not None:
+            catch_all_owners.append(
+                {
+                    **owner,
+                    "ask": redact_url(on_demand.ask) if on_demand is not None else None,
+                    "target_kind": "service" if catch_all.service else "upstream",
+                    "service": catch_all.service,
+                }
+            )
+
+    ask_owners = _dedupe_active_runtime_owners(ask_owners)
+    ask_identities = {str(owner.get("_ask_identity") or "") for owner in ask_owners}
+    if len(ask_identities) > 1:
+        public_owners = [
+            {key: value for key, value in owner.items() if key != "_ask_identity"}
+            for owner in ask_owners
+        ]
+        conflicts.append(
+            {
+                "type": "conflicting_on_demand_tls_ask",
+                "host_resource": "on_demand_tls.ask",
+                "ask_endpoint_count": len(ask_identities),
+                "ask_endpoints": sorted({str(owner.get("ask") or "") for owner in public_owners}),
+                "owners": public_owners,
+            }
+        )
+
+    catch_all_owners = _dedupe_active_runtime_owners(catch_all_owners)
+    if len(catch_all_owners) > 1:
+        conflicts.append(
+            {
+                "type": "duplicate_catch_all_edge",
+                "host_resource": "edge.catch_all",
+                "owners": catch_all_owners,
+            }
+        )
 
 
 def _environment_host_warnings(manifests: List[Tuple[Path, Manifest, Dict[str, object]]], warnings: List[Dict[str, object]]) -> None:

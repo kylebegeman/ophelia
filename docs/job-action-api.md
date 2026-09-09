@@ -344,6 +344,21 @@ with optional filters `--app`, `--environment`, `--operation`, `--status`,
 `--since`, and `--until`. It emits
 `{"schema_version": 1, "kind": "ophelia.receipt_timeline", ...}`. It is
 read-only and reads the same receipt store as `receipts list` / `receipts show`.
+The unified store includes compatibility JSON files, global product-operation
+and product-recovery wrappers, and authoritative terminal receipts in
+`<runtime-root>/host-state/operations.db`.
+
+Receipt records include a primary `source`, all correlated `sources`, and
+stable locators. A product wrapper that exactly matches its journal payload is
+kept as the richer display record while retaining the journal locator. A
+correlation mismatch keeps the journal payload authoritative. Standalone product
+wrappers must also carry a valid nested receipt digest and matching identity.
+Kernel rows must match the full journal schema plus their stored digest,
+operation id, and outcome. Invalid JSON, identity collisions, row/payload
+mismatches, and implicit file or journal paths that cross symlinks produce
+structured warnings. Backup discovery reads only fixed Ophelia metadata paths,
+never arbitrary application JSON inside a backup. Receipt show defensively
+redacts payloads and warns when a receipt declares `inputs_redacted: false`.
 
 Dry-run plans for diff-producing operations attach a redacted diff artifact:
 

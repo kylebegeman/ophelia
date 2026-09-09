@@ -18,7 +18,8 @@ reference docs below.
 | [Platform Strategy And Technical Architecture](product/ophelia-platform-strategy.md) | Consolidated audit, product direction, target architecture, security model, implementation details, and phased roadmap. |
 | [Platform Handbook](platform-handbook.md) | Public operating model, runtime boundaries, and fixture-first workflow. |
 | [Architecture](architecture.md) | Ownership boundaries, runtime shape, deployment model, and API surfaces. |
-| [Roadmap](ROADMAP.md) | Current 0.4.x status, next tasks, and deferred decisions. |
+| [Roadmap](ROADMAP.md) | Current 0.6.x status, next tasks, selected portability program, and deferred decisions. |
+| [Portability Major Features](features/portability-major-features.md) ([HTML](features/portability-major-features.html)) | Detailed later-phase specification for selected major features 1, 2, 3, 4, 5, 6, and 8. |
 | [LLM Start Here](llm/START_HERE.md) | Agent routing, safe command discovery, and data boundaries. |
 | [0.3.0 Upgrade Prompt](llm/UPGRADE_TO_0_3_0_PROMPT.md) | Copyable prompt for upgrading existing Ophelia checkouts and app repositories. |
 
@@ -80,6 +81,7 @@ future agent would need to understand.
 Use this structure for new documentation:
 
 - durable operator docs: `docs/`
+- durable feature specifications: `docs/features/`
 - LLM and agent entrypoints: `docs/llm/`
 - change records: `docs/changelog/`
 - historical plans and superseded prompts: `docs/archive/`

@@ -56,6 +56,7 @@ from .portability import (
     _restore_drill_receipts,
 )
 from .receipt_index import receipt_timeline
+from .receipt_sources import receipt_payload
 from .redaction import deep_redact, redact_mapping
 
 STATE_SCHEMA_VERSION = 3
@@ -175,6 +176,8 @@ def _relative_path(path: object, runtime_root: Path) -> Optional[str]:
     text = str(path)
     if not text:
         return None
+    if text.startswith("sqlite:"):
+        return text
     try:
         return str(Path(text).resolve().relative_to(Path(runtime_root).resolve()))
     except (ValueError, OSError):
@@ -290,6 +293,7 @@ def rebuild_state(
     finally:
         connection.close()
 
+    warnings = _dedupe_warnings(warnings)
     status = "blocked" if blockers else "ok"
     return {
         "schema_version": SCHEMA_VERSION,
@@ -304,6 +308,22 @@ def rebuild_state(
         "blockers": blockers,
         "status": status,
     }
+
+
+def _dedupe_warnings(warnings: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    seen = set()
+    for warning in warnings:
+        identity = (
+            str(warning.get("code") or ""),
+            str(warning.get("message") or ""),
+            str(warning.get("path") or ""),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(warning)
+    return result
 
 
 def refresh_state(
@@ -558,19 +578,19 @@ def _index_receipts(
             ),
         )
         receipt_count += 1
-        artifact_count += _index_receipt_artifacts(connection, receipt_id, path, runtime_root, warnings)
-        check_count += _index_receipt_checks(connection, receipt_id, path, warnings)
+        artifact_count += _index_receipt_artifacts(connection, receipt_id, entry, runtime_root, warnings)
+        check_count += _index_receipt_checks(connection, receipt_id, entry, warnings)
     return receipt_count, artifact_count, check_count
 
 
 def _index_receipt_artifacts(
     connection: "sqlite3.Connection",
     receipt_id: str,
-    path: object,
+    receipt_record: object,
     runtime_root: Path,
     warnings: List[Dict[str, str]],
 ) -> int:
-    payload = _safe_receipt_payload(path, warnings)
+    payload = _terminal_receipt_payload(_safe_receipt_payload(receipt_record, warnings))
     if payload is None:
         return 0
     artifacts = payload.get("artifacts")
@@ -607,36 +627,60 @@ def _index_receipt_artifacts(
 def _index_receipt_checks(
     connection: "sqlite3.Connection",
     receipt_id: str,
-    path: object,
+    receipt_record: object,
     warnings: List[Dict[str, str]],
 ) -> int:
-    payload = _safe_receipt_payload(path, warnings)
+    payload = _terminal_receipt_payload(_safe_receipt_payload(receipt_record, warnings))
     if payload is None:
         return 0
     checks = payload.get("checks")
+    kernel_checks = False
+    if not isinstance(checks, list):
+        verification = payload.get("verification")
+        if isinstance(verification, dict) and isinstance(verification.get("checks"), list):
+            checks = verification["checks"]
+            kernel_checks = True
     if not isinstance(checks, list):
         return 0
     count = 0
     for item in checks:
         if not isinstance(item, dict):
             continue
+        if kernel_checks:
+            check_ok = item.get("status") == "passed"
+            message_value = item.get("summary") or item.get("status")
+        else:
+            check_ok = bool(item.get("ok"))
+            message_value = item.get("message")
         connection.execute(
             "INSERT INTO checks (receipt_id, name, ok, message) VALUES (?, ?, ?, ?)",
             (
                 receipt_id,
                 item.get("name") if isinstance(item.get("name"), str) else None,
-                1 if item.get("ok") else 0,
-                item.get("message") if isinstance(item.get("message"), str) else None,
+                1 if check_ok else 0,
+                message_value if isinstance(message_value, str) else None,
             ),
         )
         count += 1
     return count
 
 
-def _safe_receipt_payload(path: object, warnings: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    if not path:
+def _safe_receipt_payload(
+    record_or_path: object,
+    warnings: List[Dict[str, str]],
+) -> Optional[Dict[str, Any]]:
+    if not record_or_path:
         return None
-    file_path = Path(str(path))
+    if isinstance(record_or_path, dict):
+        if record_or_path.get("payload_readable") is False:
+            return None
+        payload = receipt_payload(record_or_path)
+        if isinstance(payload, dict):
+            return payload
+        locator = str(record_or_path.get("path") or "unknown")
+        warnings.append(issue("receipt_unreadable", "Could not read receipt payload.", locator))
+        return None
+    file_path = Path(str(record_or_path))
     try:
         payload = _read_json_file(file_path)
     except (OSError, json.JSONDecodeError) as exc:
@@ -645,6 +689,13 @@ def _safe_receipt_payload(path: object, warnings: List[Dict[str, str]]) -> Optio
     if not isinstance(payload, dict):
         return None
     return payload
+
+
+def _terminal_receipt_payload(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if payload is None:
+        return None
+    terminal = payload.get("ophelia_receipt")
+    return terminal if isinstance(terminal, dict) else payload
 
 
 def _index_backups(
@@ -809,7 +860,7 @@ def _index_traffic_provider_state(
             },
         )
         path = entry.get("path")
-        payload = _safe_receipt_payload(path, warnings) or {}
+        payload = _safe_receipt_payload(entry, warnings) or {}
         receipt_summary = {
             "receipt_id": entry.get("receipt_id"),
             "operation": operation,
@@ -916,7 +967,7 @@ def _index_github_provisioning(
             continue
         app = entry.get("app") if isinstance(entry.get("app"), str) else None
         environment = entry.get("environment") if isinstance(entry.get("environment"), str) else None
-        payload = _safe_receipt_payload(entry.get("path"), warnings) or entry
+        payload = _safe_receipt_payload(entry, warnings) or entry
         connection.execute(
             "INSERT OR REPLACE INTO github_provisioning "
             "(receipt_id, operation, status, app, environment, path, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
