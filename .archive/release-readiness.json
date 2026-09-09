@@ -1,0 +1,28 @@
+{
+  "latest_public_release": "v0.6.16",
+  "latest_release_date": "2026-08-08",
+  "working_version": "0.6.17",
+  "open_pull_requests": 0,
+  "focused_tests": 124,
+  "failures": [
+    {
+      "test": "test_receipt_sources.ReceiptSourceTests.test_restore_drills_cli_resolves_legacy_verification_id",
+      "result": "FAIL: expected exit code 0, received 1"
+    },
+    {
+      "test": "test_restore_verification.RestoreVerificationTests.test_list_and_show_surface_receipts_without_secrets",
+      "result": "ERROR: KeyError: drill"
+    }
+  ],
+  "passed_checks": [
+    "make docs-check",
+    "make open-source-audit-strict"
+  ],
+  "release_ready": false,
+  "observed_live_processes": 0,
+  "local_dependency_findings": [
+    "Normal Loom integration uses HTTP; optional local topology smoke tests require an on-demand source checkout."
+  ],
+  "linked_worktree_head": "83f6f30dfa69f4c5e8ce8a67c1eefc0abc311d10",
+  "linked_worktree_clean": true
+}
